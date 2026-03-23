@@ -5,7 +5,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node -e \"const S = require('./src/scheduler.js'); const c = require('./config.json'); new S(c).checkAndPublish()\""
+    "check": "node -e \"const S = require('./src/scheduler.js'); const c = require('./config.json'); new S(c).checkAndPublish()\"",
+    "backup:tag": "sh scripts/tag-backup.sh"
   },
   "dependencies": {
     "axios": "^1.6.0",
