@@ -1,0 +1,1746 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>蚁小二发布工具</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+  .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 30px; }
+  .header h1 { font-size: 22px; }
+  .header p { font-size: 13px; opacity: 0.85; margin-top: 4px; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+  .status-bar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .status-card {
+    background: white; border-radius: 10px; padding: 16px 20px; flex: 1; min-width: 200px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .status-card .label { font-size: 12px; color: #888; }
+  .status-card .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .status-card .value.running { color: #10b981; }
+  .status-card .value.stopped { color: #ef4444; }
+  .progress-panel {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    border: 1px solid #e5ecf5;
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  }
+  .progress-main { flex: 1; min-width: 280px; }
+  .progress-top { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .progress-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    background: #e5e7eb;
+    color: #475569;
+  }
+  .progress-badge.active { background: #dbeafe; color: #1d4ed8; }
+  .progress-badge.success { background: #d1fae5; color: #047857; }
+  .progress-badge.failed { background: #fee2e2; color: #dc2626; }
+  .progress-title { font-size: 16px; font-weight: 700; color: #1f2937; }
+  .progress-detail { font-size: 15px; color: #334155; line-height: 1.7; }
+  .progress-meta {
+    min-width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    color: #64748b;
+  }
+  .record-toolbar {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .record-summary { font-size: 12px; color: #64748b; }
+
+  .actions { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px;
+    cursor: pointer; font-weight: 500; transition: all 0.2s;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .btn:active { transform: translateY(0); }
+  .btn-primary { background: #667eea; color: white; }
+  .btn-success { background: #10b981; color: white; }
+  .btn-danger { background: #ef4444; color: white; }
+  .btn-secondary { background: #e5e7eb; color: #374151; }
+  .btn-sm { padding: 6px 14px; font-size: 12px; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .panel {
+    background: white; border-radius: 10px; padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px;
+  }
+  .panel h2 { font-size: 16px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+
+  /* 设置面板 */
+  .settings-collapsed { display: none; }
+  .period-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+  .period-row {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 10px 14px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;
+  }
+  .period-row label { font-size: 13px; color: #555; white-space: nowrap; }
+  .period-row input, .period-row select {
+    padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; width: 90px;
+  }
+  .period-row input:focus { outline: none; border-color: #667eea; }
+  .period-num {
+    width: 22px; height: 22px; border-radius: 50%; background: #667eea; color: white;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0;
+  }
+  .btn-remove {
+    background: none; border: none; color: #ef4444; cursor: pointer; font-size: 18px;
+    padding: 2px 6px; border-radius: 4px; line-height: 1;
+  }
+  .btn-remove:hover { background: #fee2e2; }
+  .settings-actions { display: flex; gap: 10px; align-items: center; }
+  .settings-hint { font-size: 11px; color: #9ca3af; margin-left: 8px; }
+
+  /* 音乐搜索面板 */
+  .music-shell {
+    border: 1px solid #eceff5;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+    padding: 18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+  }
+  .current-music {
+    padding: 18px 20px;
+    background: #f8fafc;
+    border-radius: 14px;
+    margin-bottom: 16px;
+    border: 1px solid #dbe2ea;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .music-status {
+    font-size: 15px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+  .music-status.selected {
+    color: #18a472;
+    font-weight: 700;
+  }
+  .music-search-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 128px 128px;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .music-search-input {
+    width: 100%;
+    padding: 16px 18px;
+    border: 1px solid #d7deea;
+    border-radius: 14px;
+    font-size: 16px;
+    background: #fff;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .music-search-input:focus {
+    outline: none;
+    border-color: #6a7ff2;
+    box-shadow: 0 0 0 4px rgba(102,126,234,0.12);
+  }
+  .music-results {
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid #dbe2ea;
+    border-radius: 14px;
+    background: white;
+    display: block;
+  }
+  .music-item {
+    padding: 18px 22px;
+    border-bottom: 1px solid #eef2f7;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    transition: background 0.18s ease;
+  }
+  .music-item:last-child { border-bottom: none; }
+  .music-item:hover { background: #f8faff; }
+  .music-name {
+    font-size: 16px;
+    font-weight: 500;
+    color: #2f3542;
+  }
+  .music-select {
+    color: #6a7ff2;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .music-empty {
+    padding: 26px 18px;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 14px;
+  }
+  .music-tools {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .music-link-btn {
+    background: transparent;
+    border: 1px solid #d7deea;
+    color: #5b6b88;
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .music-link-btn:hover {
+    border-color: #6a7ff2;
+    color: #6a7ff2;
+  }
+  .music-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
+  }
+  .music-sub {
+    font-size: 12px;
+    color: #97a0b3;
+  }
+  .music-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+  .music-preview {
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .music-preview.playing {
+    color: #18a472;
+  }
+  .music-duration {
+    color: #9ca3af;
+    font-size: 12px;
+    min-width: 40px;
+    text-align: right;
+  }
+  .music-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.28);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 999;
+  }
+  .music-modal.open { display: flex; }
+  .music-modal-card {
+    width: min(940px, 100%);
+    max-height: 88vh;
+    background: #fff;
+    border-radius: 26px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .music-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 30px 12px;
+  }
+  .music-modal-head h3 {
+    font-size: 22px;
+    line-height: 1.2;
+  }
+  .music-modal-close {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    border: 2px solid #8b86ff;
+    background: #fff;
+    color: #4b5563;
+    cursor: pointer;
+    font-size: 26px;
+    line-height: 1;
+  }
+  .music-modal-body {
+    padding: 0 30px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-height: 0;
+  }
+  .music-modal-search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 120px;
+    gap: 14px;
+  }
+  .music-tabs {
+    display: flex;
+    gap: 28px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #eef2f7;
+  }
+  .music-tab {
+    border: none;
+    background: transparent;
+    color: #9ca3af;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 4px 0 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    border-bottom: 4px solid transparent;
+  }
+  .music-tab.active {
+    color: #5b5ce6;
+    border-bottom-color: #5b5ce6;
+  }
+  .music-library-list {
+    min-height: 220px;
+    max-height: 50vh;
+    overflow-y: auto;
+    border: 1px solid #e9edf5;
+    border-radius: 18px;
+    background: #fdfdff;
+  }
+  .music-library-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    border-bottom: 1px solid #edf1f7;
+  }
+  .music-library-item:last-child { border-bottom: none; }
+  .music-play-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: none;
+    background: #7b7b83;
+    color: white;
+    cursor: pointer;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .music-play-btn.playing {
+    background: #5b5ce6;
+  }
+  .music-use-btn {
+    border: none;
+    background: #5b5ce6;
+    color: white;
+    border-radius: 14px;
+    padding: 12px 18px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .music-load-more {
+    margin: 10px auto 0;
+    display: block;
+  }
+
+  .record-list { display: flex; flex-direction: column; gap: 12px; }
+  .account-list { display: flex; flex-direction: column; gap: 10px; }
+  .account-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: center;
+    background: #fff;
+  }
+  .account-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .account-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #273142;
+  }
+  .account-meta {
+    font-size: 12px;
+    color: #8b93a7;
+  }
+  .account-badges {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .badge-ok, .badge-bad, .badge-map, .badge-unmap {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-weight: 700;
+  }
+  .badge-ok { background: #dcfce7; color: #15803d; }
+  .badge-bad { background: #fee2e2; color: #b91c1c; }
+  .badge-map { background: #e0e7ff; color: #4338ca; }
+  .badge-unmap { background: #f3f4f6; color: #6b7280; }
+  .mapping-panel-toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .mapping-row {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+    gap: 16px;
+    align-items: center;
+    background: #fff;
+  }
+  .mapping-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .mapping-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 4px rgba(102,126,234,0.1);
+  }
+  .mapping-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .plugin-update-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .plugin-update-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: #fff;
+  }
+  .plugin-update-label {
+    font-size: 12px;
+    color: #94a3b8;
+    margin-bottom: 6px;
+  }
+  .plugin-update-value {
+    font-size: 14px;
+    color: #273142;
+    font-weight: 600;
+    word-break: break-all;
+    line-height: 1.6;
+  }
+  .plugin-update-status {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #475569;
+    padding: 14px 16px;
+    border-radius: 12px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+  }
+  .plugin-update-decision {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 8px 12px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+    background: #eef2ff;
+    color: #4338ca;
+  }
+  .record-item {
+    border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; transition: border-color 0.2s;
+  }
+  .record-item:hover { border-color: #667eea; }
+  .record-item .title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .record-item .meta { font-size: 12px; color: #888; display: flex; gap: 12px; flex-wrap: wrap; }
+  .record-item .meta span { display: flex; align-items: center; gap: 3px; }
+  .record-item .platform-status { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tag { background: #eef2ff; color: #667eea; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+  .tag.xhs { background: #fef2f2; color: #ef4444; }
+  .tag.dy { background: #fef3c7; color: #d97706; }
+  .tag.published { background: #d1fae5; color: #059669; }
+  .tag.failed { background: #fee2e2; color: #dc2626; }
+  .tag.pending { background: #f3f4f6; color: #6b7280; }
+  .tag-preview-row { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .tag-preview-label {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #4338ca;
+    font-weight: 700;
+  }
+  .music-status-hint {
+    margin-top: 10px;
+    font-size: 13px;
+    color: #64748b;
+    line-height: 1.6;
+  }
+  .music-status-hint.warning { color: #b45309; }
+  .music-status-hint.success { color: #047857; }
+  .note-text { font-size: 11px; color: #9ca3af; }
+  .record-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .record-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .record-section-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #334155;
+  }
+  .record-toggle {
+    border: none;
+    background: #eef2ff;
+    color: #4338ca;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .log-panel {
+    background: #1e1e2e; border-radius: 10px; padding: 16px; color: #cdd6f4;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+    max-height: 350px; overflow-y: auto;
+  }
+  .log-panel .log-entry { padding: 3px 0; border-bottom: 1px solid #313244; }
+  .log-panel .log-time { color: #6c7086; }
+  .log-panel .log-success { color: #a6e3a1; }
+  .log-panel .log-error { color: #f38ba8; }
+  .log-panel .log-info { color: #89b4fa; }
+
+  .empty { text-align: center; color: #888; padding: 40px; }
+
+  @media (max-width: 768px) {
+    .container { padding: 12px; }
+    .status-card { min-width: 150px; }
+    .period-row { gap: 6px; }
+    .music-search-row { grid-template-columns: 1fr; }
+    .music-modal { padding: 10px; }
+    .music-modal-head, .music-modal-body { padding-left: 16px; padding-right: 16px; }
+    .music-modal-search { grid-template-columns: 1fr; }
+    .music-library-item { align-items: flex-start; }
+    .music-actions { flex-wrap: wrap; justify-content: flex-end; }
+    .account-item { flex-direction: column; align-items: flex-start; }
+    .account-badges { justify-content: flex-start; }
+    .mapping-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>蚁小二发布工具</h1>
+  <p>飞书表格 → 蚁小二 → 抖音/小红书 自动发布</p>
+</div>
+
+<div class="container">
+  <div class="status-bar">
+    <div class="status-card">
+      <div class="label">定时服务状态</div>
+      <div class="value" id="serviceStatus">加载中...</div>
+    </div>
+    <div class="status-card">
+      <div class="label">下次检查</div>
+      <div class="value" id="nextCheck" style="font-size:15px">-</div>
+    </div>
+    <div class="status-card">
+      <div class="label">待发布记录</div>
+      <div class="value" id="pendingCount">-</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-success" id="btnStart" onclick="startScheduler()">启动定时服务</button>
+    <button class="btn btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止服务</button>
+    <button class="btn btn-primary" onclick="publishNow()">立即检查并发布</button>
+    <button class="btn btn-secondary" onclick="refreshRecords()">刷新表格数据</button>
+    <button class="btn btn-sm btn-secondary" onclick="toggleAccounts()">🔐 账号状态</button>
+    <button class="btn btn-sm btn-secondary" onclick="toggleBitbrowserMappings()">🧩 比特浏览器账号</button>
+    <button class="btn btn-sm btn-secondary" onclick="togglePluginUpdates()">🪄 插件更新</button>
+    <button class="btn btn-sm btn-secondary" onclick="toggleSettings()">⚙ 定时设置</button>
+    <button class="btn btn-sm btn-secondary" onclick="toggleMusic()">🎵 音乐设置</button>
+  </div>
+
+  <div class="panel progress-panel">
+    <div class="progress-main">
+      <div class="progress-top">
+        <span class="progress-badge" id="progressBadge">空闲</span>
+        <div class="progress-title" id="progressTitle">当前没有正在处理的发布任务</div>
+      </div>
+      <div class="progress-detail" id="progressDetail">点击“立即检查并发布”后，这里会显示当前所处阶段，例如检查飞书、下载素材、上传提交、平台发布完成。</div>
+    </div>
+    <div class="progress-meta">
+      <div id="progressPlatform">平台: -</div>
+      <div id="progressAccount">账号: -</div>
+      <div id="progressUpdatedAt">更新时间: -</div>
+    </div>
+  </div>
+
+  <div class="panel settings-collapsed" id="accountsPanel">
+    <h2>🔐 账号授权状态</h2>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-secondary" onclick="refreshAccounts()">刷新账号状态</button>
+      <span style="font-size:12px;color:#94a3b8;">显示蚁小二账号授权状态与是否已被当前项目映射使用</span>
+    </div>
+    <div id="accountList" class="account-list">
+      <div class="empty">点击“刷新账号状态”加载账号信息</div>
+    </div>
+  </div>
+
+  <div class="panel settings-collapsed" id="bitbrowserPanel">
+    <h2>🧩 比特浏览器账号管理</h2>
+    <div class="mapping-panel-toolbar">
+      <button class="btn btn-sm btn-secondary" onclick="syncFeishuBitbrowserFields()">同步飞书账号</button>
+      <button class="btn btn-sm btn-primary" onclick="saveBitbrowserMappings()">保存 browserId 映射</button>
+      <span style="font-size:12px;color:#94a3b8;">会同时同步飞书里的 `小红书账号`、`小红书发布渠道` 两个单选字段选项，再刷新本地 browserId 映射。</span>
+    </div>
+    <div id="bitbrowserSummary" class="record-summary" style="margin-bottom:12px;">点击“同步飞书账号”加载账号列表。</div>
+    <div id="bitbrowserList" class="account-list">
+      <div class="empty">点击“同步飞书账号”加载比特浏览器映射</div>
+    </div>
+  </div>
+
+  <div class="panel settings-collapsed" id="pluginUpdatePanel">
+    <h2>🪄 蚁小二插件更新</h2>
+    <div class="mapping-panel-toolbar">
+      <button class="btn btn-sm btn-secondary" onclick="checkPluginUpdates(true)">检查官方更新</button>
+      <span style="font-size:12px;color:#94a3b8;">只检查官方 Gitee 是否有新提交，不会自动升级你的本机插件。</span>
+    </div>
+    <div class="plugin-update-grid">
+      <div class="plugin-update-card">
+        <div class="plugin-update-label">本机插件路径</div>
+        <div class="plugin-update-value" id="pluginLocalPath">-</div>
+      </div>
+      <div class="plugin-update-card">
+        <div class="plugin-update-label">本机当前提交</div>
+        <div class="plugin-update-value" id="pluginLocalCommit">-</div>
+      </div>
+      <div class="plugin-update-card">
+        <div class="plugin-update-label">官方最新提交</div>
+        <div class="plugin-update-value" id="pluginOfficialCommit">-</div>
+      </div>
+      <div class="plugin-update-card">
+        <div class="plugin-update-label">本机远端来源</div>
+        <div class="plugin-update-value" id="pluginLocalRemote">-</div>
+      </div>
+    </div>
+    <div class="plugin-update-status" id="pluginUpdateStatus">
+      <div class="plugin-update-decision" id="pluginUpdateDecision">当前建议：继续使用当前版本</div>
+      <div id="pluginUpdateStatusText">点击“检查官方更新”后，这里会显示更直接的判断结论。</div>
+    </div>
+  </div>
+
+  <!-- 定时设置面板 -->
+  <div class="panel settings-collapsed" id="settingsPanel">
+    <h2>⚙ 定时检查设置</h2>
+    <div class="period-list" id="periodList"></div>
+    <div class="settings-actions">
+      <button class="btn btn-sm btn-secondary" onclick="addPeriod()">+ 添加时间段</button>
+      <button class="btn btn-sm btn-primary" onclick="saveSchedule()">保存设置</button>
+      <span class="settings-hint" id="scheduleHint"></span>
+    </div>
+  </div>
+
+  <!-- 抖音默认配乐设置面板 -->
+  <div class="panel settings-collapsed" id="musicPanel">
+    <h2>🎵 抖音默认配乐</h2>
+    <div class="music-shell">
+      <div id="currentMusic" class="current-music">
+        <div>
+          <span class="music-status">未设置默认配乐</span>
+          <div class="music-status-hint" id="musicStatusHint">当前未设置默认配乐，发布时会自动回退到热门纯音乐。</div>
+        </div>
+      </div>
+      <div class="music-search">
+        <div class="music-tools" style="margin-top:0;">
+          <button class="btn btn-primary" onclick="openMusicLibrary()">选择背景音乐</button>
+          <button class="btn btn-secondary" onclick="openMusicLibrary('hot')">最近热歌</button>
+          <button class="btn btn-secondary" onclick="clearDefaultMusic()">清除设置</button>
+        </div>
+        <div id="musicResults" class="music-results">
+          <div class="music-empty">点击“选择背景音乐”后，可在弹窗内搜索、试听和使用官方配乐</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>📋 飞书表格记录</h2>
+    <div class="record-toolbar">
+      <div class="record-summary" id="recordSummary">记录较多时会分批渲染，减少浏览器压力。</div>
+      <button class="btn btn-sm btn-secondary" id="recordMoreBtn" onclick="showMoreRecords()" style="display:none;">显示更多</button>
+    </div>
+    <div id="recordList" class="record-list">
+      <div class="empty">点击"刷新表格数据"加载记录</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>📊 运行日志</h2>
+    <div class="log-panel" id="logPanel">
+      <div class="log-entry"><span class="log-info">等待操作...</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="music-modal" id="musicModal" onclick="closeMusicLibrary(event)">
+  <div class="music-modal-card" onclick="event.stopPropagation()">
+    <div class="music-modal-head">
+      <h3>选择音乐</h3>
+      <button class="music-modal-close" onclick="closeMusicLibrary()">×</button>
+    </div>
+    <div class="music-modal-body">
+      <div class="music-modal-search">
+        <input
+          type="text"
+          id="musicLibrarySearch"
+          class="music-search-input"
+          placeholder="搜索音乐"
+          onkeydown="if(event.key === 'Enter'){ searchMusicLibrary(); }"
+        >
+        <button class="btn btn-primary" onclick="searchMusicLibrary()">搜索</button>
+      </div>
+      <div class="music-tabs" id="musicTabs"></div>
+      <div class="music-library-list" id="musicLibraryList">
+        <div class="music-empty">正在加载音乐列表...</div>
+      </div>
+      <button class="btn btn-secondary music-load-more" id="musicLoadMore" onclick="loadMoreMusic()" style="display:none;">加载更多</button>
+    </div>
+  </div>
+</div>
+
+<audio id="musicPreviewPlayer" preload="none"></audio>
+
+<script>
+const API = '';
+const INTERVAL_OPTIONS = [
+  { value: 5, label: '5分钟' },
+  { value: 10, label: '10分钟' },
+  { value: 15, label: '15分钟' },
+  { value: 20, label: '20分钟' },
+  { value: 30, label: '30分钟' },
+  { value: 60, label: '1小时' },
+  { value: 120, label: '2小时' },
+];
+
+// 当前编辑中的时间段
+let periods = [
+  { startTime: '06:00', endTime: '22:00', intervalMinutes: 30 }
+];
+let musicCategories = [];
+const builtInMusicTabs = [
+  { key: 'recommend', label: '热歌推荐', keyword: '热歌' },
+  { key: 'hot', label: '热门榜', keyword: '热门' },
+  { key: 'soft', label: '轻音乐', keyword: '轻音乐' },
+  { key: 'heal', label: '治愈', keyword: '治愈' },
+  { key: 'pure', label: '纯音乐', keyword: '纯音乐' },
+  { key: 'beat', label: '卡点', keyword: '卡点' },
+];
+let musicLibraryState = {
+  mode: 'recommend',
+  keyword: '热歌',
+  categoryId: '',
+  categoryName: '',
+  nextPage: null,
+};
+let currentPreviewUrl = '';
+let eventSource = null;
+let reconnectTimer = null;
+let isRefreshingStatus = false;
+let isRefreshingRecords = false;
+let lastStatusSignature = '';
+let lastRecordsSignature = '';
+let recordListData = [];
+let recordRenderLimit = 80;
+let showCompletedRecords = false;
+let logEntries = [];
+let bitbrowserMappings = [];
+let pluginUpdateState = null;
+const MAX_LOG_ENTRIES = 200;
+
+async function fetchApi(path, method = 'GET', body) {
+  const opts = { method };
+  if (body) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(API + path, opts);
+  return resp.json();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeJsSingleQuotedString(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const mm = String(Math.floor(total / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+// 渲染时间段列表
+function renderPeriods() {
+  const el = document.getElementById('periodList');
+  el.innerHTML = periods.map((p, i) => {
+    const intervalOpts = INTERVAL_OPTIONS.map(opt =>
+      `<option value="${opt.value}" ${opt.value === p.intervalMinutes ? 'selected' : ''}>${opt.label}</option>`
+    ).join('');
+    return `<div class="period-row">
+      <span class="period-num">${i + 1}</span>
+      <label>开始</label>
+      <input type="time" value="${p.startTime}" onchange="periods[${i}].startTime=this.value; updateHint()">
+      <label>结束</label>
+      <input type="time" value="${p.endTime}" onchange="periods[${i}].endTime=this.value; updateHint()">
+      <label>间隔</label>
+      <select onchange="periods[${i}].intervalMinutes=parseInt(this.value); updateHint()">${intervalOpts}</select>
+      ${periods.length > 1 ? `<button class="btn-remove" onclick="removePeriod(${i})" title="删除">×</button>` : ''}
+    </div>`;
+  }).join('');
+  updateHint();
+}
+
+function addPeriod() {
+  if (periods.length >= 10) {
+    alert('最多支持10个时间段');
+    return;
+  }
+  periods.push({ startTime: '09:00', endTime: '18:00', intervalMinutes: 30 });
+  renderPeriods();
+}
+
+function removePeriod(index) {
+  periods.splice(index, 1);
+  renderPeriods();
+}
+
+function updateHint() {
+  const desc = periods.map((p, i) => `${p.startTime}-${p.endTime} 每${p.intervalMinutes}分钟`).join('；');
+  document.getElementById('scheduleHint').textContent = desc;
+}
+
+// 解析备注中的分平台状态
+function parsePlatformNote(note) {
+  const result = { xhs: null, dy: null, failReason: '' };
+  if (!note) return result;
+  if (note.includes('小红书:已发布') || note.includes('小红书发布成功')) result.xhs = 'success';
+  if (note.includes('抖音:已发布') || note.includes('抖音发布成功')) result.dy = 'success';
+  const failMatch = note.match(/失败原因:\s*(.+)/);
+  if (failMatch) result.failReason = failMatch[1];
+  if (note.includes('小红书') && note.includes('失败') && result.xhs !== 'success') result.xhs = 'failed';
+  if (note.includes('抖音') && note.includes('失败') && result.dy !== 'success') result.dy = 'failed';
+  if (!result.xhs && !result.dy && note.includes('失败')) result.failReason = note;
+  return result;
+}
+
+function renderPlatformStatus(record) {
+  const { xiaohongshuAccount, douyinAccount, xiaohongshuStatus, douyinStatus, note, xiaohongshuPublishChannel } = record;
+  const parts = [];
+  if (xiaohongshuAccount) {
+    if (xiaohongshuStatus === '已发布') parts.push('<span class="tag published">小红书 ✓</span>');
+    else if (xiaohongshuStatus === '发布失败') parts.push('<span class="tag failed">小红书 ✗</span>');
+    else parts.push('<span class="tag pending">小红书 待发布</span>');
+    parts.push(`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(xiaohongshuPublishChannel || '蚁小二')}</span>`);
+  }
+  if (douyinAccount) {
+    if (douyinStatus === '已发布') parts.push('<span class="tag published">抖音 ✓</span>');
+    else if (douyinStatus === '发布失败') parts.push('<span class="tag failed">抖音 ✗</span>');
+    else parts.push('<span class="tag pending">抖音 待发布</span>');
+  }
+  // 显示音乐信息（优先显示指定歌曲名）
+  if (record.musicSongName) {
+    parts.push(`<span class="tag" style="background:#fef3c7;color:#d97706">🎵 ${escapeHtml(record.musicSongName)}</span>`);
+  } else if (record.musicKeyword) {
+    parts.push(`<span class="tag" style="background:#f0f9ff;color:#0284c7">🎵 ${escapeHtml(record.musicKeyword)}</span>`);
+  }
+  if (note && note.includes('失败')) parts.push(`<span class="note-text">${escapeHtml(note)}</span>`);
+  return parts.join(' ');
+}
+
+function renderTagPreview(record) {
+  const sections = [];
+  const xhsTags = (record.previewTags && record.previewTags.xiaohongshu) || [];
+  const dyTags = (record.previewTags && record.previewTags.douyin) || [];
+
+  if (xhsTags.length > 0) {
+    sections.push(`
+      <div class="tag-preview-row">
+        <span class="tag-preview-label">小红书计划提交标签</span>
+        ${xhsTags.map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`).join(' ')}
+      </div>
+    `);
+  }
+
+  if (dyTags.length > 0) {
+    sections.push(`
+      <div class="tag-preview-row">
+        <span class="tag-preview-label" style="background:#fef3c7;color:#b45309;">抖音计划提交标签</span>
+        ${dyTags.map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`).join(' ')}
+      </div>
+    `);
+  }
+
+  return sections.join('');
+}
+
+function getProgressLabel(stage) {
+  const labels = {
+    idle: '空闲',
+    checking: '检查飞书中',
+    preparing: '准备发布中',
+    downloading: '下载素材中',
+    'downloading-cover': '下载封面中',
+    publishing: '提交发布中',
+    submitting: '上传发布中',
+    completed: '发布完成',
+    'partial-failed': '部分失败',
+    failed: '处理失败',
+  };
+  return labels[stage] || '处理中';
+}
+
+function renderProgress(progress) {
+  const data = progress || {};
+  const badge = document.getElementById('progressBadge');
+  const title = document.getElementById('progressTitle');
+  const detail = document.getElementById('progressDetail');
+  const platform = document.getElementById('progressPlatform');
+  const account = document.getElementById('progressAccount');
+  const updatedAt = document.getElementById('progressUpdatedAt');
+  const stage = data.stage || 'idle';
+
+  badge.textContent = getProgressLabel(stage);
+  badge.className = 'progress-badge';
+  if (data.active) badge.classList.add('active');
+  if (stage === 'completed') badge.classList.add('success');
+  if (stage === 'failed' || stage === 'partial-failed') badge.classList.add('failed');
+
+  title.textContent = data.title ? `《${data.title}》` : '当前没有正在处理的发布任务';
+  detail.textContent = data.detail || '等待任务';
+  platform.textContent = `平台: ${data.platform || '-'}`;
+  account.textContent = `账号: ${data.account || '-'}`;
+  updatedAt.textContent = `更新时间: ${data.updatedAt || '-'}`;
+}
+
+function buildStatusSignature(status) {
+  return JSON.stringify({
+    running: !!status.running,
+    nextCheck: status.nextCheck || '',
+    schedule: status.schedule || null,
+    currentProgress: status.currentProgress || null,
+    recentLogs: status.recentLogs || [],
+  });
+}
+
+async function refreshStatus() {
+  if (isRefreshingStatus) return;
+  isRefreshingStatus = true;
+  try {
+    const status = await fetchApi('/api/status');
+    const signature = buildStatusSignature(status);
+    if (signature === lastStatusSignature) return;
+    lastStatusSignature = signature;
+    const el = document.getElementById('serviceStatus');
+    if (status.running) {
+      el.textContent = '运行中';
+      el.className = 'value running';
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStop').disabled = false;
+    } else {
+      el.textContent = '已停止';
+      el.className = 'value stopped';
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+    }
+    document.getElementById('nextCheck').textContent = status.nextCheck || '-';
+
+    if (status.schedule && status.schedule.periods) {
+      periods = JSON.parse(JSON.stringify(status.schedule.periods));
+      renderPeriods();
+    }
+
+    if (status.recentLogs && status.recentLogs.length > 0) {
+      renderLogs(status.recentLogs);
+    }
+
+    renderProgress(status.currentProgress);
+  } catch (e) {
+    document.getElementById('serviceStatus').textContent = '连接失败';
+  } finally {
+    isRefreshingStatus = false;
+  }
+}
+
+function renderRecordList(records) {
+  const el = document.getElementById('recordList');
+  const summaryEl = document.getElementById('recordSummary');
+  const moreBtn = document.getElementById('recordMoreBtn');
+  const pendingRecords = [];
+  const completedRecords = [];
+
+  for (const record of records) {
+    const xhsDone = record.xiaohongshuStatus === '已发布' || !record.xiaohongshuAccount;
+    const dyDone = record.douyinStatus === '已发布' || !record.douyinAccount;
+    if (xhsDone && dyDone) completedRecords.push(record);
+    else pendingRecords.push(record);
+  }
+
+  pendingRecords.sort((a, b) => {
+    const aTime = a.publishTime ? new Date(a.publishTime).getTime() : 0;
+    const bTime = b.publishTime ? new Date(b.publishTime).getTime() : 0;
+    return aTime - bTime;
+  });
+
+  completedRecords.sort((a, b) => {
+    const aTime = a.publishTime ? new Date(a.publishTime).getTime() : 0;
+    const bTime = b.publishTime ? new Date(b.publishTime).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  document.getElementById('pendingCount').textContent = pendingRecords.length;
+  if (records.length === 0) {
+    el.innerHTML = '<div class="empty">没有记录</div>';
+    summaryEl.textContent = '当前没有可展示的记录。';
+    moreBtn.style.display = 'none';
+    return;
+  }
+
+  const orderedRecords = [...pendingRecords, ...completedRecords];
+  const visiblePending = pendingRecords.slice(0, recordRenderLimit);
+  const visibleCompleted = showCompletedRecords ? completedRecords.slice(0, recordRenderLimit) : [];
+  const visibleCount = visiblePending.length + visibleCompleted.length;
+  summaryEl.textContent = `待发布 ${pendingRecords.length} 条会优先显示在上方；已完成 ${completedRecords.length} 条默认折叠。当前展开 ${visibleCount} / ${orderedRecords.length} 条记录。`;
+  moreBtn.style.display = (visiblePending.length < pendingRecords.length || (showCompletedRecords && visibleCompleted.length < completedRecords.length)) ? 'inline-flex' : 'none';
+
+  const renderCards = (list) => list.map(r => {
+    const tags = (r.tags || []).slice(0, 5).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join(' ');
+    const accounts = [];
+    if (r.xiaohongshuAccount) {
+      accounts.push(`<span class="tag xhs">小红书: ${escapeHtml(r.xiaohongshuAccount)}</span>`);
+      accounts.push(`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(r.xiaohongshuPublishChannel || '蚁小二')}</span>`);
+    }
+    if (r.douyinAccount) accounts.push(`<span class="tag dy">抖音: ${escapeHtml(r.douyinAccount)} · 蚁小二</span>`);
+    const platformStatusHtml = renderPlatformStatus(r);
+    const timeStr = r.publishTime ? new Date(r.publishTime).toLocaleString('zh-CN') : '立即发布';
+    return `<div class="record-item">
+      <div class="title">${escapeHtml(r.title || '无标题')}</div>
+      <div class="meta">
+        <span>📷 ${r.contentType} (${(r.attachments || []).length}个素材)</span>
+        <span>⏰ ${escapeHtml(timeStr)}</span>
+        ${accounts.join(' ')}
+      </div>
+      <div class="platform-status">${platformStatusHtml}</div>
+      <div style="margin-top:6px">${tags}</div>
+      ${renderTagPreview(r)}
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="record-section">
+      <div class="record-section-head">
+        <div class="record-section-title">待发布记录 (${pendingRecords.length})</div>
+      </div>
+      ${visiblePending.length ? renderCards(visiblePending) : '<div class="empty">当前没有待发布记录</div>'}
+    </div>
+    <div class="record-section">
+      <div class="record-section-head">
+        <div class="record-section-title">已完成记录 (${completedRecords.length})</div>
+        <button class="record-toggle" onclick="toggleCompletedRecords()">${showCompletedRecords ? '收起已完成' : '展开已完成'}</button>
+      </div>
+      ${showCompletedRecords
+        ? (visibleCompleted.length ? renderCards(visibleCompleted) : '<div class="empty">当前没有已完成记录</div>')
+        : '<div class="empty" style="padding:18px 0;">已完成记录默认折叠，点击右侧按钮展开</div>'}
+    </div>
+  `;
+}
+
+function showMoreRecords() {
+  recordRenderLimit += 80;
+  renderRecordList(recordListData);
+}
+
+function toggleCompletedRecords() {
+  showCompletedRecords = !showCompletedRecords;
+  renderRecordList(recordListData);
+}
+
+async function refreshRecords(force = false) {
+  if (isRefreshingRecords) return;
+  isRefreshingRecords = true;
+  const el = document.getElementById('recordList');
+  if (!recordListData.length || force) {
+    el.innerHTML = '<div class="empty">加载中...</div>';
+  }
+  try {
+    const resp = await fetchApi('/api/all-records');
+    if (!resp.success) throw new Error(resp.error);
+    const records = resp.data || [];
+    const signature = JSON.stringify(records);
+    if (!force && signature === lastRecordsSignature) return;
+    lastRecordsSignature = signature;
+    recordListData = records;
+    if (force) recordRenderLimit = 80;
+    renderRecordList(records);
+  } catch (e) {
+    el.innerHTML = `<div class="empty" style="color:#ef4444">加载失败: ${e.message}</div>`;
+  } finally {
+    isRefreshingRecords = false;
+  }
+}
+
+async function startScheduler() {
+  await fetchApi('/api/scheduler/start', 'POST');
+  addLog('info', '定时服务已启动');
+  refreshStatus();
+}
+
+async function stopScheduler() {
+  await fetchApi('/api/scheduler/stop', 'POST');
+  addLog('info', '定时服务已停止');
+  refreshStatus();
+}
+
+async function publishNow() {
+  addLog('info', '手动触发发布检查...');
+  renderProgress({
+    active: true,
+    stage: 'checking',
+    title: '',
+    detail: '正在手动触发发布检查',
+    updatedAt: new Date().toLocaleString('zh-CN')
+  });
+  try {
+    const result = await fetchApi('/api/publish/now', 'POST', {});
+    if (result.success) {
+      addLog('success', `发布完成: 成功 ${result.published}, 失败 ${result.failed}`);
+    } else {
+      addLog('error', `发布失败: ${result.error}`);
+    }
+  } catch (e) {
+    addLog('error', `请求失败: ${e.message}`);
+    renderProgress({
+      active: false,
+      stage: 'failed',
+      title: '',
+      detail: `手动发布失败: ${e.message}`,
+      updatedAt: new Date().toLocaleString('zh-CN')
+    });
+  }
+  refreshStatus();
+  refreshRecords(true);
+}
+
+function toggleSettings() {
+  document.getElementById('settingsPanel').classList.toggle('settings-collapsed');
+}
+
+function toggleAccounts() {
+  document.getElementById('accountsPanel').classList.toggle('settings-collapsed');
+  refreshAccounts();
+}
+
+function toggleBitbrowserMappings() {
+  document.getElementById('bitbrowserPanel').classList.toggle('settings-collapsed');
+  refreshBitbrowserMappings();
+}
+
+function toggleMusic() {
+  document.getElementById('musicPanel').classList.toggle('settings-collapsed');
+  loadCurrentMusic();
+}
+
+function togglePluginUpdates() {
+  document.getElementById('pluginUpdatePanel').classList.toggle('settings-collapsed');
+  checkPluginUpdates();
+}
+
+function renderPluginUpdateState(data) {
+  pluginUpdateState = data || null;
+  document.getElementById('pluginLocalPath').textContent = data?.local?.path || '-';
+  document.getElementById('pluginLocalCommit').textContent = data?.local?.commit
+    ? `${data.local.shortCommit} ${data.local.commitTime ? `(${data.local.commitTime})` : ''}`
+    : '未检测到本机插件提交';
+  document.getElementById('pluginOfficialCommit').textContent = data?.official?.commit
+    ? `${data.official.shortCommit} · ${data.official.repo}`
+    : '暂时无法连接官方仓库';
+  document.getElementById('pluginLocalRemote').textContent = data?.local?.remote || '未配置 git remote';
+
+  const statusTextEl = document.getElementById('pluginUpdateStatusText');
+  const decisionEl = document.getElementById('pluginUpdateDecision');
+  if (!data) {
+    decisionEl.textContent = '当前建议：继续使用当前版本';
+    statusTextEl.textContent = '点击“检查官方更新”后，这里会显示更直接的判断结论。';
+    return;
+  }
+
+  decisionEl.textContent = `当前建议：${data.recommendation || '继续使用当前版本'}`;
+  statusTextEl.textContent = `${data.statusText} 最近检查时间: ${data.checkedAt || '-'}。`;
+}
+
+async function checkPluginUpdates(forceLog = false) {
+  const statusTextEl = document.getElementById('pluginUpdateStatusText');
+  const decisionEl = document.getElementById('pluginUpdateDecision');
+  decisionEl.textContent = '当前建议：检查中';
+  statusTextEl.textContent = '正在检查官方插件更新...';
+  try {
+    const resp = await fetchApi('/api/plugin/update-check');
+    if (!resp.success) throw new Error(resp.error);
+    renderPluginUpdateState(resp);
+    if (forceLog) {
+      addLog(resp.updateAvailable ? 'info' : 'success', resp.statusText || '已完成插件更新检查');
+    }
+  } catch (e) {
+    renderPluginUpdateState(null);
+    decisionEl.textContent = '当前建议：继续使用当前版本';
+    statusTextEl.textContent = `检查失败: ${e.message}`;
+    if (forceLog) addLog('error', `检查官方插件更新失败: ${e.message}`);
+  }
+}
+
+function renderBitbrowserMappings() {
+  const listEl = document.getElementById('bitbrowserList');
+  const summaryEl = document.getElementById('bitbrowserSummary');
+  if (!bitbrowserMappings.length) {
+    listEl.innerHTML = '<div class="empty">当前飞书记录里还没有检测到小红书账号</div>';
+    summaryEl.textContent = '当前没有可配置的比特浏览器账号。';
+    return;
+  }
+
+  const configuredCount = bitbrowserMappings.filter(item => item.browserId).length;
+  const bitbrowserUsageCount = bitbrowserMappings.filter(item => item.bitbrowserRecords > 0).length;
+  summaryEl.textContent = `共识别 ${bitbrowserMappings.length} 个小红书账号，已配置 ${configuredCount} 个 browserId，其中 ${bitbrowserUsageCount} 个账号已有记录明确选择比特浏览器。飞书中的“小红书账号”“小红书发布渠道”会在同步时一起维护单选选项。`;
+
+  listEl.innerHTML = bitbrowserMappings.map((item, index) => `
+    <div class="mapping-row">
+      <div class="account-main">
+        <div class="account-title">${escapeHtml(item.accountName)}</div>
+        <div class="account-meta">飞书记录: ${item.totalRecords || 0} 条 · 走比特浏览器: ${item.bitbrowserRecords || 0} 条</div>
+        <div class="account-badges">
+          <span class="${item.browserId ? 'badge-ok' : 'badge-bad'}">${item.browserId ? '已配置 browserId' : '未配置 browserId'}</span>
+          <span class="${item.bitbrowserRecords > 0 ? 'badge-map' : 'badge-unmap'}">${item.bitbrowserRecords > 0 ? '飞书已选比特浏览器' : '飞书暂未选择比特浏览器'}</span>
+        </div>
+      </div>
+      <div class="mapping-actions">
+        <input
+          class="mapping-input"
+          placeholder="填写该账号对应的 BitBrowser browserId"
+          value="${escapeHtml(item.browserId || '')}"
+          onchange="updateBitbrowserMapping(${index}, this.value)"
+        >
+      </div>
+    </div>
+  `).join('');
+}
+
+function updateBitbrowserMapping(index, value) {
+  if (!bitbrowserMappings[index]) return;
+  bitbrowserMappings[index].browserId = String(value || '').trim();
+}
+
+async function refreshBitbrowserMappings(forceLog = false) {
+  const listEl = document.getElementById('bitbrowserList');
+  listEl.innerHTML = '<div class="empty">正在同步飞书账号与本地 browserId 映射...</div>';
+  try {
+    const resp = await fetchApi('/api/bitbrowser/accounts');
+    if (!resp.success) throw new Error(resp.error);
+    bitbrowserMappings = resp.data || [];
+    renderBitbrowserMappings();
+    if (forceLog) addLog('success', '已同步飞书中的小红书账号列表');
+  } catch (e) {
+    listEl.innerHTML = `<div class="empty" style="color:#ef4444">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function syncFeishuBitbrowserFields() {
+  const listEl = document.getElementById('bitbrowserList');
+  listEl.innerHTML = '<div class="empty">正在同步飞书单选字段与本地 browserId 映射...</div>';
+  try {
+    const resp = await fetchApi('/api/bitbrowser/sync-feishu', 'POST', {});
+    if (!resp.success) throw new Error(resp.error);
+    bitbrowserMappings = resp.data || [];
+    renderBitbrowserMappings();
+    addLog('success', resp.message || '飞书单选字段已同步');
+    refreshRecords(true);
+  } catch (e) {
+    listEl.innerHTML = `<div class="empty" style="color:#ef4444">同步失败: ${escapeHtml(e.message)}</div>`;
+    addLog('error', `同步飞书单选字段失败: ${e.message}`);
+  }
+}
+
+async function saveBitbrowserMappings() {
+  try {
+    const resp = await fetchApi('/api/bitbrowser/accounts', 'POST', { mappings: bitbrowserMappings });
+    if (!resp.success) throw new Error(resp.error);
+    bitbrowserMappings = resp.data || [];
+    renderBitbrowserMappings();
+    addLog('success', resp.message || '比特浏览器账号映射已保存');
+    refreshRecords(true);
+  } catch (e) {
+    addLog('error', `保存比特浏览器映射失败: ${e.message}`);
+  }
+}
+
+function closeMusicLibrary(event) {
+  if (event && event.target && event.target.id !== 'musicModal') return;
+  document.getElementById('musicModal').classList.remove('open');
+}
+
+async function openMusicLibrary(mode = 'recommend') {
+  document.getElementById('musicModal').classList.add('open');
+  document.getElementById('musicLibraryList').innerHTML = '<div class="music-empty">正在加载音乐列表...</div>';
+  document.getElementById('musicLibrarySearch').value = '';
+  await loadMusicCategories();
+  if (mode === 'hot') {
+    const hotTab = builtInMusicTabs.find(tab => tab.key === 'hot');
+    if (hotTab) {
+      await selectBuiltInMusicTab(hotTab.key, hotTab.label, hotTab.keyword);
+      return;
+    }
+  }
+  await selectBuiltInMusicTab('recommend', '热歌推荐', '热歌');
+}
+
+async function loadMusicCategories() {
+  if (musicCategories.length > 0) {
+    renderMusicTabs();
+    return;
+  }
+
+  const resp = await fetchApi('/api/music/categories');
+  if (!resp.success) throw new Error(resp.error || '加载分类失败');
+  musicCategories = resp.categories || [];
+  renderMusicTabs();
+}
+
+function renderMusicTabs() {
+  const tabs = [
+    ...builtInMusicTabs,
+    ...musicCategories.slice(0, 4).map(c => ({
+    key: c.yixiaoerId,
+    label: c.yixiaoerName,
+    categoryId: c.yixiaoerId,
+    categoryName: c.yixiaoerName,
+    })),
+  ];
+
+  const activeKey = musicLibraryState.mode === 'search'
+    ? 'search'
+    : (musicLibraryState.categoryId || musicLibraryState.mode || 'recommend');
+
+  document.getElementById('musicTabs').innerHTML = tabs.map(tab => {
+    const active = activeKey === tab.key;
+    const handler = tab.keyword
+      ? `selectBuiltInMusicTab('${escapeJsSingleQuotedString(tab.key)}', '${escapeJsSingleQuotedString(tab.label)}', '${escapeJsSingleQuotedString(tab.keyword)}')`
+      : `selectMusicTab('${escapeJsSingleQuotedString(tab.categoryId)}', '${escapeJsSingleQuotedString(tab.categoryName)}')`;
+    return `<button class="music-tab ${active ? 'active' : ''}" onclick="${handler}">${escapeHtml(tab.label)}</button>`;
+  }).join('');
+}
+
+async function selectBuiltInMusicTab(modeKey, label, keyword) {
+  musicLibraryState = {
+    mode: modeKey,
+    keyword: keyword || '热歌',
+    categoryId: '',
+    categoryName: label || '',
+    nextPage: null,
+  };
+  renderMusicTabs();
+  await fetchMusicLibrary();
+}
+
+async function selectMusicTab(categoryId, categoryName) {
+  musicLibraryState = {
+    mode: 'category',
+    keyword: '',
+    categoryId,
+    categoryName,
+    nextPage: null,
+  };
+  renderMusicTabs();
+  await fetchMusicLibrary();
+}
+
+async function searchMusicLibrary() {
+  const keyword = document.getElementById('musicLibrarySearch').value.trim();
+  if (!keyword) {
+    await selectBuiltInMusicTab('recommend', '热歌推荐', '热歌');
+    return;
+  }
+
+  musicLibraryState = {
+    mode: 'search',
+    keyword,
+    categoryId: '',
+    categoryName: '',
+    nextPage: null,
+  };
+  document.getElementById('musicTabs').innerHTML = '<button class="music-tab active">搜索结果</button>';
+  await fetchMusicLibrary();
+}
+
+async function fetchMusicLibrary(append = false) {
+  const listEl = document.getElementById('musicLibraryList');
+  const loadMoreEl = document.getElementById('musicLoadMore');
+  if (!append) {
+    listEl.innerHTML = '<div class="music-empty">正在加载音乐列表...</div>';
+    loadMoreEl.style.display = 'none';
+  }
+
+  try {
+    const resp = await fetchApi('/api/music/library', 'POST', {
+      keyword: musicLibraryState.keyword,
+      categoryId: musicLibraryState.categoryId,
+      categoryName: musicLibraryState.categoryName,
+      nextPage: append ? musicLibraryState.nextPage : '',
+    });
+    if (!resp.success) throw new Error(resp.error);
+
+    musicLibraryState.nextPage = resp.nextPage || null;
+    renderMusicLibrary(resp.music || [], append);
+    loadMoreEl.style.display = musicLibraryState.nextPage ? 'block' : 'none';
+  } catch (e) {
+    listEl.innerHTML = `<div class="music-empty" style="color:#ef4444;">加载失败: ${escapeHtml(e.message)}</div>`;
+    loadMoreEl.style.display = 'none';
+  }
+}
+
+function renderMusicLibrary(musicList, append = false) {
+  const listEl = document.getElementById('musicLibraryList');
+  const html = musicList.length > 0
+    ? musicList.map(m => `
+      <div class="music-library-item">
+        <button class="music-play-btn ${currentPreviewUrl === (m.playUrl || '') ? 'playing' : ''}" onclick="previewMusic('${escapeJsSingleQuotedString(m.playUrl || '')}', this)">
+          ▶
+        </button>
+        <div class="music-meta">
+          <div class="music-name">${escapeHtml(m.yixiaoerName || '未命名音乐')}</div>
+          <div class="music-sub">${escapeHtml(m.authorName || '未知作者')}</div>
+        </div>
+        <div class="music-actions">
+          <button class="music-preview ${currentPreviewUrl === (m.playUrl || '') ? 'playing' : ''}" onclick="previewMusic('${escapeJsSingleQuotedString(m.playUrl || '')}', this)">
+            ${currentPreviewUrl === (m.playUrl || '') ? '暂停' : '试听'}
+          </button>
+          <span class="music-duration">${formatDuration(m.duration)}</span>
+          <button class="music-use-btn" onclick="selectMusicFromLibrary('${escapeJsSingleQuotedString(m.yixiaoerId)}', '${escapeJsSingleQuotedString(m.yixiaoerName)}')">使用</button>
+        </div>
+      </div>
+    `).join('')
+    : '<div class="music-empty">暂无音乐</div>';
+
+  if (append && !listEl.querySelector('.music-empty')) {
+    listEl.insertAdjacentHTML('beforeend', html);
+  } else {
+    listEl.innerHTML = html;
+  }
+}
+
+async function loadMoreMusic() {
+  if (!musicLibraryState.nextPage) return;
+  await fetchMusicLibrary(true);
+}
+
+function previewMusic(playUrl) {
+  if (!playUrl) {
+    addLog('error', '当前音乐没有可试听地址');
+    return;
+  }
+
+  const player = document.getElementById('musicPreviewPlayer');
+  if (currentPreviewUrl === playUrl && !player.paused) {
+    player.pause();
+    currentPreviewUrl = '';
+    refreshMusicPreviewButtons();
+    return;
+  }
+
+  currentPreviewUrl = playUrl;
+  player.src = playUrl;
+  player.play().catch(err => addLog('error', `试听失败: ${err.message}`));
+  refreshMusicPreviewButtons();
+}
+
+function refreshMusicPreviewButtons() {
+  const player = document.getElementById('musicPreviewPlayer');
+  document.querySelectorAll('.music-play-btn').forEach(btn => btn.classList.remove('playing'));
+  document.querySelectorAll('.music-preview').forEach(btn => {
+    btn.classList.remove('playing');
+    btn.textContent = '试听';
+  });
+
+  if (!currentPreviewUrl || player.paused) return;
+
+  document.querySelectorAll('.music-library-item').forEach(item => {
+    const playHandler = item.querySelector('.music-play-btn')?.getAttribute('onclick') || '';
+    if (playHandler.includes(escapeJsSingleQuotedString(currentPreviewUrl))) {
+      const playBtn = item.querySelector('.music-play-btn');
+      const previewBtn = item.querySelector('.music-preview');
+      if (playBtn) playBtn.classList.add('playing');
+      if (previewBtn) {
+        previewBtn.classList.add('playing');
+        previewBtn.textContent = '暂停';
+      }
+    }
+  });
+}
+
+async function saveSchedule() {
+  // 验证
+  for (const p of periods) {
+    if (!p.startTime || !p.endTime) {
+      addLog('error', '请填写完整的开始和结束时间');
+      return;
+    }
+    if (p.startTime >= p.endTime) {
+      addLog('error', `时间段 ${p.startTime}-${p.endTime} 的开始时间必须早于结束时间`);
+      return;
+    }
+  }
+  try {
+    const resp = await fetchApi('/api/schedule', 'POST', { periods });
+    if (resp.success) {
+      addLog('success', '定时配置已保存');
+      refreshStatus();
+    } else {
+      addLog('error', '保存失败: ' + resp.error);
+    }
+  } catch (e) {
+    addLog('error', '保存失败: ' + e.message);
+  }
+}
+
+async function refreshAccounts() {
+  const el = document.getElementById('accountList');
+  el.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const resp = await fetchApi('/api/accounts/status');
+    if (!resp.success) throw new Error(resp.error);
+    const list = resp.data || [];
+    if (list.length === 0) {
+      el.innerHTML = '<div class="empty">没有账号数据</div>';
+      return;
+    }
+    el.innerHTML = list.map(item => `
+      <div class="account-item">
+        <div class="account-main">
+          <div class="account-title">${escapeHtml(item.accountName || '未命名账号')}</div>
+          <div class="account-meta">${escapeHtml(item.platform || '-')} · ID: ${escapeHtml(item.id || '-')}</div>
+          <div class="account-meta">
+            ${item.status === 1 ? '状态正常' : '状态异常'}
+            · ${item.isFreeze ? '已冻结' : '未冻结'}
+            · ${item.isOperate ? '可操作' : '不可操作'}
+            · ${item.isRealNameVerified ? '已实名' : '未实名'}
+          </div>
+        </div>
+        <div class="account-badges">
+          <span class="${item.statusText === '在线/授权正常' ? 'badge-ok' : 'badge-bad'}">${escapeHtml(item.statusText)}</span>
+          <span class="${item.mapped ? 'badge-map' : 'badge-unmap'}">${item.mapped ? '已映射' : '未映射'}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty" style="color:#ef4444">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderLogs(logs) {
+  logEntries = Array.isArray(logs) ? logs.slice(-MAX_LOG_ENTRIES) : [];
+  const el = document.getElementById('logPanel');
+  el.innerHTML = logEntries.map(l => {
+    const cls = l.level === 'error' ? 'log-error' : l.level === 'success' ? 'log-success' : 'log-info';
+    return `<div class="log-entry"><span class="log-time">[${l.time}]</span> <span class="${cls}">${l.message}</span></div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function addLog(level, message) {
+  const time = new Date().toLocaleString('zh-CN');
+  logEntries.push({ time, level, message });
+  if (logEntries.length > MAX_LOG_ENTRIES) {
+    logEntries = logEntries.slice(-MAX_LOG_ENTRIES);
+  }
+  renderLogs(logEntries);
+}
+
+function connectSSE() {
+  if (eventSource) {
+    eventSource.close();
+  }
+  eventSource = new EventSource('/api/logs/stream');
+  eventSource.onmessage = (e) => {
+    try { const log = JSON.parse(e.data); addLog(log.level, log.message); } catch (err) {}
+  };
+  eventSource.addEventListener('progress', (e) => {
+    try { renderProgress(JSON.parse(e.data)); } catch (err) {}
+  });
+  eventSource.onerror = () => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connectSSE, 5000);
+  };
+}
+
+// 音乐设置功能
+async function loadCurrentMusic() {
+  try {
+    const resp = await fetchApi('/api/music/default/validate');
+    const musicEl = document.getElementById('currentMusic').querySelector('.music-status');
+    const hintEl = document.getElementById('musicStatusHint');
+    hintEl.className = 'music-status-hint';
+    if (resp.success && resp.configuredMusic) {
+      musicEl.textContent = `🎵 ${resp.configuredMusic.text}`;
+      musicEl.className = 'music-status selected';
+      hintEl.textContent = resp.message || '当前默认配乐可用';
+      hintEl.classList.add(resp.valid ? 'success' : 'warning');
+    } else {
+      musicEl.textContent = '未设置默认配乐';
+      musicEl.className = 'music-status';
+      hintEl.textContent = '当前未设置默认配乐，发布时会自动回退到热门纯音乐。';
+      hintEl.classList.add('warning');
+    }
+  } catch (e) {
+    console.error('加载当前音乐失败:', e);
+  }
+}
+
+async function searchMusic() {
+  await openMusicLibrary();
+}
+
+async function selectMusic(musicId, musicName) {
+  try {
+    const resp = await fetchApi('/api/music/default', 'POST', {
+      music: { id: musicId, text: musicName }
+    });
+    if (resp.success) {
+      addLog('success', `默认配乐已设置: ${musicName}`);
+      loadCurrentMusic();
+      document.getElementById('musicResults').innerHTML = '<div class="music-empty">已设置默认配乐，可继续打开音乐库更换</div>';
+    } else {
+      addLog('error', '设置失败: ' + resp.error);
+    }
+  } catch (e) {
+    addLog('error', '设置失败: ' + e.message);
+  }
+}
+
+async function selectMusicFromLibrary(musicId, musicName) {
+  await selectMusic(musicId, musicName);
+  closeMusicLibrary();
+}
+
+async function clearDefaultMusic() {
+  try {
+    const resp = await fetchApi('/api/music/default', 'DELETE');
+    if (resp.success) {
+      addLog('success', '已清除默认配乐设置');
+      loadCurrentMusic();
+      document.getElementById('musicResults').innerHTML = '<div class="music-empty">默认配乐已清除，可重新打开音乐库选择</div>';
+    } else {
+      addLog('error', '清除失败: ' + resp.error);
+    }
+  } catch (e) {
+    addLog('error', '清除失败: ' + e.message);
+  }
+}
+
+// 初始化
+renderPeriods();
+refreshStatus();
+refreshRecords(true);
+connectSSE();
+setInterval(() => {
+  if (!document.hidden) refreshStatus();
+}, 30000);
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    refreshStatus();
+  }
+});
+
+window.addEventListener('beforeunload', () => {
+  if (eventSource) eventSource.close();
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+});
+
+document.getElementById('musicPreviewPlayer').addEventListener('ended', () => {
+  currentPreviewUrl = '';
+  refreshMusicPreviewButtons();
+});
+
+document.getElementById('musicPreviewPlayer').addEventListener('pause', () => {
+  if (!document.getElementById('musicPreviewPlayer').ended) {
+    currentPreviewUrl = '';
+    refreshMusicPreviewButtons();
+  }
+});
+</script>
+</body>
+</html>

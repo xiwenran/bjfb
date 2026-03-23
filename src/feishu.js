@@ -1,0 +1,324 @@
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+class FeishuClient {
+  constructor(config) {
+    this.appId = config.appId;
+    this.appSecret = config.appSecret;
+    this.appToken = config.appToken;
+    this.tableId = config.tableId;
+    this.accessToken = null;
+    this.tokenExpiry = 0;
+  }
+
+  async getAccessToken() {
+    if (this.accessToken && Date.now() < this.tokenExpiry) {
+      return this.accessToken;
+    }
+    const resp = await axios.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      app_id: this.appId,
+      app_secret: this.appSecret,
+    });
+    this.accessToken = resp.data.tenant_access_token;
+    this.tokenExpiry = Date.now() + (resp.data.expire - 60) * 1000;
+    return this.accessToken;
+  }
+
+  async getRecords(filter) {
+    const token = await this.getAccessToken();
+    const items = [];
+    let pageToken;
+    let hasMore = true;
+
+    while (hasMore) {
+      const body = { page_size: 100 };
+      if (filter) body.filter = filter;
+      if (pageToken) body.page_token = pageToken;
+
+      const resp = await axios.post(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+        body,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const data = resp.data.data || {};
+      items.push(...(data.items || []));
+      hasMore = Boolean(data.has_more);
+      pageToken = data.page_token;
+    }
+
+    return items;
+  }
+
+  async getFields() {
+    const token = await this.getAccessToken();
+    const items = [];
+    let pageToken;
+    let hasMore = true;
+
+    while (hasMore) {
+      const resp = await axios.get(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          params: {
+            page_size: 100,
+            page_token: pageToken,
+          },
+        }
+      );
+      const data = resp.data.data || {};
+      items.push(...(data.items || []));
+      hasMore = Boolean(data.has_more);
+      pageToken = data.page_token;
+    }
+
+    return items;
+  }
+
+  async updateField(fieldId, body) {
+    const token = await this.getAccessToken();
+    const resp = await axios.put(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields/${fieldId}`,
+      body,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return resp.data.data?.field || null;
+  }
+
+  buildSingleSelectOptions(existingOptions = [], targetNames = [], options = {}) {
+    const nextNames = (targetNames || [])
+      .map(name => String(name || '').trim())
+      .filter(Boolean);
+
+    const existingNames = options.keepExisting
+      ? (existingOptions || []).map(option => String(option.name || '').trim()).filter(Boolean)
+      : [];
+
+    const cleanNames = [...new Set([...existingNames, ...nextNames])];
+
+    const existingByName = new Map(
+      (existingOptions || []).map(option => [String(option.name || '').trim(), option]).filter(([name]) => name)
+    );
+
+    let nextColor = (existingOptions || []).reduce((max, option) => {
+      return Math.max(max, Number.isInteger(option.color) ? option.color : -1);
+    }, -1) + 1;
+
+    return cleanNames.map(name => {
+      const existing = existingByName.get(name);
+      if (existing) {
+        return {
+          id: existing.id,
+          name,
+          color: Number.isInteger(existing.color) ? existing.color : 0,
+        };
+      }
+
+      const option = { name, color: nextColor % 55 };
+      nextColor += 1;
+      return option;
+    });
+  }
+
+  async syncSingleSelectFieldOptions(fieldName, targetNames = [], options = {}) {
+    const fields = await this.getFields();
+    const field = fields.find(item => item.field_name === fieldName);
+    if (!field) {
+      throw new Error(`未找到飞书字段: ${fieldName}`);
+    }
+
+    if (field.type !== 3) {
+      throw new Error(`飞书字段 ${fieldName} 不是单选字段(type=${field.type})`);
+    }
+
+    const property = field.property || {};
+    const nextOptions = this.buildSingleSelectOptions(property.options || [], targetNames, options);
+    return await this.updateField(field.field_id, {
+      field_name: field.field_name,
+      type: field.type,
+      property: {
+        ...property,
+        options: nextOptions,
+      },
+    });
+  }
+
+  async getSingleSelectFieldOptionNames(fieldName) {
+    const fields = await this.getFields();
+    const field = fields.find(item => item.field_name === fieldName);
+    if (!field || field.type !== 3) return [];
+    return (field.property?.options || [])
+      .map(option => String(option.name || '').trim())
+      .filter(Boolean);
+  }
+
+  async getUnpublishedRecords() {
+    const records = await this.getRecords();
+    return records.filter(r => {
+      const fields = r.fields;
+      const status = fields['发布状态'];
+      const normalizedStatus = typeof status === 'string'
+        ? status
+        : (status && typeof status.text === 'string' ? status.text : '');
+      return normalizedStatus !== '已发布';
+    });
+  }
+
+  async updateRecord(recordId, fields) {
+    const token = await this.getAccessToken();
+    await axios.put(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
+      { fields },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  }
+
+  async markPublished(recordId) {
+    await this.updateRecord(recordId, { '发布状态': '已发布' });
+  }
+
+  async markPlatformStatus(recordId, platform, status) {
+    const fieldName = platform === '小红书' ? '小红书发布状态' : '抖音发布状态';
+    await this.updateRecord(recordId, { [fieldName]: status });
+  }
+
+  async markFailed(recordId, reason) {
+    await this.updateRecord(recordId, { '备注': reason });
+  }
+
+  async setNote(recordId, note) {
+    await this.updateRecord(recordId, { '备注': note || '' });
+  }
+
+  async downloadAttachment(fileToken, destDir) {
+    const token = await this.getAccessToken();
+    // 获取临时下载URL
+    const urlResp = await axios.get(
+      `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url`,
+      {
+        params: { file_tokens: fileToken },
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+    const tmpUrls = urlResp.data.data?.tmp_download_urls || [];
+    if (tmpUrls.length === 0) throw new Error(`无法获取文件下载URL: ${fileToken}`);
+
+    const downloadUrl = tmpUrls[0].tmp_download_url;
+    const resp = await axios.get(downloadUrl, { responseType: 'arraybuffer' });
+
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+    const filePath = path.join(destDir, `${fileToken}.tmp`);
+    fs.writeFileSync(filePath, resp.data);
+    return filePath;
+  }
+
+  async downloadAllAttachments(attachments, destDir) {
+    if (!attachments || attachments.length === 0) return [];
+
+    // 按文件名数字排序（0.png, 1.png, 2.png...）
+    const sorted = [...attachments].sort((a, b) => {
+      const numA = parseInt(a.name) || 0;
+      const numB = parseInt(b.name) || 0;
+      return numA - numB;
+    });
+
+    const paths = [];
+    for (const att of sorted) {
+      const filePath = await this.downloadAttachment(att.file_token, destDir);
+      // 用原始文件名重命名
+      const ext = path.extname(att.name) || '.png';
+      const newPath = path.join(destDir, att.name.includes('.') ? att.name : `${att.name}${ext}`);
+      fs.renameSync(filePath, newPath);
+      paths.push(newPath);
+      console.log(`  📥 下载: ${att.name}`);
+    }
+    return paths;
+  }
+
+  parseRecord(record) {
+    const f = record.fields;
+    const getText = (field) => {
+      if (!field) return '';
+      if (typeof field === 'string') return field;
+      if (Array.isArray(field)) return field.map(item => item.text || item).join('');
+      if (field.text) return field.text;
+      return '';
+    };
+
+    const getSelect = (field) => {
+      if (!field) return '';
+      if (typeof field === 'string') return field;
+      if (field.text) return field.text;
+      return '';
+    };
+
+    const getTagValues = (field) => {
+      if (!field) return [];
+
+      if (typeof field === 'string') {
+        return field
+          .split(/[#\n,，\s]+/)
+          .map(tag => tag.trim())
+          .filter(Boolean);
+      }
+
+      if (Array.isArray(field)) {
+        return field
+          .map(item => {
+            if (typeof item === 'string') return item;
+            if (!item || typeof item !== 'object') return '';
+            if (typeof item.text === 'string') return item.text;
+            if (typeof item.name === 'string') return item.name;
+            if (typeof item.value === 'string') return item.value;
+            if (typeof item.label === 'string') return item.label;
+            if (typeof item.title === 'string') return item.title;
+            return '';
+          })
+          .map(tag => tag.trim())
+          .filter(Boolean)
+          .map(tag => tag.replace(/^#+/, ''));
+      }
+
+      if (typeof field === 'object') {
+        const candidate = field.text || field.name || field.value || field.label || field.title;
+        return candidate ? [String(candidate).replace(/^#+/, '').trim()].filter(Boolean) : [];
+      }
+
+      return [];
+    };
+
+    const tags = getTagValues(f['标签']);
+
+    // 解析发布时间
+    let publishTime = null;
+    if (f['发布时间']) {
+      publishTime = typeof f['发布时间'] === 'number'
+        ? new Date(f['发布时间'])
+        : new Date(f['发布时间']);
+    }
+
+    return {
+      recordId: record.record_id,
+      title: getText(f['标题']),
+      description: getText(f['正文']),
+      tags,
+      contentType: getSelect(f['内容类型']) || '图文',
+      attachments: f['素材'] || [],
+      videoCover: f['视频封面'] || [],
+      xiaohongshuAccount: getSelect(f['小红书账号']),
+      xiaohongshuPublishChannel: getSelect(f['小红书发布渠道']) || '蚁小二',
+      douyinAccount: getSelect(f['抖音账号']),
+      musicKeyword: getText(f['配乐关键词']),
+      musicSongName: getText(f['指定歌曲名']),
+      publishTime,
+      published: getSelect(f['发布状态']) === '已发布',
+      xiaohongshuStatus: getSelect(f['小红书发布状态']),
+      douyinStatus: getSelect(f['抖音发布状态']),
+      note: getText(f['备注']),
+    };
+  }
+}
+
+module.exports = FeishuClient;

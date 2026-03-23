@@ -1,0 +1,8 @@
+config.json
+config.local.json
+node_modules/
+.codepilot-uploads/
+/tmp/
+publish-ledger.json
+.claude/
+小雨老师/

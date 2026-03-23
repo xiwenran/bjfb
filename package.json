@@ -1,0 +1,23 @@
+{
+  "name": "yixiaoer-publisher",
+  "version": "1.0.0",
+  "description": "蚁小二多平台自动发布工具 - 飞书表格驱动",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node -e \"const S = require('./src/scheduler.js'); const c = require('./config.json'); new S(c).checkAndPublish()\""
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "playwright-core": "^1.58.2"
+  },
+  "keywords": [
+    "yixiaoer",
+    "publish",
+    "feishu",
+    "douyin",
+    "xiaohongshu"
+  ],
+  "author": "",
+  "license": "MIT"
+}
