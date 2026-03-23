@@ -205,6 +205,9 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const result = await scheduler.checkAndPublish();
+        if (result && result.error) {
+          return sendJson(res, { success: false, ...result }, 500);
+        }
         sendJson(res, { success: true, ...result });
       } catch (e) {
         sendJson(res, { success: false, error: e.message }, 500);

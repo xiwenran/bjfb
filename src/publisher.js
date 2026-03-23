@@ -102,6 +102,30 @@ async function getAccounts(config, params = {}) {
   };
 }
 
+async function getAllAccounts(config, params = {}) {
+  const pageSize = Math.min(Number(params.size) || 200, 200);
+  let page = Number(params.page) || 1;
+  const items = [];
+
+  while (true) {
+    const result = await getAccounts(config, {
+      ...params,
+      page,
+      size: pageSize,
+    });
+
+    const currentItems = result.data || [];
+    items.push(...currentItems);
+
+    if (currentItems.length < pageSize) break;
+    if (result.totalSize && items.length >= result.totalSize) break;
+
+    page += 1;
+  }
+
+  return items;
+}
+
 async function getPublishRecordsApi(config, params = {}) {
   const result = await requestApi(config, 'GET', '/taskSets', {
     page: params.page || 1,
@@ -242,15 +266,11 @@ async function ensureLogin(config) {
 
 async function getAccountList(options = {}) {
   const yixiaoerConfig = getActiveYixiaoerConfig();
-  const params = {
-    page: 1,
-    size: 200,
-  };
+  const params = { page: 1, size: 200 };
   if (options.loginStatus !== undefined) {
     params.loginStatus = options.loginStatus;
   }
-  const accounts = await getAccounts(yixiaoerConfig, params);
-  return accounts.data || [];
+  return getAllAccounts(yixiaoerConfig, params);
 }
 
 async function validateAccount(platformAccountId) {
