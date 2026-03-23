@@ -2,108 +2,19 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
-const os = require('os');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
 const Scheduler = require('./scheduler.js');
 const publisher = require('./publisher.js');
 const FeishuClient = require('./feishu.js');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
-const LOCAL_PLUGIN_PATH = path.join(os.homedir(), '.agents/skills/yixiaoer-plugin');
-const OFFICIAL_PLUGIN_REPO = 'https://gitee.com/wangzj141/yixiaoer-skill.git';
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 const PORT = 3210;
-const execFileAsync = promisify(execFile);
 
 const scheduler = new Scheduler(config);
 const feishu = new FeishuClient(config.feishu);
 
 function saveConfig() {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
-}
-
-function shortHash(value) {
-  return value ? String(value).slice(0, 8) : '';
-}
-
-async function safeExecGit(args, cwd) {
-  try {
-    const { stdout } = await execFileAsync('git', args, { cwd, timeout: 15000 });
-    return stdout.trim();
-  } catch (error) {
-    return '';
-  }
-}
-
-async function getLocalPluginVersionInfo() {
-  const exists = fs.existsSync(LOCAL_PLUGIN_PATH);
-  const info = {
-    exists,
-    path: LOCAL_PLUGIN_PATH,
-    commit: '',
-    shortCommit: '',
-    commitTime: '',
-    remote: '',
-    sameAsOfficialRemote: false,
-  };
-
-  if (!exists) return info;
-
-  info.commit = await safeExecGit(['rev-parse', 'HEAD'], LOCAL_PLUGIN_PATH);
-  info.shortCommit = shortHash(info.commit);
-  info.commitTime = await safeExecGit(['show', '-s', '--format=%ci', 'HEAD'], LOCAL_PLUGIN_PATH);
-  info.remote = await safeExecGit(['remote', 'get-url', 'origin'], LOCAL_PLUGIN_PATH);
-  info.sameAsOfficialRemote = info.remote.includes('gitee.com/wangzj141/yixiaoer-skill.git');
-  return info;
-}
-
-async function getOfficialPluginVersionInfo() {
-  const hashLine = await safeExecGit(['ls-remote', OFFICIAL_PLUGIN_REPO, 'HEAD'], process.cwd());
-  const commit = hashLine.split(/\s+/)[0] || '';
-  return {
-    repo: OFFICIAL_PLUGIN_REPO,
-    commit,
-    shortCommit: shortHash(commit),
-    reachable: !!commit,
-  };
-}
-
-async function buildPluginUpdateStatus() {
-  const local = await getLocalPluginVersionInfo();
-  const official = await getOfficialPluginVersionInfo();
-  let statusText = '未检查';
-  let updateAvailable = false;
-  let recommendation = '保持当前版本';
-
-  if (!local.exists) {
-    statusText = '本机未找到已安装的蚁小二插件';
-    recommendation = '先确认本机插件安装位置';
-  } else if (!official.reachable) {
-    statusText = '暂时无法连接官方仓库，未完成更新检查';
-    recommendation = '继续使用当前版本，暂不处理';
-  } else if (local.commit && local.commit === official.commit) {
-    statusText = '当前本机插件已与官方仓库最新提交一致';
-    recommendation = '无需更新';
-  } else if (!local.sameAsOfficialRemote) {
-    updateAvailable = true;
-    statusText = '检测到官方仓库存在不同提交，且本机插件仓库并非官方同源远端，请人工确认后再更新';
-    recommendation = '先保持当前版本，确认官方修复对你有帮助时再人工同步';
-  } else {
-    updateAvailable = true;
-    statusText = '检测到官方仓库存在更新';
-    recommendation = '可在测试后人工更新';
-  }
-
-  return {
-    success: true,
-    local,
-    official,
-    updateAvailable,
-    recommendation,
-    checkedAt: new Date().toLocaleString('zh-CN'),
-    statusText,
-  };
 }
 
 async function getBitBrowserAccountMappings() {
@@ -334,15 +245,6 @@ const server = http.createServer(async (req, res) => {
         mapped: mappedIds.has(account.id),
       }));
       return sendJson(res, { success: true, data });
-    } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
-    }
-  }
-
-  if (pathname === '/api/plugin/update-check' && req.method === 'GET') {
-    try {
-      const result = await buildPluginUpdateStatus();
-      return sendJson(res, result);
     } catch (e) {
       return sendJson(res, { success: false, error: e.message }, 500);
     }

@@ -444,51 +444,6 @@
     gap: 10px;
     flex-wrap: wrap;
   }
-  .plugin-update-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 12px;
-    margin-bottom: 14px;
-  }
-  .plugin-update-card {
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 14px 16px;
-    background: #fff;
-  }
-  .plugin-update-label {
-    font-size: 12px;
-    color: #94a3b8;
-    margin-bottom: 6px;
-  }
-  .plugin-update-value {
-    font-size: 14px;
-    color: #273142;
-    font-weight: 600;
-    word-break: break-all;
-    line-height: 1.6;
-  }
-  .plugin-update-status {
-    font-size: 13px;
-    line-height: 1.7;
-    color: #475569;
-    padding: 14px 16px;
-    border-radius: 12px;
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
-  }
-  .plugin-update-decision {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    font-weight: 700;
-    padding: 8px 12px;
-    border-radius: 999px;
-    margin-bottom: 10px;
-    background: #eef2ff;
-    color: #4338ca;
-  }
   .record-item {
     border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; transition: border-color 0.2s;
   }
@@ -609,7 +564,6 @@
     <button class="btn btn-secondary" onclick="refreshRecords()">刷新表格数据</button>
     <button class="btn btn-sm btn-secondary" onclick="toggleAccounts()">🔐 账号状态</button>
     <button class="btn btn-sm btn-secondary" onclick="toggleBitbrowserMappings()">🧩 比特浏览器账号</button>
-    <button class="btn btn-sm btn-secondary" onclick="togglePluginUpdates()">🪄 插件更新</button>
     <button class="btn btn-sm btn-secondary" onclick="toggleSettings()">⚙ 定时设置</button>
     <button class="btn btn-sm btn-secondary" onclick="toggleMusic()">🎵 音乐设置</button>
   </div>
@@ -650,36 +604,6 @@
     <div id="bitbrowserSummary" class="record-summary" style="margin-bottom:12px;">点击“同步飞书账号”加载账号列表。</div>
     <div id="bitbrowserList" class="account-list">
       <div class="empty">点击“同步飞书账号”加载比特浏览器映射</div>
-    </div>
-  </div>
-
-  <div class="panel settings-collapsed" id="pluginUpdatePanel">
-    <h2>🪄 蚁小二插件更新</h2>
-    <div class="mapping-panel-toolbar">
-      <button class="btn btn-sm btn-secondary" onclick="checkPluginUpdates(true)">检查官方更新</button>
-      <span style="font-size:12px;color:#94a3b8;">只检查官方 Gitee 是否有新提交，不会自动升级你的本机插件。</span>
-    </div>
-    <div class="plugin-update-grid">
-      <div class="plugin-update-card">
-        <div class="plugin-update-label">本机插件路径</div>
-        <div class="plugin-update-value" id="pluginLocalPath">-</div>
-      </div>
-      <div class="plugin-update-card">
-        <div class="plugin-update-label">本机当前提交</div>
-        <div class="plugin-update-value" id="pluginLocalCommit">-</div>
-      </div>
-      <div class="plugin-update-card">
-        <div class="plugin-update-label">官方最新提交</div>
-        <div class="plugin-update-value" id="pluginOfficialCommit">-</div>
-      </div>
-      <div class="plugin-update-card">
-        <div class="plugin-update-label">本机远端来源</div>
-        <div class="plugin-update-value" id="pluginLocalRemote">-</div>
-      </div>
-    </div>
-    <div class="plugin-update-status" id="pluginUpdateStatus">
-      <div class="plugin-update-decision" id="pluginUpdateDecision">当前建议：继续使用当前版本</div>
-      <div id="pluginUpdateStatusText">点击“检查官方更新”后，这里会显示更直接的判断结论。</div>
     </div>
   </div>
 
@@ -808,7 +732,6 @@ let recordRenderLimit = 80;
 let showCompletedRecords = false;
 let logEntries = [];
 let bitbrowserMappings = [];
-let pluginUpdateState = null;
 const MAX_LOG_ENTRIES = 200;
 
 async function fetchApi(path, method = 'GET', body) {
@@ -1211,54 +1134,6 @@ function toggleBitbrowserMappings() {
 function toggleMusic() {
   document.getElementById('musicPanel').classList.toggle('settings-collapsed');
   loadCurrentMusic();
-}
-
-function togglePluginUpdates() {
-  document.getElementById('pluginUpdatePanel').classList.toggle('settings-collapsed');
-  checkPluginUpdates();
-}
-
-function renderPluginUpdateState(data) {
-  pluginUpdateState = data || null;
-  document.getElementById('pluginLocalPath').textContent = data?.local?.path || '-';
-  document.getElementById('pluginLocalCommit').textContent = data?.local?.commit
-    ? `${data.local.shortCommit} ${data.local.commitTime ? `(${data.local.commitTime})` : ''}`
-    : '未检测到本机插件提交';
-  document.getElementById('pluginOfficialCommit').textContent = data?.official?.commit
-    ? `${data.official.shortCommit} · ${data.official.repo}`
-    : '暂时无法连接官方仓库';
-  document.getElementById('pluginLocalRemote').textContent = data?.local?.remote || '未配置 git remote';
-
-  const statusTextEl = document.getElementById('pluginUpdateStatusText');
-  const decisionEl = document.getElementById('pluginUpdateDecision');
-  if (!data) {
-    decisionEl.textContent = '当前建议：继续使用当前版本';
-    statusTextEl.textContent = '点击“检查官方更新”后，这里会显示更直接的判断结论。';
-    return;
-  }
-
-  decisionEl.textContent = `当前建议：${data.recommendation || '继续使用当前版本'}`;
-  statusTextEl.textContent = `${data.statusText} 最近检查时间: ${data.checkedAt || '-'}。`;
-}
-
-async function checkPluginUpdates(forceLog = false) {
-  const statusTextEl = document.getElementById('pluginUpdateStatusText');
-  const decisionEl = document.getElementById('pluginUpdateDecision');
-  decisionEl.textContent = '当前建议：检查中';
-  statusTextEl.textContent = '正在检查官方插件更新...';
-  try {
-    const resp = await fetchApi('/api/plugin/update-check');
-    if (!resp.success) throw new Error(resp.error);
-    renderPluginUpdateState(resp);
-    if (forceLog) {
-      addLog(resp.updateAvailable ? 'info' : 'success', resp.statusText || '已完成插件更新检查');
-    }
-  } catch (e) {
-    renderPluginUpdateState(null);
-    decisionEl.textContent = '当前建议：继续使用当前版本';
-    statusTextEl.textContent = `检查失败: ${e.message}`;
-    if (forceLog) addLog('error', `检查官方插件更新失败: ${e.message}`);
-  }
 }
 
 function renderBitbrowserMappings() {

@@ -1,40 +1,247 @@
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
 
-// 蚁小二插件路径
-const PLUGIN_PATH = path.join(require('os').homedir(), '.agents/skills/yixiaoer-plugin/dist');
+const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
 const LEDGER_PATH = path.join(__dirname, '..', 'publish-ledger.json');
+const DEFAULT_API_BASE_URL = 'https://www.yixiaoer.cn/api';
+const PLATFORM_RULES = {
+  DouYin: { code: 'DouYin', name: '抖音', supportedTypes: ['video', 'imageText', 'article'] },
+  XiaoHongShu: { code: 'XiaoHongShu', name: '小红书', supportedTypes: ['video', 'imageText'] },
+};
+
+function getProjectConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+  } catch (error) {
+    return {};
+  }
+}
 
 let loginDone = false;
 let authSignature = null;
+let activeYixiaoerConfig = null;
+let cachedHttpClient = null;
+let cachedHttpClientSignature = null;
+
+function getYixiaoerConfig(config) {
+  return config?.yixiaoer || config || {};
+}
+
+function getApiSignature(config) {
+  const yixiaoerConfig = getYixiaoerConfig(config);
+  return [
+    yixiaoerConfig.baseUrl || DEFAULT_API_BASE_URL,
+    yixiaoerConfig.apiKey || '',
+    yixiaoerConfig.teamId || '',
+    yixiaoerConfig.clientId || '',
+  ].join(':');
+}
+
+function getActiveYixiaoerConfig() {
+  if (activeYixiaoerConfig) return activeYixiaoerConfig;
+  return getProjectConfig().yixiaoer || {};
+}
+
+function createHttpClient(config) {
+  const yixiaoerConfig = getYixiaoerConfig(config);
+  const signature = getApiSignature(yixiaoerConfig);
+
+  if (cachedHttpClient && cachedHttpClientSignature === signature) {
+    return cachedHttpClient;
+  }
+
+  const client = axios.create({
+    baseURL: yixiaoerConfig.baseUrl || DEFAULT_API_BASE_URL,
+    timeout: 30000,
+    headers: {
+      'Content-Type': 'application/json',
+      'x-client': 'openclaw',
+      Authorization: yixiaoerConfig.apiKey,
+    },
+  });
+
+  cachedHttpClient = client;
+  cachedHttpClientSignature = signature;
+  return client;
+}
+
+async function requestApi(config, method, endpoint, data) {
+  const client = createHttpClient(config);
+  try {
+    const response = await client.request({
+      method,
+      url: endpoint,
+      params: method === 'GET' ? data : undefined,
+      data: method === 'GET' ? undefined : data,
+    });
+    return response.data?.data !== undefined ? response.data.data : response.data;
+  } catch (error) {
+    const message = error.response?.data?.message || error.message;
+    throw new Error(`蚁小二API错误: ${message}`);
+  }
+}
+
+async function getTeams(config) {
+  const result = await requestApi(config, 'GET', '/teams');
+  return result?.data || result || [];
+}
+
+async function getAccounts(config, params = {}) {
+  const result = await requestApi(config, 'GET', '/platform-accounts', {
+    page: 1,
+    size: 200,
+    ...params,
+  });
+  return {
+    data: result?.data || [],
+    totalSize: result?.totalSize || 0,
+    page: result?.page || params.page || 1,
+    size: result?.size || params.size || 200,
+  };
+}
+
+async function getPublishRecordsApi(config, params = {}) {
+  const result = await requestApi(config, 'GET', '/taskSets', {
+    page: params.page || 1,
+    size: params.size || 20,
+  });
+  return {
+    data: result?.data || [],
+    totalSize: result?.totalSize || 0,
+    page: result?.page || params.page || 1,
+    size: result?.size || params.size || 20,
+  };
+}
+
+async function getUploadUrlApi(config, fileName, fileSize, contentType) {
+  const result = await requestApi(config, 'GET', '/storages/cloud-publish/upload-url', {
+    fileName,
+    fileSize,
+    contentType,
+  });
+  return {
+    uploadUrl: result?.serviceUrl || result?.uploadUrl || result?.data?.serviceUrl,
+    fileKey: result?.key || result?.fileKey || result?.data?.key,
+  };
+}
+
+async function getAccountMusicApi(config, params) {
+  const { platformAccountId, ...query } = params;
+  return requestApi(config, 'GET', `/platform-accounts/${platformAccountId}/music`, query);
+}
+
+async function getAccountMusicCategoryApi(config, platformAccountId) {
+  return requestApi(config, 'GET', `/platform-accounts/${platformAccountId}/music/category`);
+}
+
+async function publishTaskApi(config, payload) {
+  return requestApi(config, 'POST', '/taskSets/v2', payload);
+}
+
+function normalizePlatform(input) {
+  if (PLATFORM_RULES[input]) return input;
+  const found = Object.values(PLATFORM_RULES).find(item => item.name === input);
+  return found ? found.code : null;
+}
+
+function normalizePublishType(input) {
+  if (input === 'image') return 'imageText';
+  if (input === 'video' || input === 'article' || input === 'imageText') return input;
+  return null;
+}
+
+function buildContentPublishForm(publishType, params) {
+  const form = {
+    formType: 'task',
+    covers: [],
+  };
+
+  if (publishType === 'video') {
+    form.title = params.title || '';
+    if (params.description) form.description = params.description;
+    form.declaration = 0;
+    form.tagType = '位置';
+    form.visibleType = 0;
+    form.allow_save = 1;
+  } else if (publishType === 'imageText') {
+    form.title = params.title || '';
+    if (params.description) form.description = params.description;
+    form.declaration = 0;
+    form.type = 0;
+    form.visibleType = 0;
+  } else if (publishType === 'article') {
+    form.title = params.title || '';
+    if (params.description) form.description = params.description;
+    form.type = 0;
+    form.visibleType = 0;
+    form.verticalCovers = [];
+    if (typeof params.createType === 'number') form.createType = params.createType;
+    if (typeof params.pubType === 'number') form.pubType = params.pubType;
+  }
+
+  if (params.tags?.length) {
+    form.tags = params.tags;
+  }
+
+  if (params.music) {
+    form.music = params.music;
+  }
+
+  return form;
+}
+
+async function uploadFileToOss(config, filePath) {
+  const fileName = path.basename(filePath);
+  const fileSize = fs.statSync(filePath).size;
+
+  let contentType = 'application/octet-stream';
+  if (fileName.endsWith('.mp4')) contentType = 'video/mp4';
+  else if (/\.(jpg|jpeg)$/i.test(fileName)) contentType = 'image/jpeg';
+  else if (/\.png$/i.test(fileName)) contentType = 'image/png';
+  else if (/\.gif$/i.test(fileName)) contentType = 'image/gif';
+
+  const uploadResult = await getUploadUrlApi(config, fileName, fileSize, contentType);
+  if (!uploadResult.uploadUrl || !uploadResult.fileKey) {
+    throw new Error('获取资源直传地址失败');
+  }
+
+  const fileStream = fs.createReadStream(filePath);
+  await axios.put(uploadResult.uploadUrl, fileStream, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Length': fileSize,
+    },
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  });
+
+  return { key: uploadResult.fileKey, size: fileSize };
+}
 
 async function ensureLogin(config) {
-  if (!config.apiKey) {
+  const yixiaoerConfig = getYixiaoerConfig(config);
+  if (!yixiaoerConfig.apiKey) {
     throw new Error('未配置蚁小二官方 API Key');
   }
 
-  const { createClient, getClient } = await import(path.join(PLUGIN_PATH, 'api/client.js'));
-  const nextSignature = `apikey:${config.apiKey}:${config.teamId || ''}`;
+  const nextSignature = getApiSignature(yixiaoerConfig);
 
   if (loginDone && authSignature === nextSignature) return;
 
-  const client = createClient();
-  client.setAccessToken(config.apiKey);
-
-  // 选择团队
-  const teams = await client.getTeams();
-  const team = teams.data?.find(t => t.id === config.teamId);
+  const teams = await getTeams(yixiaoerConfig);
+  const team = teams.find(t => t.id === yixiaoerConfig.teamId);
   if (!team) throw new Error('未找到指定团队');
 
   loginDone = true;
   authSignature = nextSignature;
-  console.log(`✅ 蚁小二连接成功 (团队: ${team.name} / API Key)`);
+  activeYixiaoerConfig = yixiaoerConfig;
+  console.log(`✅ 蚁小二连接成功 (团队: ${team.name} / 官方开放API)`);
 }
 
 async function getAccountList(options = {}) {
-  const { getClient } = await import(path.join(PLUGIN_PATH, 'api/client.js'));
-  const client = getClient();
+  const yixiaoerConfig = getActiveYixiaoerConfig();
   const params = {
     page: 1,
     size: 200,
@@ -42,7 +249,7 @@ async function getAccountList(options = {}) {
   if (options.loginStatus !== undefined) {
     params.loginStatus = options.loginStatus;
   }
-  const accounts = await client.getAccounts(params);
+  const accounts = await getAccounts(yixiaoerConfig, params);
   return accounts.data || [];
 }
 
@@ -52,9 +259,8 @@ async function validateAccount(platformAccountId) {
 }
 
 async function getPublishRecords(options = {}) {
-  const { getClient } = await import(path.join(PLUGIN_PATH, 'api/client.js'));
-  const client = getClient();
-  const result = await client.getPublishRecords({
+  const yixiaoerConfig = getActiveYixiaoerConfig();
+  const result = await getPublishRecordsApi(yixiaoerConfig, {
     page: options.page || 1,
     size: options.size || 50,
   });
@@ -84,9 +290,8 @@ async function searchMusic(platformAccountId, keyword) {
 }
 
 async function browseMusic(platformAccountId, options = {}) {
-  const { getClient } = await import(path.join(PLUGIN_PATH, 'api/client.js'));
-  const client = getClient();
-  const result = await client.getAccountMusic({
+  const yixiaoerConfig = getActiveYixiaoerConfig();
+  const result = await getAccountMusicApi(yixiaoerConfig, {
     platformAccountId,
     keyWord: options.keyword || '',
     nextPage: options.nextPage,
@@ -154,36 +359,150 @@ async function autoSearchMusic(platformAccountId, keyword, exactName = null) {
 }
 
 async function getMusicCategories(platformAccountId) {
-  const { getClient } = await import(path.join(PLUGIN_PATH, 'api/client.js'));
-  const client = getClient();
-  const result = await client.getAccountMusicCategory(platformAccountId);
-  return result.data?.dataList || [];
+  const yixiaoerConfig = getActiveYixiaoerConfig();
+  const result = await getAccountMusicCategoryApi(yixiaoerConfig, platformAccountId);
+  return result.dataList || result.data?.dataList || [];
 }
 
 async function publishContent(params) {
-  const { publishFlow } = await import(path.join(PLUGIN_PATH, 'modules/publish-flow.js'));
+  const yixiaoerConfig = {
+    ...getActiveYixiaoerConfig(),
+    ...getYixiaoerConfig(params),
+    teamId: params.teamId || getActiveYixiaoerConfig().teamId,
+  };
+  const publishType = normalizePublishType(params.publishType || 'imageText');
+  if (!publishType) {
+    return { success: false, message: '不支持的发布类型' };
+  }
 
-  const result = await publishFlow({
-    teamId: params.teamId,
-    platforms: params.platforms,
-    publishType: params.publishType || 'imageText',
-    platformAccountId: params.platformAccountId,
+  const platformCodes = [];
+  const platformForms = {};
+  for (const platformInput of params.platforms || []) {
+    const platformCode = normalizePlatform(platformInput);
+    if (!platformCode) {
+      return { success: false, message: `不支持的平台: ${platformInput}` };
+    }
+    if (!PLATFORM_RULES[platformCode].supportedTypes.includes(publishType)) {
+      return { success: false, message: `${platformInput}不支持${publishType}` };
+    }
+    platformCodes.push(platformCode);
+    platformForms[PLATFORM_RULES[platformCode].name] = { formType: 'task' };
+  }
+
+  const contentPublishForm = buildContentPublishForm(publishType, {
     title: params.title,
     description: params.description || '',
-    imagePaths: params.imagePaths,
+    createType: params.createType,
+    pubType: params.pubType,
     tags: params.tags,
     music: params.music,
-    publishChannel: params.clientId ? 'local' : (params.publishChannel || 'cloud'),
-    clientId: params.clientId || null,
-    videoPath: params.videoPath,
-    coverPath: params.coverPath,
-    videoDuration: params.videoDuration,
-    videoSize: params.videoSize,
-    videoWidth: params.videoWidth,
-    videoHeight: params.videoHeight,
   });
 
-  return result;
+  const accountForm = {
+    platformAccountId: params.platformAccountId,
+    publishContentId: params.publishContentId,
+    coverKey: params.coverKey,
+    contentPublishForm,
+    mediaId: '',
+  };
+
+  if (publishType === 'video' && params.videoPath) {
+    if (params.videoPath.startsWith('http')) {
+      accountForm.video = {
+        path: params.videoPath,
+        duration: params.videoDuration || 0,
+        width: params.videoWidth || 1080,
+        height: params.videoHeight || 1920,
+        size: params.videoSize || 0,
+      };
+    } else {
+      const videoInfo = await uploadFileToOss(yixiaoerConfig, params.videoPath);
+      accountForm.video = {
+        key: videoInfo.key,
+        duration: params.videoDuration || 0,
+        width: params.videoWidth || 1080,
+        height: params.videoHeight || 1920,
+        size: videoInfo.size,
+      };
+    }
+  }
+
+  if (params.coverPath) {
+    if (params.coverPath.startsWith('http')) {
+      accountForm.cover = {
+        path: params.coverPath,
+        width: params.coverWidth || 1080,
+        height: params.coverHeight || 1920,
+        size: params.coverSize || 0,
+      };
+    } else {
+      const coverInfo = await uploadFileToOss(yixiaoerConfig, params.coverPath);
+      accountForm.coverKey = coverInfo.key;
+      accountForm.cover = {
+        key: coverInfo.key,
+        width: params.coverWidth || 1080,
+        height: params.coverHeight || 1920,
+        size: coverInfo.size,
+      };
+    }
+  }
+
+  if (publishType === 'imageText' && params.imagePaths?.length) {
+    const imageObjects = [];
+    for (const imagePath of params.imagePaths) {
+      if (imagePath.startsWith('http')) {
+        imageObjects.push({
+          path: imagePath,
+          width: params.coverWidth || 1080,
+          height: params.coverHeight || 1920,
+          size: params.coverSize || 0,
+        });
+      } else {
+        const imageInfo = await uploadFileToOss(yixiaoerConfig, imagePath);
+        imageObjects.push({
+          key: imageInfo.key,
+          width: params.coverWidth || 1080,
+          height: params.coverHeight || 1920,
+          size: imageInfo.size,
+        });
+      }
+    }
+    accountForm.images = imageObjects;
+    if (!accountForm.coverKey && imageObjects.length > 0) {
+      const first = imageObjects[0];
+      if (first.key) accountForm.coverKey = first.key;
+      accountForm.cover = {
+        key: first.key,
+        path: first.path,
+        width: first.width,
+        height: first.height,
+        size: first.size,
+      };
+    }
+  }
+
+  const platformNames = platformCodes.map(code => PLATFORM_RULES[code].name);
+  const finalPublishChannel = params.clientId ? 'local' : (params.publishChannel || 'cloud');
+  const payload = {
+    clientId: finalPublishChannel === 'cloud' ? null : (params.clientId || null),
+    platforms: platformNames,
+    publishType,
+    publishChannel: finalPublishChannel,
+    coverKey: accountForm.coverKey || '',
+    proxyId: params.proxyId,
+    publishArgs: {
+      accountForms: [accountForm],
+      platformForms,
+      content: publishType !== 'video' ? (params.description || '') : undefined,
+    },
+  };
+
+  const data = await publishTaskApi(yixiaoerConfig, payload);
+  return {
+    success: true,
+    message: `✅ ${(finalPublishChannel === 'local' ? '本机发布' : '云发布')}任务已提交到 ${platformNames.join(', ')}`,
+    data,
+  };
 }
 
 // 已发布记录缓存（防止同一内容重复发到同一平台）
