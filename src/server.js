@@ -501,7 +501,7 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`\n🚀 蚁小二发布工具已启动！`);
+  console.log(`\n🚀 笔记发布工具已启动！`);
   console.log(`📡 访问地址: http://localhost:${PORT}`);
   console.log(`\n按 Ctrl+C 停止服务\n`);
 });

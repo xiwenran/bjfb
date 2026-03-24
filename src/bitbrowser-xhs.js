@@ -8,6 +8,85 @@ async function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function humanPause(min = 120, max = 260) {
+  await wait(randomBetween(min, max));
+}
+
+async function humanClick(page, locator, options = {}) {
+  const timeout = options.timeout || 5000;
+  await locator.waitFor({ state: 'visible', timeout });
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  await humanPause(80, 180);
+
+  const box = await locator.boundingBox().catch(() => null);
+  if (box) {
+    const x = box.x + box.width * (0.3 + Math.random() * 0.4);
+    const y = box.y + box.height * (0.3 + Math.random() * 0.4);
+    await page.mouse.move(x, y, { steps: randomBetween(8, 18) });
+    await humanPause(40, 120);
+    await page.mouse.down();
+    await humanPause(35, 95);
+    await page.mouse.up();
+  } else {
+    await locator.click({ timeout });
+  }
+
+  await humanPause(120, 260);
+}
+
+async function humanClear(page) {
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+  await humanPause(40, 100);
+  await page.keyboard.press('Backspace');
+  await humanPause(80, 160);
+}
+
+async function humanType(page, text, options = {}) {
+  const content = String(text || '');
+  const baseMin = options.minDelay || 45;
+  const baseMax = options.maxDelay || 110;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    await page.keyboard.type(char, { delay: randomBetween(baseMin, baseMax) });
+
+    if (/\s/.test(char)) {
+      await humanPause(40, 120);
+      continue;
+    }
+
+    if (/[，。！？、；：,.!?]/.test(char)) {
+      await humanPause(160, 320);
+      continue;
+    }
+
+    if ((index + 1) % randomBetween(5, 9) === 0) {
+      await humanPause(90, 220);
+    }
+  }
+}
+
+async function humanTypeParagraphs(page, text, options = {}) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) return;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    await humanType(page, lines[index], options);
+    if (index < lines.length - 1) {
+      await page.keyboard.press('Enter');
+      await humanPause(160, 320);
+    }
+  }
+}
+
 async function resolvePublishPage(browser, targetUrl) {
   const contexts = browser.contexts();
   if (contexts.length === 0) {
@@ -48,6 +127,7 @@ async function ensureLoggedIn(page) {
 
 async function fillTitle(page, title) {
   const selectors = [
+    'input[placeholder="填写标题会有更多赞哦"]',
     'input.d-input__inner',
     'input[placeholder*="标题"]',
     'textarea[placeholder*="标题"]',
@@ -56,7 +136,11 @@ async function fillTitle(page, title) {
   for (const selector of selectors) {
     const input = page.locator(selector).first();
     if (await input.isVisible().catch(() => false)) {
-      await input.fill(title || '');
+      await humanClick(page, input);
+      await humanClear(page);
+      if (title) {
+        await humanType(page, title, { minDelay: 55, maxDelay: 130 });
+      }
       return;
     }
   }
@@ -66,6 +150,7 @@ async function fillTitle(page, title) {
 
 async function fillDescription(page, description) {
   const editorSelectors = [
+    '.tiptap.ProseMirror[contenteditable="true"]',
     '[contenteditable="true"]',
     '.ql-editor',
     '[data-placeholder*="正文"]',
@@ -75,16 +160,16 @@ async function fillDescription(page, description) {
   for (const selector of editorSelectors) {
     const editor = page.locator(selector).first();
     if (await editor.isVisible().catch(() => false)) {
-      await editor.click();
-      await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
-      await page.keyboard.press('Backspace');
+      await humanClick(page, editor);
+      await humanClear(page);
       if (description) {
         if (selector === 'textarea[placeholder*="正文"]') {
-          await editor.fill(description);
+          await humanTypeParagraphs(page, description, { minDelay: 35, maxDelay: 95 });
         } else {
-          await page.keyboard.type(description, { delay: 20 });
+          await humanTypeParagraphs(page, description, { minDelay: 35, maxDelay: 95 });
         }
       }
+      await humanPause(220, 420);
       return;
     }
   }
@@ -406,7 +491,7 @@ async function addTags(page, tags) {
     if (!safeTag) continue;
 
     const previousText = await editor.textContent().catch(() => '');
-    await topicButton.click();
+    await humanClick(page, topicButton);
     await page.waitForFunction(
       previous => {
         const editor = document.querySelector('.tiptap.ProseMirror');
@@ -418,8 +503,8 @@ async function addTags(page, tags) {
       { timeout: 5000 }
     ).catch(() => {});
 
-    await page.keyboard.type(safeTag, { delay: 50 });
-    await wait(800);
+    await humanType(page, safeTag, { minDelay: 65, maxDelay: 135 });
+    await humanPause(260, 520);
     await page.keyboard.press('Enter');
     await page.waitForFunction(
       expectedTag => {
@@ -430,7 +515,7 @@ async function addTags(page, tags) {
       safeTag,
       { timeout: 5000 }
     ).catch(() => {});
-    await wait(900);
+    await humanPause(380, 760);
   }
 }
 
@@ -531,8 +616,11 @@ async function publishToXiaohongshuViaBitBrowser(record, options = {}) {
       detail: `正在通过比特浏览器上传《${record.title}》素材`,
     });
     await uploadImages(page, record.imagePaths || []);
+    await humanPause(600, 1400);
     await fillTitle(page, record.title || '');
+    await humanPause(260, 620);
     await fillDescription(page, record.description || '');
+    await humanPause(320, 760);
     await addTags(page, tags || []);
     await scrollToBottom(page);
     await waitForUploadComplete(page);

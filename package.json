@@ -1,7 +1,7 @@
 {
   "name": "yixiaoer-publisher",
   "version": "1.0.0",
-  "description": "蚁小二多平台自动发布工具 - 飞书表格驱动",
+  "description": "笔记发布工具 - 飞书驱动的多平台自动发布工具",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

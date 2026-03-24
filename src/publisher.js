@@ -160,6 +160,12 @@ async function getAccountMusicCategoryApi(config, platformAccountId) {
   return requestApi(config, 'GET', `/platform-accounts/${platformAccountId}/music/category`);
 }
 
+async function getAccountTopicsApi(config, platformAccountId, keyword) {
+  return requestApi(config, 'GET', `/platform-accounts/${platformAccountId}/topics`, {
+    keyWord: keyword,
+  });
+}
+
 async function publishTaskApi(config, payload) {
   return requestApi(config, 'POST', '/taskSets/v2', payload);
 }
@@ -176,28 +182,128 @@ function normalizePublishType(input) {
   return null;
 }
 
-function buildContentPublishForm(publishType, params) {
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeHtmlAttr(text) {
+  return escapeHtml(text).replace(/`/g, '&#96;');
+}
+
+function buildTopicRawAttr(topic) {
+  if (!topic?.raw || !topic?.yixiaoerId || !topic?.yixiaoerName) return null;
+  return JSON.stringify({
+    yixiaoerId: topic.yixiaoerId,
+    yixiaoerName: topic.yixiaoerName,
+    raw: topic.raw,
+  });
+}
+
+function selectBestTopic(tag, topics = []) {
+  const normalizedTag = String(tag || '').trim().toLowerCase();
+  if (!normalizedTag) return null;
+
+  const normalizeTopicName = topic => String(
+    topic?.yixiaoerName ||
+    topic?.raw?.name ||
+    topic?.raw?.topic ||
+    topic?.raw?.cha_name ||
+    ''
+  ).trim().toLowerCase();
+
+  const exact = topics.find(topic =>
+    normalizeTopicName(topic) === normalizedTag
+  );
+  if (exact) return exact;
+
+  const nameContains = topics.find(topic =>
+    normalizeTopicName(topic).includes(normalizedTag) || normalizedTag.includes(normalizeTopicName(topic))
+  );
+  if (nameContains) return nameContains;
+
+  return null;
+}
+
+async function resolveTopicsForPlatform(config, platformName, platformAccountId, tags = []) {
+  const selectedTags = normalizeTags(tags);
+  if (!platformAccountId || selectedTags.length === 0) return [];
+  if (platformName !== '小红书' && platformName !== '抖音') return [];
+
+  const resolvedTopics = [];
+
+  for (const tag of selectedTags) {
+    try {
+      const result = await getAccountTopicsApi(config, platformAccountId, tag);
+      const topics = result?.dataList || result?.data?.dataList || [];
+      const matchedTopic = selectBestTopic(tag, topics);
+      if (matchedTopic) {
+        resolvedTopics.push(matchedTopic);
+      }
+    } catch (error) {
+      console.warn(`⚠️ ${platformName}话题搜索失败(${tag}): ${error.message}`);
+    }
+  }
+
+  return resolvedTopics;
+}
+
+function buildRichTopicDescription(description, tags = [], topics = []) {
+  const paragraphs = String(description || '')
+    .split(/\r?\n+/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => `<p>${escapeHtml(line)}</p>`);
+
+  const topicTags = normalizeTags(tags);
+  if (topicTags.length > 0) {
+    const topicMap = new Map(
+      (topics || []).map(topic => [String(topic?.yixiaoerName || '').trim().toLowerCase(), topic])
+    );
+    const topicHtml = topicTags
+      .map(tag => {
+        const topic = topicMap.get(tag.toLowerCase());
+        const rawAttr = buildTopicRawAttr(topic);
+        const rawSegment = rawAttr ? ` raw='${escapeHtmlAttr(rawAttr)}'` : '';
+        return `<topic text='${escapeHtmlAttr(tag)}'${rawSegment}>#${escapeHtml(tag)}</topic>`;
+      })
+      .join(' ');
+    paragraphs.push(`<p>${topicHtml}</p>`);
+  }
+
+  return paragraphs.join('') || '<p></p>';
+}
+
+function buildContentPublishForm(platformName, publishType, params) {
   const form = {
     formType: 'task',
     covers: [],
   };
 
+  const normalizedDescription = params.normalizedDescription !== undefined
+    ? params.normalizedDescription
+    : params.description || '';
+
   if (publishType === 'video') {
     form.title = params.title || '';
-    if (params.description) form.description = params.description;
+    if (normalizedDescription) form.description = normalizedDescription;
     form.declaration = 0;
     form.tagType = '位置';
     form.visibleType = 0;
     form.allow_save = 1;
   } else if (publishType === 'imageText') {
     form.title = params.title || '';
-    if (params.description) form.description = params.description;
+    if (normalizedDescription) form.description = normalizedDescription;
     form.declaration = 0;
     form.type = 0;
     form.visibleType = 0;
   } else if (publishType === 'article') {
     form.title = params.title || '';
-    if (params.description) form.description = params.description;
+    if (normalizedDescription) form.description = normalizedDescription;
     form.type = 0;
     form.visibleType = 0;
     form.verticalCovers = [];
@@ -205,7 +311,7 @@ function buildContentPublishForm(publishType, params) {
     if (typeof params.pubType === 'number') form.pubType = params.pubType;
   }
 
-  if (params.tags?.length) {
+  if (params.tags?.length && platformName !== '小红书' && platformName !== '抖音') {
     form.tags = params.tags;
   }
 
@@ -397,6 +503,7 @@ async function publishContent(params) {
 
   const platformCodes = [];
   const platformForms = {};
+  let primaryPlatformName = '';
   for (const platformInput of params.platforms || []) {
     const platformCode = normalizePlatform(platformInput);
     if (!platformCode) {
@@ -406,12 +513,22 @@ async function publishContent(params) {
       return { success: false, message: `${platformInput}不支持${publishType}` };
     }
     platformCodes.push(platformCode);
+    primaryPlatformName = primaryPlatformName || PLATFORM_RULES[platformCode].name;
     platformForms[PLATFORM_RULES[platformCode].name] = { formType: 'task' };
   }
 
-  const contentPublishForm = buildContentPublishForm(publishType, {
+  const normalizedDescription = (primaryPlatformName === '小红书' || primaryPlatformName === '抖音')
+    ? buildRichTopicDescription(
+      params.description || '',
+      params.tags || [],
+      await resolveTopicsForPlatform(yixiaoerConfig, primaryPlatformName, params.platformAccountId, params.tags || [])
+    )
+    : (params.description || '');
+
+  const contentPublishForm = buildContentPublishForm(primaryPlatformName, publishType, {
     title: params.title,
     description: params.description || '',
+    normalizedDescription,
     createType: params.createType,
     pubType: params.pubType,
     tags: params.tags,
@@ -513,7 +630,7 @@ async function publishContent(params) {
     publishArgs: {
       accountForms: [accountForm],
       platformForms,
-      content: publishType !== 'video' ? (params.description || '') : undefined,
+      content: normalizedDescription || undefined,
     },
   };
 
