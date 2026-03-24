@@ -12,8 +12,8 @@ class FeishuClient {
     this.tokenExpiry = 0;
   }
 
-  async getAccessToken() {
-    if (this.accessToken && Date.now() < this.tokenExpiry) {
+  async getAccessToken(forceRefresh = false) {
+    if (!forceRefresh && this.accessToken && Date.now() < this.tokenExpiry) {
       return this.accessToken;
     }
     const resp = await axios.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
@@ -25,8 +25,19 @@ class FeishuClient {
     return this.accessToken;
   }
 
+  // 自动处理 401：token 失效时强制刷新后重试一次
+  async requestWithRetry(fn) {
+    try {
+      return await fn(await this.getAccessToken());
+    } catch (e) {
+      if (e.response?.status === 401) {
+        return await fn(await this.getAccessToken(true));
+      }
+      throw e;
+    }
+  }
+
   async getRecords(filter) {
-    const token = await this.getAccessToken();
     const items = [];
     let pageToken;
     let hasMore = true;
@@ -36,10 +47,12 @@ class FeishuClient {
       if (filter) body.filter = filter;
       if (pageToken) body.page_token = pageToken;
 
-      const resp = await axios.post(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
-        body,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const resp = await this.requestWithRetry(token =>
+        axios.post(
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+          body,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
       );
 
       const data = resp.data.data || {};
@@ -52,21 +65,19 @@ class FeishuClient {
   }
 
   async getFields() {
-    const token = await this.getAccessToken();
     const items = [];
     let pageToken;
     let hasMore = true;
 
     while (hasMore) {
-      const resp = await axios.get(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          params: {
-            page_size: 100,
-            page_token: pageToken,
-          },
-        }
+      const resp = await this.requestWithRetry(token =>
+        axios.get(
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            params: { page_size: 100, page_token: pageToken },
+          }
+        )
       );
       const data = resp.data.data || {};
       items.push(...(data.items || []));
@@ -78,11 +89,12 @@ class FeishuClient {
   }
 
   async updateField(fieldId, body) {
-    const token = await this.getAccessToken();
-    const resp = await axios.put(
-      `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields/${fieldId}`,
-      body,
-      { headers: { Authorization: `Bearer ${token}` } }
+    const resp = await this.requestWithRetry(token =>
+      axios.put(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields/${fieldId}`,
+        body,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
     );
     return resp.data.data?.field || null;
   }
@@ -167,11 +179,12 @@ class FeishuClient {
   }
 
   async updateRecord(recordId, fields) {
-    const token = await this.getAccessToken();
-    await axios.put(
-      `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
-      { fields },
-      { headers: { Authorization: `Bearer ${token}` } }
+    await this.requestWithRetry(token =>
+      axios.put(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
+        { fields },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
     );
   }
 
@@ -193,14 +206,15 @@ class FeishuClient {
   }
 
   async downloadAttachment(fileToken, destDir) {
-    const token = await this.getAccessToken();
-    // 获取临时下载URL
-    const urlResp = await axios.get(
-      `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url`,
-      {
-        params: { file_tokens: fileToken },
-        headers: { Authorization: `Bearer ${token}` },
-      }
+    // 获取临时下载URL（自动处理 token 失效重试）
+    const urlResp = await this.requestWithRetry(token =>
+      axios.get(
+        `https://open.feishu.cn/open-apis/drive/v1/medias/batch_get_tmp_download_url`,
+        {
+          params: { file_tokens: fileToken },
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      )
     );
     const tmpUrls = urlResp.data.data?.tmp_download_urls || [];
     if (tmpUrls.length === 0) throw new Error(`无法获取文件下载URL: ${fileToken}`);
@@ -227,9 +241,10 @@ class FeishuClient {
     const paths = [];
     for (const att of sorted) {
       const filePath = await this.downloadAttachment(att.file_token, destDir);
-      // 用原始文件名重命名
+      // 用原始文件名重命名（basename 防止路径穿越）
       const ext = path.extname(att.name) || '.png';
-      const newPath = path.join(destDir, att.name.includes('.') ? att.name : `${att.name}${ext}`);
+      const safeName = path.basename(att.name.includes('.') ? att.name : `${att.name}${ext}`);
+      const newPath = path.join(destDir, safeName);
       fs.renameSync(filePath, newPath);
       paths.push(newPath);
       console.log(`  📥 下载: ${att.name}`);

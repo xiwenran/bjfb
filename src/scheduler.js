@@ -251,8 +251,8 @@ class Scheduler {
         });
         this.log('info', `📝 处理: "${record.title}"`);
 
+        const tmpDir = path.join(os.tmpdir(), 'yixiaoer-publish', record.recordId);
         try {
-          const tmpDir = path.join(os.tmpdir(), 'yixiaoer-publish', record.recordId);
           this.setProgress({
             active: true,
             stage: 'downloading',
@@ -359,7 +359,6 @@ class Scheduler {
             });
           }
 
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
           await new Promise(resolve => setTimeout(resolve, 3000));
 
         } catch (e) {
@@ -374,6 +373,9 @@ class Scheduler {
           this.log('error', `  ❌ "${record.title}" 处理失败: ${e.message}`);
           const nextNote = this.mergeNoteEntry(record.note, `处理失败: ${e.message}`);
           await this.feishu.setNote(record.recordId, nextNote);
+        } finally {
+          // 无论成功或失败都清理临时目录
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
         }
       }
 
@@ -435,9 +437,6 @@ class Scheduler {
 
   updateSchedule(schedule) {
     this.config.schedule = schedule;
-    const fullConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    fullConfig.schedule = schedule;
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(fullConfig, null, 2), 'utf-8');
     const desc = schedule.periods.map(p => `${p.startTime}-${p.endTime}(${p.intervalMinutes}分钟)`).join(', ');
     this.log('info', `⚙️ 定时配置已更新: ${desc}`);
     if (this.running) {

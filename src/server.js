@@ -142,6 +142,24 @@ function sendHtml(res, filePath) {
   res.end(content);
 }
 
+function readBody(req, maxBytes = 2 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(Object.assign(new Error('请求体过大'), { statusCode: 413 }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname;
@@ -200,9 +218,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/publish/now' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
+    readBody(req).then(async () => {
       try {
         const result = await scheduler.checkAndPublish();
         if (result && result.error) {
@@ -212,7 +228,7 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         sendJson(res, { success: false, error: e.message }, 500);
       }
-    });
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
     return;
   }
 
@@ -274,9 +290,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/bitbrowser/accounts' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
+    readBody(req).then(async (body) => {
       try {
         const { mappings } = JSON.parse(body || '{}');
         if (!Array.isArray(mappings)) {
@@ -305,7 +319,7 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         return sendJson(res, { success: false, error: e.message }, 500);
       }
-    });
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
     return;
   }
 
@@ -325,9 +339,7 @@ const server = http.createServer(async (req, res) => {
 
   // 更新定时配置
   if (pathname === '/api/schedule' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', () => {
+    readBody(req).then((body) => {
       try {
         const schedule = JSON.parse(body);
         // 验证 periods 数组
@@ -349,11 +361,12 @@ const server = http.createServer(async (req, res) => {
         }
         scheduler.updateSchedule(schedule);
         config.schedule = schedule;
+        saveConfig();
         sendJson(res, { success: true, message: '定时配置已保存' });
       } catch (e) {
         sendJson(res, { success: false, error: e.message }, 500);
       }
-    });
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
     return;
   }
 
@@ -387,9 +400,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
+      readBody(req).then(async (body) => {
         try {
           const { music } = JSON.parse(body);
           if (!music || !music.id || !music.text) {
@@ -403,7 +414,7 @@ const server = http.createServer(async (req, res) => {
         } catch (e) {
           sendJson(res, { success: false, error: e.message }, 500);
         }
-      });
+      }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
       return;
     }
 
@@ -415,9 +426,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/music/search' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
+    readBody(req).then(async (body) => {
       try {
         const { keyword } = JSON.parse(body);
         if (!keyword || keyword.trim().length === 0) {
@@ -436,7 +445,7 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         sendJson(res, { success: false, error: e.message }, 500);
       }
-    });
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
     return;
   }
 
@@ -455,9 +464,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/music/library' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
+    readBody(req).then(async (body) => {
       try {
         const { keyword, nextPage, categoryId, categoryName } = body ? JSON.parse(body) : {};
         const normalizedKeyword = keyword ? String(keyword).trim() : '';
@@ -481,7 +488,7 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         sendJson(res, { success: false, error: e.message }, 500);
       }
-    });
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
     return;
   }
 
@@ -500,7 +507,7 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n🚀 笔记发布工具已启动！`);
   console.log(`📡 访问地址: http://localhost:${PORT}`);
   console.log(`\n按 Ctrl+C 停止服务\n`);
