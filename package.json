@@ -28,7 +28,8 @@
     "productName": "知发",
     "asar": false,
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "src/**/*",
@@ -52,6 +53,7 @@
       "main": "src/electron-main.js"
     },
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         "zip"
       ],
@@ -59,6 +61,7 @@
       "category": "public.app-category.productivity"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "portable"
       ],

@@ -1,7 +1,9 @@
+const path = require('path');
 const { app, BrowserWindow, dialog, shell } = require('electron');
 const { startServer, stopServer, getServerState } = require('./server.js');
 
 let mainWindow = null;
+const WINDOW_ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png');
 
 async function ensureServerReady() {
   const current = getServerState().server;
@@ -28,6 +30,7 @@ async function createMainWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#f2f2f7',
     title: '知发',
+    icon: WINDOW_ICON_PATH,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -70,6 +73,7 @@ async function bootstrap() {
 }
 
 app.whenReady().then(() => {
+  app.setName('知发');
   bootstrap();
 
   app.on('activate', async () => {
