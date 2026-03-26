@@ -500,245 +500,993 @@
     .account-badges { justify-content: flex-start; }
     .mapping-row { grid-template-columns: 1fr; }
   }
+
+  :root {
+    --app-bg: #f5f6f7;
+    --app-bg-accent: #eef7f1;
+    --panel: #ffffff;
+    --panel-strong: #ffffff;
+    --panel-soft: #f7f9fb;
+    --line: #e7ebf0;
+    --line-strong: #d7dee6;
+    --ink: #1f2329;
+    --muted: #68727d;
+    --accent: #07c160;
+    --accent-deep: #06ad56;
+    --accent-soft: #e8f7ee;
+    --warning-soft: #fff5df;
+    --shadow-soft: 0 14px 40px rgba(15, 23, 42, 0.06);
+    --shadow-card: 0 10px 28px rgba(15, 23, 42, 0.05);
+  }
+
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(7, 193, 96, 0.08), transparent 24%),
+      linear-gradient(180deg, #f6f7f8 0%, #eef1f3 100%);
+    color: var(--ink);
+    overflow: hidden;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 108px minmax(420px, 500px) minmax(620px, 1fr);
+    gap: 14px;
+    height: 100vh;
+    padding: 14px;
+  }
+
+  .primary-rail,
+  .workspace-main,
+  .workspace-preview {
+    min-height: 0;
+  }
+
+  .primary-rail {
+    background: var(--panel-strong);
+    border: 1px solid var(--line);
+    border-radius: 28px;
+    box-shadow: var(--shadow-soft);
+    padding: 24px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .brand-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    text-align: center;
+  }
+
+  .brand-mark {
+    width: 64px;
+    height: 64px;
+    border-radius: 20px;
+    display: grid;
+    place-items: center;
+    font-size: 30px;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(180deg, #08c762 0%, #06ad56 100%);
+    box-shadow: 0 12px 24px rgba(7, 193, 96, 0.22);
+  }
+
+  .brand-copy h1 {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--ink);
+    letter-spacing: -0.03em;
+  }
+
+  .brand-copy p {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .rail-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .rail-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #95a1ad;
+    padding: 0 6px;
+  }
+
+  .primary-nav-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 24px;
+    padding: 14px 10px 16px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    min-height: 94px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform .18s ease, background .18s ease, color .18s ease, border-color .18s ease;
+  }
+
+  .primary-nav-btn:hover {
+    background: #f8faf9;
+    border-color: #dce6df;
+    color: var(--ink);
+    transform: translateY(-1px);
+  }
+
+  .primary-nav-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    border-color: #bde9cd;
+  }
+
+  .primary-nav-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+    background: #f7f9fb;
+    border: 1px solid var(--line);
+  }
+
+  .workspace-main,
+  .workspace-preview {
+    border-radius: 32px;
+    background: var(--panel-strong);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .workspace-main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .workspace-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 220px;
+    align-items: stretch;
+    gap: 18px;
+    padding: 26px 24px;
+    border-bottom: 1px solid var(--line);
+    background: #ffffff;
+  }
+
+  .workspace-head-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 210px;
+  }
+
+  .workspace-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--accent-deep);
+    margin-bottom: 14px;
+  }
+
+  .workspace-eyebrow::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 6px rgba(7, 193, 96, 0.12);
+  }
+
+  .workspace-head-copy h2 {
+    font-size: 48px;
+    line-height: 1.02;
+    letter-spacing: -0.05em;
+    color: var(--ink);
+    font-weight: 800;
+  }
+
+  .workspace-head-copy p {
+    margin-top: 12px;
+    font-size: 16px;
+    line-height: 1.72;
+    color: var(--muted);
+    max-width: 30ch;
+  }
+
+  .workspace-head-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .toolbar-status {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 0;
+  }
+
+  .status-chip {
+    min-height: 78px;
+    padding: 14px 16px;
+    border-radius: 22px;
+    background: #fafbfc;
+    border: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .status-chip-label {
+    display: block;
+    font-size: 12px;
+    color: #8a95a3;
+    margin-bottom: 6px;
+  }
+
+  .status-chip-value {
+    display: block;
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+
+  .status-chip-value.running { color: var(--accent-deep); }
+  .status-chip-value.stopped { color: #d94841; }
+
+  .toolbar-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .toolbar-actions .btn {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .workspace-scroll {
+    flex: 1;
+    min-height: 0;
+    padding: 20px 24px 24px;
+    overflow: auto;
+    background: #fafbfd;
+  }
+
+  .workspace-view {
+    display: none;
+    min-height: 100%;
+    padding-top: 0;
+  }
+
+  .workspace-view.active {
+    display: block;
+  }
+
+  .workspace-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .workspace-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 28px;
+    box-shadow: var(--shadow-card);
+    padding: 24px;
+  }
+
+  .workspace-card h3 {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--ink);
+    letter-spacing: -0.03em;
+  }
+
+  .card-intro {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.72;
+    color: var(--muted);
+  }
+
+  .quick-entry-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .quick-entry-card {
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: #f9fbfc;
+    padding: 18px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    text-align: left;
+    cursor: pointer;
+    transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    font: inherit;
+  }
+
+  .quick-entry-card:hover {
+    transform: translateY(-1px);
+    border-color: #bce8cc;
+    background: #f7fcf8;
+  }
+
+  .quick-entry-card h4 {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+
+  .quick-entry-card p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+
+  .overview-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .overview-stat {
+    padding: 18px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(245, 248, 241, 0.96) 100%);
+    border: 1px solid rgba(23, 32, 23, 0.06);
+  }
+
+  .overview-stat-label {
+    display: block;
+    font-size: 12px;
+    color: rgba(23, 32, 23, 0.44);
+    margin-bottom: 8px;
+  }
+
+  .overview-stat-value {
+    display: block;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--ink);
+  }
+
+  .overview-stat-value.running { color: var(--accent-deep); }
+  .overview-stat-value.stopped { color: #d94841; }
+
+  .subnav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .subnav-btn {
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: var(--panel-strong);
+    color: var(--ink);
+    min-height: 86px;
+    padding: 16px 18px;
+    cursor: pointer;
+    transition: background .18s ease, color .18s ease, transform .18s ease, border-color .18s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    text-align: left;
+  }
+
+  .subnav-btn:hover {
+    transform: translateY(-1px);
+    border-color: #bce8cc;
+    background: #f8fcfa;
+  }
+
+  .subnav-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    border-color: #bce8cc;
+  }
+
+  .subnav-btn-title {
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.2;
+  }
+
+  .subnav-btn-meta {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .subnav-btn.active .subnav-btn-meta {
+    color: #4f7f61;
+  }
+
+  .setup-pane {
+    display: none;
+  }
+
+  .setup-pane.active {
+    display: block;
+  }
+
+  .workspace-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+    overflow: auto;
+    background: #fbfcfd;
+  }
+
+  .preview-hero {
+    padding: 24px 26px;
+    border-radius: 28px;
+    background:
+      radial-gradient(circle at top right, rgba(7, 193, 96, 0.13), transparent 30%),
+      linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-card);
+  }
+
+  .preview-hero h3 {
+    margin-top: 12px;
+    font-size: 34px;
+    line-height: 1.06;
+    letter-spacing: -0.04em;
+    color: var(--ink);
+    font-weight: 800;
+  }
+
+  .preview-hero p {
+    margin-top: 10px;
+    font-size: 16px;
+    line-height: 1.72;
+    color: var(--muted);
+  }
+
+  .context-preview-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .preview-block {
+    padding: 20px;
+    border-radius: 24px;
+    background: #ffffff;
+    border: 1px solid var(--line);
+  }
+
+  .preview-block h4 {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+
+  .preview-list,
+  .preview-meta-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .preview-list-item,
+  .preview-meta-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: var(--panel-soft);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .preview-meta-item span:first-child {
+    color: var(--muted);
+    min-width: 96px;
+  }
+
+  .preview-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .preview-helper {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+
+  .record-item {
+    cursor: pointer;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: #ffffff;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+  }
+
+  .record-item:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+    border-color: rgba(7, 193, 96, 0.24);
+  }
+
+  .record-item.selected {
+    border-color: #bce8cc;
+    box-shadow: 0 12px 28px rgba(7, 193, 96, 0.12);
+    background: #f7fcf8;
+  }
+
+  .record-toolbar,
+  .panel-toolbar,
+  .mapping-panel-toolbar,
+  .settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .log-panel {
+    height: min(56vh, 560px);
+    background: #0f1513;
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .progress-card {
+    background:
+      radial-gradient(circle at top right, rgba(7, 193, 96, 0.09), transparent 30%),
+      linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+    border-radius: 24px;
+    border: 1px solid #d9ebe1;
+    box-shadow: none;
+  }
+
+  .progress-detail,
+  .panel-hint,
+  .record-summary,
+  .settings-hint,
+  .config-note,
+  .config-status,
+  .music-status-hint {
+    color: var(--muted);
+  }
+
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-success,
+  .btn-danger {
+    border: 0;
+    border-radius: 14px;
+    font-weight: 700;
+    transition: transform .16s ease, box-shadow .16s ease, opacity .16s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+  }
+
+  .btn:hover,
+  .btn-primary:hover,
+  .btn-secondary:hover,
+  .btn-success:hover,
+  .btn-danger:hover {
+    transform: translateY(-1px);
+  }
+
+  .btn-primary,
+  .btn.btn-primary,
+  .btn-success,
+  .btn.btn-success {
+    background: linear-gradient(180deg, #08c762 0%, #06ad56 100%);
+    color: #fff;
+    box-shadow: 0 10px 18px rgba(7, 193, 96, 0.2);
+  }
+
+  .btn-secondary,
+  .btn.btn-secondary {
+    background: #f3f5f7;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    box-shadow: none;
+  }
+
+  .btn-danger,
+  .btn.btn-danger {
+    background: linear-gradient(180deg, #ff796c 0%, #ef5b4e 100%);
+    color: #fff;
+    box-shadow: 0 10px 18px rgba(239, 91, 78, 0.18);
+  }
+
+  .record-list,
+  .account-list,
+  .period-list,
+  .music-results {
+    margin-top: 16px;
+    max-height: min(50vh, 560px);
+    overflow: auto;
+    padding-right: 4px;
+  }
+
+  .music-library-list {
+    margin-top: 16px;
+  }
+
+  .data-grid {
+    display: grid;
+    gap: 16px;
+  }
+
+  @media (max-width: 1480px) {
+    .shell {
+      grid-template-columns: 100px minmax(380px, 450px) minmax(440px, 1fr);
+    }
+
+    .workspace-head-copy h2,
+    .preview-hero h3 {
+      font-size: 40px;
+    }
+  }
+
+  @media (max-width: 1260px) {
+    .shell {
+      grid-template-columns: 96px minmax(360px, 1fr);
+      grid-template-rows: minmax(0, 1fr) minmax(320px, 40vh);
+    }
+
+    .workspace-preview {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .workspace-toolbar {
+      grid-template-columns: 1fr;
+    }
+
+    .workspace-head-copy {
+      min-height: auto;
+    }
+
+    .toolbar-status {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 920px) {
+    .toolbar-actions,
+    .quick-entry-grid,
+    .subnav {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 </head>
 <body>
-
-<!-- Header -->
-<header class="app-header">
-  <div class="header-brand">
-    <h1>知发</h1>
-    <p>笔记多平台发布工具</p>
-  </div>
-  <div class="header-center">
-    <div class="header-stat">
-      <span class="header-stat-label">服务</span>
-      <span class="value" id="serviceStatus">加载中</span>
+<div class="shell">
+  <aside class="primary-rail">
+    <div class="brand-stack">
+      <div class="brand-mark">知</div>
+      <div class="brand-copy">
+        <h1>知发</h1>
+        <p>笔记多平台发布工具</p>
+      </div>
     </div>
-    <div class="header-stat-divider"></div>
-    <div class="header-stat">
-      <span class="header-stat-label">待发布</span>
-      <span class="meta-value" id="pendingCount">-</span>
-    </div>
-    <div class="header-stat-divider"></div>
-    <div class="header-stat">
-      <span class="header-stat-label">下次检查</span>
-      <span class="meta-value" id="nextCheck" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
-    </div>
-  </div>
-  <div class="header-actions">
-    <button class="btn btn-sm btn-secondary" onclick="refreshRecords()">刷新数据</button>
-    <button class="btn btn-sm btn-success" id="btnStart" onclick="startScheduler()">启动服务</button>
-    <button class="btn btn-sm btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止服务</button>
-    <button class="btn btn-sm btn-primary" onclick="publishNow()">立即发布</button>
-  </div>
-</header>
 
-<!-- App Body -->
-<div class="app-body">
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar-section-label">主要</div>
-    <button class="nav-item active" data-tab="records" onclick="switchTab('records')">
-      <span class="nav-icon">📋</span>
-      <span>表格记录</span>
-    </button>
-    <button class="nav-item" data-tab="logs" onclick="switchTab('logs')">
-      <span class="nav-icon">📊</span>
-      <span>运行日志</span>
-    </button>
-
-    <div class="sidebar-section-label">设置</div>
-    <button class="nav-item" data-tab="accounts" onclick="switchTab('accounts'); refreshAccounts()">
-      <span class="nav-icon">🔐</span>
-      <span>账号授权</span>
-    </button>
-    <button class="nav-item" data-tab="feishu" onclick="switchTab('feishu'); loadFeishuConfig()">
-      <span class="nav-icon">🪪</span>
-      <span>飞书接入</span>
-    </button>
-    <button class="nav-item" data-tab="bitbrowser" onclick="switchTab('bitbrowser'); if(!bitbrowserMappings.length) refreshBitbrowserMappings()">
-      <span class="nav-icon">🧩</span>
-      <span>比特浏览器</span>
-    </button>
-    <button class="nav-item" data-tab="schedule" onclick="switchTab('schedule')">
-      <span class="nav-icon">⏰</span>
-      <span>定时设置</span>
-    </button>
-    <button class="nav-item" data-tab="music" onclick="switchTab('music'); loadCurrentMusic()">
-      <span class="nav-icon">🎵</span>
-      <span>音乐设置</span>
-    </button>
+    <div class="rail-group">
+      <div class="rail-label">导航</div>
+      <button class="primary-nav-btn active" data-section="overview" onclick="switchSection('overview')">
+        <span class="primary-nav-icon">◌</span>
+        <span>总览</span>
+      </button>
+      <button class="primary-nav-btn" data-section="publish" onclick="switchSection('publish')">
+        <span class="primary-nav-icon">⎘</span>
+        <span>发布</span>
+      </button>
+      <button class="primary-nav-btn" data-section="setup" onclick="switchSection('setup')">
+        <span class="primary-nav-icon">⚙</span>
+        <span>设置</span>
+      </button>
+      <button class="primary-nav-btn" data-section="data" onclick="switchSection('data')">
+        <span class="primary-nav-icon">⇅</span>
+        <span>数据</span>
+      </button>
+    </div>
   </aside>
 
-  <!-- Main Content -->
-  <main class="main-content">
-
-    <!-- Progress Card (always visible) -->
-    <div class="progress-card">
-      <div class="progress-main">
-        <div class="progress-top">
-          <span class="progress-badge" id="progressBadge">空闲</span>
-          <div class="progress-title" id="progressTitle">当前没有正在处理的发布任务</div>
-        </div>
-        <div class="progress-detail" id="progressDetail">点击"立即发布"后，这里会显示当前所处阶段，例如检查飞书、下载素材、上传提交、平台发布完成。</div>
+  <main class="workspace-main">
+    <header class="workspace-toolbar">
+      <div class="workspace-head-copy">
+        <div class="workspace-eyebrow" id="workspaceEyebrow">总览</div>
+        <h2 id="workspaceTitle">总览</h2>
+        <p id="workspaceDescription">从一个清晰的桌面工作台里管理飞书接入、账号映射、发布记录和数据备份。</p>
       </div>
-      <div class="progress-meta">
-        <div id="progressPlatform">平台: -</div>
-        <div id="progressAccount">账号: -</div>
-        <div id="progressUpdatedAt">更新时间: -</div>
-      </div>
-    </div>
-
-    <!-- Tab: 表格记录 -->
-    <div class="tab-panel active" id="tab-records">
-      <div class="panel">
-        <h2>📋 飞书表格记录</h2>
-        <div class="record-toolbar">
-          <div class="record-summary" id="recordSummary">记录较多时会分批渲染，减少浏览器压力。</div>
-          <button class="btn btn-sm btn-secondary" id="recordMoreBtn" onclick="showMoreRecords()" style="display:none;">显示更多</button>
+      <div class="workspace-head-tools">
+        <div class="toolbar-status">
+          <div class="status-chip">
+            <span class="status-chip-label">服务</span>
+            <span class="status-chip-value" id="toolbarServiceStatus">加载中</span>
+          </div>
+          <div class="status-chip">
+            <span class="status-chip-label">待发布</span>
+            <span class="status-chip-value" id="toolbarPendingCount">-</span>
+          </div>
+          <div class="status-chip">
+            <span class="status-chip-label">下次检查</span>
+            <span class="status-chip-value" id="toolbarNextCheck">-</span>
+          </div>
         </div>
-        <div id="recordList" class="record-list">
-          <div class="empty">点击右上角"刷新数据"加载记录</div>
+        <div class="toolbar-actions">
+          <button class="btn btn-sm btn-secondary" onclick="refreshRecords(true)">刷新数据</button>
+          <button class="btn btn-sm btn-success" id="btnStart" onclick="startScheduler()">启动服务</button>
+          <button class="btn btn-sm btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止服务</button>
+          <button class="btn btn-sm btn-primary" onclick="publishNow()">立即发布</button>
         </div>
       </div>
-    </div>
+    </header>
 
-    <!-- Tab: 运行日志 -->
-    <div class="tab-panel" id="tab-logs">
-      <div class="panel">
-        <h2>📊 运行日志</h2>
-        <div class="log-panel" id="logPanel">
-          <div class="log-entry"><span class="log-info">等待操作...</span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab: 账号授权 -->
-    <div class="tab-panel" id="tab-accounts">
-      <div class="panel" id="accountsPanel">
-        <h2>🔐 账号授权状态</h2>
-        <div class="panel-toolbar">
-          <button class="btn btn-sm btn-secondary" onclick="refreshAccounts()">刷新账号状态</button>
-          <span class="panel-hint">显示蚁小二账号授权状态与是否已被当前项目映射使用</span>
-        </div>
-        <div id="accountList" class="account-list">
-          <div class="empty">点击"刷新账号状态"加载账号信息</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab: 比特浏览器 -->
-    <div class="tab-panel" id="tab-bitbrowser">
-      <div class="panel" id="bitbrowserPanel">
-        <h2>🧩 比特浏览器账号管理</h2>
-        <div class="mapping-panel-toolbar">
-          <button class="btn btn-sm btn-secondary" onclick="syncFeishuBitbrowserFields()">同步飞书账号</button>
-          <button class="btn btn-sm btn-primary" onclick="saveBitbrowserMappings()">保存 browserId 映射</button>
-          <span class="panel-hint">会同时同步飞书里的 `小红书账号`、`小红书发布渠道` 两个单选字段选项，再刷新本地 browserId 映射。</span>
-        </div>
-        <div id="bitbrowserSummary" class="record-summary" style="margin-bottom:12px;">点击"同步飞书账号"加载账号列表。</div>
-        <div id="bitbrowserList" class="account-list">
-          <div class="empty">点击"同步飞书账号"加载比特浏览器映射</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab: 飞书接入 -->
-    <div class="tab-panel" id="tab-feishu">
-      <div class="panel" id="feishuPanel">
-        <h2>🪪 飞书接入配置</h2>
-        <div class="config-form">
-          <div class="config-status" id="feishuConfigStatus">保存飞书应用凭证后，工具会立即用新的配置访问多维表格。</div>
-          <div class="config-grid">
-            <div class="config-field">
-              <label class="config-label" for="feishuAppId">App ID</label>
-              <input class="config-input" id="feishuAppId" placeholder="如：cli_xxx">
+    <div class="workspace-scroll">
+      <section class="workspace-view active" id="section-overview">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <h3>常用入口</h3>
+            <div class="card-intro">中栏只保留直接可操作的入口，运行状态、当前任务、扫描窗口和日志已经统一收进右侧预览区。</div>
+            <div class="quick-entry-grid">
+              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('feishu', { preserveSection: true });">
+                <h4>飞书接入</h4>
+                <p>补全 App ID、App Token 和 Table ID，完成多维表格接入。</p>
+              </button>
+              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('accounts', { preserveSection: true });">
+                <h4>账号授权</h4>
+                <p>查看蚁小二账号在线、实名和映射状态。</p>
+              </button>
+              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true });">
+                <h4>比特浏览器</h4>
+                <p>同步飞书账号并维护 browserId 映射关系。</p>
+              </button>
+              <button class="quick-entry-card" onclick="switchSection('data')">
+                <h4>备份与迁移</h4>
+                <p>导入导出配置或完整数据，管理本机数据位置。</p>
+              </button>
             </div>
-            <div class="config-field">
-              <label class="config-label" for="feishuAppSecret">App Secret</label>
-              <input class="config-input" id="feishuAppSecret" type="password" placeholder="未修改可保留为掩码">
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-view" id="section-publish">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <h3>待选记录队列</h3>
+            <div class="card-intro">这里负责选中一条记录，右侧再展示详细的平台、标签、备注和发布时间。</div>
+            <div class="record-toolbar" style="margin-top:12px;">
+              <div class="record-summary" id="recordSummary">记录较多时会分批渲染，减少浏览器压力。</div>
+              <button class="btn btn-sm btn-secondary" id="recordMoreBtn" onclick="showMoreRecords()" style="display:none;">显示更多</button>
             </div>
-            <div class="config-field">
-              <label class="config-label" for="feishuAppToken">App Token</label>
-              <input class="config-input" id="feishuAppToken" placeholder="多维表格 app_token">
+            <div id="recordList" class="record-list">
+              <div class="empty">点击右上角“刷新数据”加载记录</div>
             </div>
-            <div class="config-field">
-              <label class="config-label" for="feishuTableId">Table ID</label>
-              <input class="config-input" id="feishuTableId" placeholder="多维表格 table_id">
-            </div>
-            <div class="config-field full">
-              <label class="config-label" for="feishuWikiUrl">飞书文档/知识库链接（可选）</label>
-              <input class="config-input" id="feishuWikiUrl" placeholder="https://...">
-            </div>
-            <div class="config-field full">
-              <label class="config-label" for="feishuConfigNotes">接入说明</label>
-              <div class="config-textarea" id="feishuConfigNotes" style="pointer-events:none; background:#f8f8fb;" tabindex="-1">1. 先在飞书开放平台创建应用并获取 App ID / App Secret。
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-view" id="section-setup">
+        <div class="workspace-stack">
+          <div class="subnav">
+            <button class="subnav-btn active" data-setup-pane="feishu" onclick="switchSetupPane('feishu')">
+              <span class="subnav-btn-title">飞书接入</span>
+              <span class="subnav-btn-meta">连接多维表格与知识库</span>
+            </button>
+            <button class="subnav-btn" data-setup-pane="accounts" onclick="switchSetupPane('accounts')">
+              <span class="subnav-btn-title">账号授权</span>
+              <span class="subnav-btn-meta">查看蚁小二账号状态</span>
+            </button>
+            <button class="subnav-btn" data-setup-pane="bitbrowser" onclick="switchSetupPane('bitbrowser')">
+              <span class="subnav-btn-title">比特浏览器</span>
+              <span class="subnav-btn-meta">维护 browserId 映射</span>
+            </button>
+            <button class="subnav-btn" data-setup-pane="schedule" onclick="switchSetupPane('schedule')">
+              <span class="subnav-btn-title">定时任务</span>
+              <span class="subnav-btn-meta">调整扫描窗口与间隔</span>
+            </button>
+            <button class="subnav-btn" data-setup-pane="music" onclick="switchSetupPane('music')">
+              <span class="subnav-btn-title">默认音乐</span>
+              <span class="subnav-btn-meta">管理抖音默认配乐</span>
+            </button>
+          </div>
+
+          <div class="setup-pane active" id="setup-pane-feishu">
+            <div class="workspace-card" id="feishuPanel">
+              <h3>飞书接入配置</h3>
+              <div class="config-form" style="margin-top:16px;">
+                <div class="config-status" id="feishuConfigStatus">保存飞书应用凭证后，工具会立即用新的配置访问多维表格。</div>
+                <div class="config-grid">
+                  <div class="config-field">
+                    <label class="config-label" for="feishuAppId">App ID</label>
+                    <input class="config-input" id="feishuAppId" placeholder="如：cli_xxx">
+                  </div>
+                  <div class="config-field">
+                    <label class="config-label" for="feishuAppSecret">App Secret</label>
+                    <input class="config-input" id="feishuAppSecret" type="password" placeholder="未修改可保留为掩码">
+                  </div>
+                  <div class="config-field">
+                    <label class="config-label" for="feishuAppToken">App Token</label>
+                    <input class="config-input" id="feishuAppToken" placeholder="多维表格 app_token">
+                  </div>
+                  <div class="config-field">
+                    <label class="config-label" for="feishuTableId">Table ID</label>
+                    <input class="config-input" id="feishuTableId" placeholder="多维表格 table_id">
+                  </div>
+                  <div class="config-field full">
+                    <label class="config-label" for="feishuWikiUrl">飞书文档/知识库链接（可选）</label>
+                    <input class="config-input" id="feishuWikiUrl" placeholder="https://...">
+                  </div>
+                  <div class="config-field full">
+                    <label class="config-label" for="feishuConfigNotes">接入说明</label>
+                    <div class="config-textarea" id="feishuConfigNotes" style="pointer-events:none; background:#f8f8fb;" tabindex="-1">1. 先在飞书开放平台创建应用并获取 App ID / App Secret。
 2. 在多维表格或对应文档里，把这个应用添加进去，确保它有读取/编辑表格权限。
 3. 把 App Token、Table ID 一并填到这里后保存。
 4. 保存后可点“刷新数据”或“立即发布”验证接入是否生效。</div>
+                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button class="btn btn-sm btn-secondary" onclick="loadFeishuConfig(true)">重新读取</button>
+                  <button class="btn btn-sm btn-primary" onclick="saveFeishuConfig()">保存飞书配置</button>
+                </div>
+                <div class="config-note-list">
+                  <div class="config-note">提示：这里能保存本地访问凭证，但“把应用添加到飞书多维表格/文档协作者”这一步仍需你在飞书里手动完成。</div>
+                  <div class="config-note">如果 App Secret 一栏保持 `******`，保存时会沿用当前已存在的 Secret。</div>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="settings-actions">
-            <button class="btn btn-sm btn-secondary" onclick="loadFeishuConfig(true)">重新读取</button>
-            <button class="btn btn-sm btn-primary" onclick="saveFeishuConfig()">保存飞书配置</button>
-            <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
-            <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
-            <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
-            <button class="btn btn-sm btn-secondary" onclick="triggerDataImport()">导入完整数据</button>
+
+          <div class="setup-pane" id="setup-pane-accounts">
+            <div class="workspace-card" id="accountsPanel">
+              <h3>账号授权状态</h3>
+              <div class="panel-toolbar" style="margin-top:12px;">
+                <button class="btn btn-sm btn-secondary" onclick="refreshAccounts()">刷新账号状态</button>
+                <span class="panel-hint">显示蚁小二账号授权状态与是否已被当前项目映射使用。</span>
+              </div>
+              <div id="accountList" class="account-list">
+                <div class="empty">点击“刷新账号状态”加载账号信息</div>
+              </div>
+            </div>
           </div>
-          <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
-          <input id="dataImportFile" type="file" accept="application/json" style="display:none" onchange="handleDataImport(event)">
-          <div class="config-note-list">
-            <div class="config-note">提示：这里能保存本地访问凭证，但“把应用添加到飞书多维表格/文档协作者”这一步仍需你在飞书里手动完成。</div>
-            <div class="config-note">如果 App Secret 一栏保持 `******`，保存时会沿用当前已存在的 Secret。</div>
-            <div class="config-note" id="configStoragePath">配置会保存到当前系统用户目录。</div>
-            <div class="config-note">导出的配置备份会包含真实密钥，请只保存到可信位置。</div>
-            <div class="config-note">完整数据备份会包含配置和发布账本，但不会包含缓存与临时文件。</div>
+
+          <div class="setup-pane" id="setup-pane-bitbrowser">
+            <div class="workspace-card" id="bitbrowserPanel">
+              <h3>比特浏览器账号管理</h3>
+              <div class="mapping-panel-toolbar" style="margin-top:12px;">
+                <button class="btn btn-sm btn-secondary" onclick="syncFeishuBitbrowserFields()">同步飞书账号</button>
+                <button class="btn btn-sm btn-primary" onclick="saveBitbrowserMappings()">保存 browserId 映射</button>
+                <span class="panel-hint">会同时同步飞书里的 `小红书账号`、`小红书发布渠道` 两个单选字段选项，再刷新本地 browserId 映射。</span>
+              </div>
+              <div id="bitbrowserSummary" class="record-summary" style="margin-top:14px;">点击“同步飞书账号”加载账号列表。</div>
+              <div id="bitbrowserList" class="account-list">
+                <div class="empty">点击“同步飞书账号”加载比特浏览器映射</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="setup-pane" id="setup-pane-schedule">
+            <div class="workspace-card" id="settingsPanel">
+              <h3>定时检查设置</h3>
+              <div class="card-intro">时间段现在承担“扫描窗口”的职责，会在窗口内发现记录并补建精准任务。</div>
+              <div class="period-list" id="periodList"></div>
+              <div class="settings-actions" style="margin-top:14px;">
+                <button class="btn btn-sm btn-secondary" onclick="addPeriod()">+ 添加时间段</button>
+                <button class="btn btn-sm btn-primary" onclick="saveSchedule()">保存设置</button>
+                <span class="settings-hint" id="scheduleHint"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="setup-pane" id="setup-pane-music">
+            <div class="workspace-card" id="musicPanel">
+              <h3>抖音默认配乐</h3>
+              <div class="music-shell" style="margin-top:16px;">
+                <div id="currentMusic" class="current-music">
+                  <div>
+                    <span class="music-status">未设置默认配乐</span>
+                    <div class="music-status-hint" id="musicStatusHint">当前未设置默认配乐，发布时会自动回退到热门纯音乐。</div>
+                  </div>
+                </div>
+                <div class="music-search">
+                  <div class="music-tools" style="margin-top:0;">
+                    <button class="btn btn-primary" onclick="openMusicLibrary()">选择背景音乐</button>
+                    <button class="btn btn-secondary" onclick="openMusicLibrary('hot')">最近热歌</button>
+                    <button class="btn btn-secondary" onclick="clearDefaultMusic()">清除设置</button>
+                  </div>
+                  <div id="musicResults" class="music-results" style="margin-top:12px;">
+                    <div class="music-empty">点击“选择背景音乐”后，可在弹窗内搜索、试听和使用官方配乐</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- Tab: 定时设置 -->
-    <div class="tab-panel" id="tab-schedule">
-      <div class="panel" id="settingsPanel">
-        <h2>⏰ 定时检查设置</h2>
-        <div class="period-list" id="periodList"></div>
-        <div class="settings-actions">
-          <button class="btn btn-sm btn-secondary" onclick="addPeriod()">+ 添加时间段</button>
-          <button class="btn btn-sm btn-primary" onclick="saveSchedule()">保存设置</button>
-          <span class="settings-hint" id="scheduleHint"></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab: 音乐设置 -->
-    <div class="tab-panel" id="tab-music">
-      <div class="panel" id="musicPanel">
-        <h2>🎵 抖音默认配乐</h2>
-        <div class="music-shell">
-          <div id="currentMusic" class="current-music">
-            <div>
-              <span class="music-status">未设置默认配乐</span>
-              <div class="music-status-hint" id="musicStatusHint">当前未设置默认配乐，发布时会自动回退到热门纯音乐。</div>
+      <section class="workspace-view" id="section-data">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <h3>导入与导出</h3>
+            <div class="card-intro">备份迁移和本机数据目录统一收敛到这里，避免和接入配置混在一起。</div>
+            <div class="data-grid" style="margin-top:16px;">
+              <div class="workspace-card" style="padding:18px; background:#fff;">
+                <h3 style="font-size:16px;">配置备份</h3>
+                <div class="config-note" style="margin-top:8px;">只导出配置，适合在不同机器间迁移接入信息与映射规则。</div>
+                <div class="settings-actions" style="margin-top:14px;">
+                  <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
+                  <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
+                </div>
+              </div>
+              <div class="workspace-card" style="padding:18px; background:#fff;">
+                <h3 style="font-size:16px;">完整数据</h3>
+                <div class="config-note" style="margin-top:8px;">包含配置和发布账本，不包含缓存与临时文件。</div>
+                <div class="settings-actions" style="margin-top:14px;">
+                  <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
+                  <button class="btn btn-sm btn-secondary" onclick="triggerDataImport()">导入完整数据</button>
+                </div>
+              </div>
+              <div class="workspace-card" style="padding:18px; background:#fff;">
+                <h3 style="font-size:16px;">本机数据位置</h3>
+                <div class="config-note" id="configStoragePath" style="margin-top:8px;">配置会保存到当前系统用户目录。</div>
+                <div class="config-note" style="margin-top:10px;">导出的备份会包含真实密钥，请只保存到可信位置。</div>
+              </div>
             </div>
-          </div>
-          <div class="music-search">
-            <div class="music-tools" style="margin-top:0;">
-              <button class="btn btn-primary" onclick="openMusicLibrary()">选择背景音乐</button>
-              <button class="btn btn-secondary" onclick="openMusicLibrary('hot')">最近热歌</button>
-              <button class="btn btn-secondary" onclick="clearDefaultMusic()">清除设置</button>
-            </div>
-            <div id="musicResults" class="music-results" style="margin-top:12px;">
-              <div class="music-empty">点击"选择背景音乐"后，可在弹窗内搜索、试听和使用官方配乐</div>
-            </div>
+            <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
+            <input id="dataImportFile" type="file" accept="application/json" style="display:none" onchange="handleDataImport(event)">
           </div>
         </div>
-      </div>
+      </section>
     </div>
-
   </main>
+
+  <aside class="workspace-preview">
+    <div class="preview-hero">
+      <div class="workspace-eyebrow" id="contextPreviewEyebrow">预览</div>
+      <h3 id="contextPreviewTitle">知发工作台</h3>
+      <p id="contextPreviewDescription">右侧会根据当前模块显示记录详情、设置摘要、备份路径和运行上下文，不再把所有信息都堆在同一屏。</p>
+    </div>
+    <div id="contextPreviewContent" class="context-preview-content"></div>
+  </aside>
 </div>
 
 <!-- Music Modal -->
@@ -814,15 +1562,240 @@ let showCompletedRecords = false;
 let logEntries = [];
 let bitbrowserMappings = [];
 let feishuConfigLoaded = false;
+let activeSection = 'overview';
+let activeSetupPane = 'feishu';
+let selectedRecordKey = '';
+let latestStatusData = null;
+let latestRuntimePaths = {};
+let latestFeishuConfig = null;
+let accountStatusData = [];
+let latestMusicValidation = null;
+let latestPendingCount = '-';
 const MAX_LOG_ENTRIES = 200;
 
+const SECTION_META = {
+  overview: {
+    eyebrow: '总览',
+    title: '总览',
+    description: '从一个清晰的桌面工作台里管理飞书接入、账号映射、发布记录和数据备份。',
+    previewEyebrow: '运行上下文',
+    previewTitle: '知发工作台',
+    previewDescription: '右侧会根据当前模块显示记录详情、设置摘要、备份路径和运行上下文，不再把所有信息都堆在同一屏。'
+  },
+  publish: {
+    eyebrow: '发布',
+    title: '发布',
+    description: '集中查看待发布、异常和已完成记录，点选任意记录后可在右侧快速查看详情。',
+    previewEyebrow: '记录预览',
+    previewTitle: '发布记录详情',
+    previewDescription: '选中一条记录后，右侧会展示目标平台、账号、标签、发布时间和异常说明。'
+  },
+  setup: {
+    eyebrow: '设置',
+    title: '设置',
+    description: '把飞书接入、账号授权、比特浏览器、定时任务和默认音乐统一收在一个设置域里。',
+    previewEyebrow: '设置摘要',
+    previewTitle: '配置摘要',
+    previewDescription: '右侧会跟随当前设置项，展示连接状态、映射概况或运行策略。'
+  },
+  data: {
+    eyebrow: '数据',
+    title: '数据',
+    description: '把配置备份、完整数据迁移和本机数据路径放在一起，避免和接入设置混在同一屏。',
+    previewEyebrow: '数据上下文',
+    previewTitle: '本机数据摘要',
+    previewDescription: '这里会显示当前配置文件、数据目录和备份内容的范围，方便跨机器迁移。'
+  }
+};
+
+const SETUP_META = {
+  feishu: {
+    eyebrow: '设置 / 飞书接入',
+    title: '飞书接入',
+    description: '填好飞书应用信息后，知发就会直接读取多维表格并驱动后续发布流程。',
+    previewEyebrow: '连接摘要',
+    previewTitle: '飞书连接状态',
+    previewDescription: '当前接入状态、关键字段和本机配置路径会在这里集中展示。'
+  },
+  accounts: {
+    eyebrow: '设置 / 账号授权',
+    title: '账号授权',
+    description: '查看蚁小二账号是否在线、是否已实名以及是否已在当前项目中建立映射。',
+    previewEyebrow: '授权摘要',
+    previewTitle: '账号状态概览',
+    previewDescription: '右侧会汇总在线情况、映射覆盖率和最近使用的账号。'
+  },
+  bitbrowser: {
+    eyebrow: '设置 / 比特浏览器',
+    title: '比特浏览器',
+    description: '把飞书中的小红书账号与 BitBrowser browserId 对齐，决定哪些记录走浏览器发布链路。',
+    previewEyebrow: '映射摘要',
+    previewTitle: 'BrowserId 覆盖情况',
+    previewDescription: '右侧会显示当前已识别账号数、已配置 browserId 数和比特浏览器命中情况。'
+  },
+  schedule: {
+    eyebrow: '设置 / 定时任务',
+    title: '定时任务',
+    description: '时间段承担扫描窗口职责，知发会在窗口内发现记录并自动补建精准任务。',
+    previewEyebrow: '策略摘要',
+    previewTitle: '调度窗口概览',
+    previewDescription: '右侧会汇总扫描时间段、执行间隔和下一次检查时间。'
+  },
+  music: {
+    eyebrow: '设置 / 默认音乐',
+    title: '默认音乐',
+    description: '为抖音发布设置默认配乐，缺省时系统仍会自动回退到热门纯音乐。',
+    previewEyebrow: '音乐摘要',
+    previewTitle: '默认配乐状态',
+    previewDescription: '右侧会展示当前默认音乐、是否可用和最近的选择动作。'
+  }
+};
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/"/g, '&quot;');
+}
+
+function maskValue(value, visiblePrefix = 4, visibleSuffix = 4) {
+  const text = String(value || '').trim();
+  if (!text) return '未填写';
+  if (text.length <= visiblePrefix + visibleSuffix) {
+    return `${text.slice(0, Math.max(1, Math.min(2, text.length)))}••••`;
+  }
+  return `${text.slice(0, visiblePrefix)}••••${text.slice(-visibleSuffix)}`;
+}
+
+function getRecordKey(record) {
+  return [
+    record.recordId || '',
+    record.title || '',
+    record.publishTime || '',
+    record.xiaohongshuAccount || '',
+    record.douyinAccount || '',
+    Array.isArray(record.attachments) ? record.attachments.length : 0,
+    record.contentType || ''
+  ].join('|');
+}
+
+function formatDateTime(value, fallback = '-') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN');
+}
+
+function formatCount(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  return String(value);
+}
+
+function ensureSelectedRecord() {
+  if (!recordListData.length) {
+    selectedRecordKey = '';
+    return null;
+  }
+  const existing = recordListData.find(record => getRecordKey(record) === selectedRecordKey);
+  if (existing) return existing;
+  const preferred = recordListData.find(record => (
+    (record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布')
+    || (record.douyinAccount && record.douyinStatus === '待发布')
+  )) || recordListData[0];
+  selectedRecordKey = preferred ? getRecordKey(preferred) : '';
+  return preferred || null;
+}
+
+function selectRecord(recordKey) {
+  selectedRecordKey = recordKey;
+  renderRecordList(recordListData);
+  renderContextPreview();
+}
+
+function ensureSetupPaneLoaded(pane) {
+  if (pane === 'feishu') {
+    loadFeishuConfig();
+  } else if (pane === 'accounts') {
+    if (!accountStatusData.length) refreshAccounts();
+  } else if (pane === 'bitbrowser') {
+    if (!bitbrowserMappings.length) refreshBitbrowserMappings(false, true);
+  } else if (pane === 'music') {
+    loadCurrentMusic();
+  } else if (pane === 'schedule') {
+    refreshStatus();
+  }
+}
+
+function updateWorkspaceCopy() {
+  const sectionMeta = SECTION_META[activeSection] || SECTION_META.overview;
+  const setupMeta = activeSection === 'setup' ? (SETUP_META[activeSetupPane] || SETUP_META.feishu) : null;
+  const meta = setupMeta || sectionMeta;
+  document.getElementById('workspaceEyebrow').textContent = meta.eyebrow;
+  document.getElementById('workspaceTitle').textContent = meta.title;
+  document.getElementById('workspaceDescription').textContent = meta.description;
+  document.getElementById('contextPreviewEyebrow').textContent = meta.previewEyebrow;
+  document.getElementById('contextPreviewTitle').textContent = meta.previewTitle;
+  document.getElementById('contextPreviewDescription').textContent = meta.previewDescription;
+}
+
+function switchSection(section) {
+  activeSection = section;
+  document.querySelectorAll('.primary-nav-btn').forEach(item => {
+    item.classList.toggle('active', item.dataset.section === section);
+  });
+  document.querySelectorAll('.workspace-view').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `section-${section}`);
+  });
+  updateWorkspaceCopy();
+  if (section === 'publish' && !recordListData.length) {
+    refreshRecords(true);
+  }
+  if (section === 'setup') {
+    switchSetupPane(activeSetupPane, { preserveSection: true });
+    return;
+  }
+  if (section === 'data' && !feishuConfigLoaded) {
+    loadFeishuConfig();
+  }
+  renderContextPreview();
+}
+
+function switchSetupPane(pane, options = {}) {
+  activeSetupPane = pane;
+  if (!options.preserveSection) {
+    activeSection = 'setup';
+    document.querySelectorAll('.workspace-view').forEach(panel => {
+      panel.classList.toggle('active', panel.id === 'section-setup');
+    });
+    document.querySelectorAll('.primary-nav-btn').forEach(item => {
+      item.classList.toggle('active', item.dataset.section === 'setup');
+    });
+  }
+  document.querySelectorAll('.subnav-btn').forEach(item => {
+    item.classList.toggle('active', item.dataset.setupPane === pane);
+  });
+  document.querySelectorAll('.setup-pane').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `setup-pane-${pane}`);
+  });
+  updateWorkspaceCopy();
+  ensureSetupPaneLoaded(pane);
+  renderContextPreview();
+}
+
 function switchTab(tabName) {
-  document.querySelectorAll('.nav-item').forEach(item => {
-    item.classList.toggle('active', item.dataset.tab === tabName);
-  });
-  document.querySelectorAll('.tab-panel').forEach(panel => {
-    panel.classList.toggle('active', panel.id === 'tab-' + tabName);
-  });
+  const mapping = {
+    overview: { section: 'overview' },
+    publish: { section: 'publish' },
+    records: { section: 'publish' },
+    data: { section: 'data' },
+    feishu: { section: 'setup', pane: 'feishu' },
+    accounts: { section: 'setup', pane: 'accounts' },
+    bitbrowser: { section: 'setup', pane: 'bitbrowser' },
+    schedule: { section: 'setup', pane: 'schedule' },
+    music: { section: 'setup', pane: 'music' },
+  };
+  const target = mapping[tabName] || mapping.overview;
+  switchSection(target.section);
+  if (target.pane) {
+    switchSetupPane(target.pane, { preserveSection: true });
+  }
 }
 
 async function fetchApi(path, method = 'GET', body) {
@@ -944,6 +1917,229 @@ function renderTagPreview(record) {
   return sections.join('');
 }
 
+function buildPreviewMetaBlock(title, rows) {
+  if (!rows || !rows.length) return '';
+  return `
+    <div class="preview-block">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="preview-meta-list">
+        ${rows.map(row => `
+          <div class="preview-meta-item">
+            <span>${escapeHtml(row.label)}</span>
+            <span>${row.valueHtml || escapeHtml(row.value ?? '-')}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function buildPreviewListBlock(title, items, emptyText = '暂无内容') {
+  return `
+    <div class="preview-block">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="preview-list">
+        ${items && items.length
+          ? items.map(item => `<div class="preview-list-item">${item}</div>`).join('')
+          : `<div class="preview-helper">${escapeHtml(emptyText)}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function buildPreviewTagBlock(title, tags, emptyText = '暂无标签') {
+  return `
+    <div class="preview-block">
+      <h4>${escapeHtml(title)}</h4>
+      ${tags && tags.length
+        ? `<div class="preview-tags">${tags.join('')}</div>`
+        : `<div class="preview-helper">${escapeHtml(emptyText)}</div>`}
+    </div>
+  `;
+}
+
+function getScheduleSummary(limit = periods.length) {
+  return periods.slice(0, limit).map(item => `${item.startTime}-${item.endTime} / 每${item.intervalMinutes}分钟`);
+}
+
+function renderOverviewPreview() {
+  const running = latestStatusData?.running;
+  const progress = latestStatusData?.currentProgress || null;
+  const periodSummary = getScheduleSummary(4);
+  const recentLogSummary = logEntries.slice(-5).reverse().map(log => (
+    `<strong>[${escapeHtml(log.time)}]</strong> ${escapeHtml(log.message)}`
+  ));
+
+  return [
+    buildPreviewMetaBlock('运行概况', [
+      { label: '服务', value: running ? '运行中' : (latestStatusData ? '已停止' : '加载中') },
+      { label: '待发布', value: formatCount(latestPendingCount) },
+      { label: '下次检查', value: latestStatusData?.nextCheck || '-' },
+      { label: '日志条数', value: formatCount(logEntries.length) },
+    ]),
+    buildPreviewMetaBlock('当前任务', [
+      { label: '阶段', value: progress ? getProgressLabel(progress.stage) : '空闲' },
+      { label: '标题', value: progress?.title || '当前没有正在处理的发布任务' },
+      { label: '平台', value: progress?.platform || '-' },
+      { label: '账号', value: progress?.account || '-' },
+    ]),
+    buildPreviewListBlock('扫描窗口', periodSummary.map(item => escapeHtml(item)), '还没有定时扫描窗口配置'),
+    buildPreviewListBlock('最近动态', recentLogSummary, '等待新的运行日志'),
+  ].join('');
+}
+
+function renderPublishPreview() {
+  const record = ensureSelectedRecord();
+  if (!record) {
+    return [
+      buildPreviewMetaBlock('记录状态', [
+        { label: '当前状态', value: '还没有加载到发布记录' },
+        { label: '建议动作', value: '先点击顶部“刷新数据”' },
+      ]),
+      buildPreviewListBlock('说明', ['如果飞书还未接入完成，请先到设置里的“飞书接入”补全配置。'])
+    ].join('');
+  }
+
+  const tagList = (record.tags || []).map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`);
+  const previewTags = [
+    ...((record.previewTags?.xiaohongshu || []).map(tag => `<span class="tag">小红书 #${escapeHtml(tag)}</span>`)),
+    ...((record.previewTags?.douyin || []).map(tag => `<span class="tag">抖音 #${escapeHtml(tag)}</span>`))
+  ];
+
+  return [
+    buildPreviewMetaBlock('当前选中记录', [
+      { label: '标题', value: record.title || '无标题' },
+      { label: '发布时间', value: formatDateTime(record.publishTime, '立即发布') },
+      { label: '内容类型', value: record.contentType || '-' },
+      { label: '素材数量', value: Array.isArray(record.attachments) ? `${record.attachments.length} 个` : '0 个' },
+    ]),
+    buildPreviewTagBlock('目标平台与账号', [
+      ...(record.xiaohongshuAccount ? [`<span class="tag xhs">小红书 · ${escapeHtml(record.xiaohongshuAccount)}</span>`] : []),
+      ...(record.douyinAccount ? [`<span class="tag dy">抖音 · ${escapeHtml(record.douyinAccount)}</span>`] : []),
+      ...(record.xiaohongshuPublishChannel ? [`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(record.xiaohongshuPublishChannel)}</span>`] : []),
+    ], '当前记录还没有配置目标账号'),
+    buildPreviewTagBlock('记录标签', tagList, '当前记录没有可展示的标签'),
+    buildPreviewTagBlock('计划提交标签', previewTags, '当前没有平台级标签预览'),
+    buildPreviewListBlock('发布备注', record.note ? [escapeHtml(record.note)] : [], '当前没有异常或备注信息'),
+  ].join('');
+}
+
+function renderSetupPreview() {
+  if (activeSetupPane === 'feishu') {
+    const feishu = latestFeishuConfig || {};
+    return [
+      buildPreviewMetaBlock('飞书连接', [
+        { label: 'App ID', value: feishu.appId ? maskValue(feishu.appId, 6, 3) : '未填写' },
+        { label: 'App Token', value: feishu.appToken ? maskValue(feishu.appToken, 6, 3) : '未填写' },
+        { label: 'Table ID', value: feishu.tableId ? maskValue(feishu.tableId, 4, 4) : '未填写' },
+        { label: '知识库链接', value: feishu.wikiUrl || '未填写' },
+      ]),
+      buildPreviewMetaBlock('本机路径', [
+        { label: '配置文件', value: latestRuntimePaths.configPath || '等待读取' },
+        { label: '数据目录', value: latestRuntimePaths.dataDir || '等待读取' },
+      ]),
+      buildPreviewListBlock('说明', [
+        '保存后会立即刷新飞书客户端，并在服务运行时自动重启调度器。',
+        '页面不会回显真实 App Secret，保留 `******` 时会沿用已有密钥。'
+      ]),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'accounts') {
+    const onlineCount = accountStatusData.filter(item => item.statusText === '在线/授权正常').length;
+    const mappedCount = accountStatusData.filter(item => item.mapped).length;
+    return [
+      buildPreviewMetaBlock('账号概况', [
+        { label: '账号总数', value: formatCount(accountStatusData.length) },
+        { label: '在线正常', value: formatCount(onlineCount) },
+        { label: '已映射', value: formatCount(mappedCount) },
+        { label: '未映射', value: formatCount(Math.max(0, accountStatusData.length - mappedCount)) },
+      ]),
+      buildPreviewListBlock(
+        '最近账号',
+        accountStatusData.slice(0, 6).map(item => `${escapeHtml(item.accountName || '未命名账号')} · ${escapeHtml(item.statusText || '-')}`),
+        '点击中间的“刷新账号状态”加载授权信息'
+      ),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'bitbrowser') {
+    const configuredCount = bitbrowserMappings.filter(item => item.browserId).length;
+    const enabledCount = bitbrowserMappings.filter(item => item.bitbrowserRecords > 0).length;
+    return [
+      buildPreviewMetaBlock('映射概况', [
+        { label: '识别账号', value: formatCount(bitbrowserMappings.length) },
+        { label: '已配置 browserId', value: formatCount(configuredCount) },
+        { label: '飞书已启用', value: formatCount(enabledCount) },
+      ]),
+      buildPreviewListBlock(
+        '最近映射',
+        bitbrowserMappings.slice(0, 6).map(item => `${escapeHtml(item.accountName)} → ${escapeHtml(item.browserId || '未配置')}`),
+        '点击“同步飞书账号”后，这里会出现账号与 browserId 的对应关系'
+      ),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'schedule') {
+    return [
+      buildPreviewMetaBlock('调度摘要', [
+        { label: '时间段数', value: formatCount(periods.length) },
+        { label: '下次检查', value: latestStatusData?.nextCheck || '-' },
+        { label: '服务状态', value: latestStatusData?.running ? '运行中' : '已停止' },
+      ]),
+      buildPreviewListBlock('扫描窗口', getScheduleSummary().map(item => escapeHtml(item)), '还没有任何时间段设置'),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'music') {
+    return [
+      buildPreviewMetaBlock('默认音乐', [
+        { label: '当前状态', value: latestMusicValidation?.configuredMusic?.text || '未设置默认配乐' },
+        { label: '校验结果', value: latestMusicValidation?.valid ? '可用' : '未校验 / 不可用' },
+        { label: '提示', value: latestMusicValidation?.message || '未设置时会回退到热门纯音乐' },
+      ]),
+      buildPreviewListBlock('使用建议', [
+        '先在弹窗里试听，再点击“使用”保存为默认配乐。',
+        '清除默认配乐后，发布流程会自动回退到默认热门纯音乐。'
+      ]),
+    ].join('');
+  }
+
+  return buildPreviewListBlock('设置预览', [], '当前设置项暂未提供预览摘要');
+}
+
+function renderDataPreview() {
+  return [
+    buildPreviewMetaBlock('路径信息', [
+      { label: '配置文件', value: latestRuntimePaths.configPath || '等待读取' },
+      { label: '数据目录', value: latestRuntimePaths.dataDir || '等待读取' },
+      { label: '缓存目录', value: latestRuntimePaths.cacheDir || '等待读取' },
+      { label: '发布账本', value: latestRuntimePaths.ledgerPath || '等待读取' },
+    ]),
+    buildPreviewListBlock('导入导出说明', [
+      '配置备份只包含接入信息与映射规则，适合快速迁移到另一台电脑。',
+      '完整数据会额外包含发布账本，不会包含缓存和临时文件。',
+      '备份文件里可能含有真实密钥，只建议保存到可信位置。'
+    ]),
+  ].join('');
+}
+
+function renderContextPreview() {
+  const contentEl = document.getElementById('contextPreviewContent');
+  if (!contentEl) return;
+  let html = '';
+  if (activeSection === 'overview') {
+    html = renderOverviewPreview();
+  } else if (activeSection === 'publish') {
+    html = renderPublishPreview();
+  } else if (activeSection === 'setup') {
+    html = renderSetupPreview();
+  } else if (activeSection === 'data') {
+    html = renderDataPreview();
+  }
+  contentEl.innerHTML = html;
+}
+
 function getProgressLabel(stage) {
   const labels = {
     idle: '空闲', checking: '检查飞书中', preparing: '准备发布中',
@@ -964,17 +2160,23 @@ function renderProgress(progress) {
   const updatedAt = document.getElementById('progressUpdatedAt');
   const stage = data.stage || 'idle';
 
-  badge.textContent = getProgressLabel(stage);
-  badge.className = 'progress-badge';
-  if (data.active) badge.classList.add('active');
-  if (stage === 'completed') badge.classList.add('success');
-  if (stage === 'failed' || stage === 'partial-failed') badge.classList.add('failed');
+  if (badge) {
+    badge.textContent = getProgressLabel(stage);
+    badge.className = 'progress-badge';
+    if (data.active) badge.classList.add('active');
+    if (stage === 'completed') badge.classList.add('success');
+    if (stage === 'failed' || stage === 'partial-failed') badge.classList.add('failed');
+  }
 
-  title.textContent = data.title ? `《${data.title}》` : '当前没有正在处理的发布任务';
-  detail.textContent = data.detail || '等待任务';
-  platform.textContent = `平台: ${data.platform || '-'}`;
-  account.textContent = `账号: ${data.account || '-'}`;
-  updatedAt.textContent = `更新时间: ${data.updatedAt || '-'}`;
+  if (title) title.textContent = data.title ? `《${data.title}》` : '当前没有正在处理的发布任务';
+  if (detail) detail.textContent = data.detail || '等待任务';
+  if (platform) platform.textContent = `平台: ${data.platform || '-'}`;
+  if (account) account.textContent = `账号: ${data.account || '-'}`;
+  if (updatedAt) updatedAt.textContent = `更新时间: ${data.updatedAt || '-'}`;
+  if (latestStatusData) {
+    latestStatusData.currentProgress = data;
+  }
+  renderContextPreview();
 }
 
 function buildStatusSignature(status) {
@@ -995,24 +2197,44 @@ async function refreshStatus() {
       fetchApi('/api/status'),
       fetchApi('/api/pending-count').catch(() => null),
     ]);
-    const signature = buildStatusSignature(status);
+    const pendingCountValue = pendingResp && pendingResp.success ? pendingResp.count : latestPendingCount;
+    const signature = JSON.stringify({
+      status: buildStatusSignature(status),
+      pendingCount: pendingCountValue,
+    });
     if (signature === lastStatusSignature) return;
     lastStatusSignature = signature;
+    latestStatusData = status;
+    latestPendingCount = formatCount(pendingCountValue);
     const el = document.getElementById('serviceStatus');
+    const toolbarStatusEl = document.getElementById('toolbarServiceStatus');
     if (status.running) {
-      el.textContent = '运行中';
-      el.className = 'value running';
+      if (el) {
+        el.textContent = '运行中';
+        el.className = 'overview-stat-value running';
+      }
+      toolbarStatusEl.textContent = '运行中';
+      toolbarStatusEl.className = 'status-chip-value running';
       document.getElementById('btnStart').disabled = true;
       document.getElementById('btnStop').disabled = false;
     } else {
-      el.textContent = '已停止';
-      el.className = 'value stopped';
+      if (el) {
+        el.textContent = '已停止';
+        el.className = 'overview-stat-value stopped';
+      }
+      toolbarStatusEl.textContent = '已停止';
+      toolbarStatusEl.className = 'status-chip-value stopped';
       document.getElementById('btnStart').disabled = false;
       document.getElementById('btnStop').disabled = true;
     }
-    document.getElementById('nextCheck').textContent = status.nextCheck || '-';
+    const nextCheckEl = document.getElementById('nextCheck');
+    if (nextCheckEl) nextCheckEl.textContent = status.nextCheck || '-';
+    document.getElementById('toolbarNextCheck').textContent = status.nextCheck || '-';
     if (pendingResp && pendingResp.success) {
-      document.getElementById('pendingCount').textContent = pendingResp.count ?? '-';
+      const countText = formatCount(pendingResp.count);
+      const pendingCountEl = document.getElementById('pendingCount');
+      if (pendingCountEl) pendingCountEl.textContent = countText;
+      document.getElementById('toolbarPendingCount').textContent = countText;
     }
 
     if (status.schedule && status.schedule.periods) {
@@ -1024,8 +2246,15 @@ async function refreshStatus() {
     }
     renderProgress(status.currentProgress);
   } catch (e) {
-    document.getElementById('serviceStatus').textContent = '连接失败';
+    const serviceStatusEl = document.getElementById('serviceStatus');
+    if (serviceStatusEl) {
+      serviceStatusEl.textContent = '连接失败';
+      serviceStatusEl.className = 'overview-stat-value stopped';
+    }
+    document.getElementById('toolbarServiceStatus').textContent = '连接失败';
+    document.getElementById('toolbarServiceStatus').className = 'status-chip-value stopped';
   } finally {
+    renderContextPreview();
     isRefreshingStatus = false;
   }
 }
@@ -1060,15 +2289,22 @@ function renderRecordList(records) {
     return bTime - aTime;
   });
 
-  document.getElementById('pendingCount').textContent = pendingRecords.length;
+  latestPendingCount = formatCount(pendingRecords.length);
+  const pendingCountEl = document.getElementById('pendingCount');
+  if (pendingCountEl) pendingCountEl.textContent = latestPendingCount;
+  document.getElementById('toolbarPendingCount').textContent = latestPendingCount;
   if (records.length === 0) {
     el.innerHTML = '<div class="empty">没有记录</div>';
     summaryEl.textContent = '当前没有可展示的记录。';
     moreBtn.style.display = 'none';
+    selectedRecordKey = '';
+    renderContextPreview();
     return;
   }
 
   const orderedRecords = [...pendingRecords, ...blockedRecords, ...completedRecords];
+  recordListData = orderedRecords;
+  const selectedRecord = ensureSelectedRecord();
   const visiblePending = pendingRecords.slice(0, recordRenderLimit);
   const visibleBlocked = blockedRecords.slice(0, recordRenderLimit);
   const visibleCompleted = showCompletedRecords ? completedRecords.slice(0, recordRenderLimit) : [];
@@ -1081,6 +2317,8 @@ function renderRecordList(records) {
   ) ? 'inline-flex' : 'none';
 
   const renderCards = (list) => list.map(r => {
+    const recordKey = getRecordKey(r);
+    const selected = selectedRecord && getRecordKey(selectedRecord) === recordKey;
     const tags = (r.tags || []).slice(0, 5).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join(' ');
     const accounts = [];
     if (r.xiaohongshuAccount) {
@@ -1090,7 +2328,7 @@ function renderRecordList(records) {
     if (r.douyinAccount) accounts.push(`<span class="tag dy">抖音: ${escapeHtml(r.douyinAccount)} · 蚁小二</span>`);
     const platformStatusHtml = renderPlatformStatus(r);
     const timeStr = r.publishTime ? new Date(r.publishTime).toLocaleString('zh-CN') : '立即发布';
-    return `<div class="record-item">
+    return `<div class="record-item ${selected ? 'selected' : ''}" data-record-key="${escapeAttr(recordKey)}" onclick="selectRecord('${escapeJsSingleQuotedString(recordKey)}')">
       <div class="title">${escapeHtml(r.title || '无标题')}</div>
       <div class="meta">
         <span>📷 ${r.contentType} (${(r.attachments || []).length}个素材)</span>
@@ -1126,6 +2364,7 @@ function renderRecordList(records) {
         : '<div class="empty" style="padding:18px 0;">已完成记录默认折叠，点击右侧按钮展开</div>'}
     </div>
   `;
+  renderContextPreview();
 }
 
 function showMoreRecords() {
@@ -1158,15 +2397,19 @@ async function refreshRecords(force = false) {
     if (force) recordRenderLimit = 80;
     renderRecordList(records);
   } catch (e) {
+    selectedRecordKey = '';
     if (String(e.message || '').includes('飞书接入')) {
-      el.innerHTML = '<div class="empty">请先到“飞书接入”页完成配置，然后再刷新记录。</div>';
+      el.innerHTML = '<div class="empty">请先到“设置 / 飞书接入”完成配置，然后再刷新记录。</div>';
       summaryEl.textContent = '程序已在当前系统用户目录生成空白配置模板，完成飞书接入后即可开始加载记录。';
       moreBtn.style.display = 'none';
-      document.getElementById('pendingCount').textContent = '-';
+      const pendingCountEl = document.getElementById('pendingCount');
+      if (pendingCountEl) pendingCountEl.textContent = '-';
+      document.getElementById('toolbarPendingCount').textContent = '-';
     } else {
       el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${e.message}</div>`;
     }
   } finally {
+    renderContextPreview();
     isRefreshingRecords = false;
   }
 }
@@ -1204,10 +2447,10 @@ async function publishNow() {
 }
 
 // Legacy toggle functions → redirect to switchTab
-function toggleSettings() { switchTab('schedule'); }
-function toggleAccounts() { switchTab('accounts'); refreshAccounts(); }
-function toggleBitbrowserMappings() { switchTab('bitbrowser'); refreshBitbrowserMappings(); }
-function toggleMusic() { switchTab('music'); loadCurrentMusic(); }
+function toggleSettings() { switchSection('setup'); switchSetupPane('schedule', { preserveSection: true }); }
+function toggleAccounts() { switchSection('setup'); switchSetupPane('accounts', { preserveSection: true }); refreshAccounts(); }
+function toggleBitbrowserMappings() { switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true }); refreshBitbrowserMappings(); }
+function toggleMusic() { switchSection('setup'); switchSetupPane('music', { preserveSection: true }); loadCurrentMusic(); }
 
 function renderBitbrowserMappings() {
   const listEl = document.getElementById('bitbrowserList');
@@ -1215,6 +2458,7 @@ function renderBitbrowserMappings() {
   if (!bitbrowserMappings.length) {
     listEl.innerHTML = '<div class="empty">当前飞书记录里还没有检测到小红书账号</div>';
     summaryEl.textContent = '当前没有可配置的比特浏览器账号。';
+    renderContextPreview();
     return;
   }
   const configuredCount = bitbrowserMappings.filter(item => item.browserId).length;
@@ -1237,6 +2481,7 @@ function renderBitbrowserMappings() {
       </div>
     </div>
   `).join('');
+  renderContextPreview();
 }
 
 function updateBitbrowserMapping(index, value) {
@@ -1258,7 +2503,9 @@ async function refreshBitbrowserMappings(forceLog = false, forceReload = false) 
     renderBitbrowserMappings();
     if (forceLog) addLog('success', '已同步飞书中的小红书账号列表');
   } catch (e) {
+    bitbrowserMappings = [];
     listEl.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${escapeHtml(e.message)}</div>`;
+    renderContextPreview();
   }
 }
 
@@ -1275,6 +2522,7 @@ async function syncFeishuBitbrowserFields() {
   } catch (e) {
     listEl.innerHTML = `<div class="empty" style="color:#ff3b30">同步失败: ${escapeHtml(e.message)}</div>`;
     addLog('error', `同步飞书单选字段失败: ${e.message}`);
+    renderContextPreview();
   }
 }
 
@@ -1288,6 +2536,7 @@ async function saveBitbrowserMappings() {
     refreshRecords(true);
   } catch (e) {
     addLog('error', `保存比特浏览器映射失败: ${e.message}`);
+    renderContextPreview();
   }
 }
 
@@ -1437,6 +2686,7 @@ async function refreshAccounts() {
     const resp = await fetchApi('/api/accounts/status');
     if (!resp.success) throw new Error(resp.error);
     const list = resp.data || [];
+    accountStatusData = list;
     if (list.length === 0) { el.innerHTML = '<div class="empty">没有账号数据</div>'; return; }
     el.innerHTML = list.map(item => `
       <div class="account-item">
@@ -1452,7 +2702,10 @@ async function refreshAccounts() {
         </div>
       </div>`).join('');
   } catch (e) {
+    accountStatusData = [];
     el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    renderContextPreview();
   }
 }
 
@@ -1465,6 +2718,8 @@ async function loadFeishuConfig(force = false) {
     const resp = await fetchApi('/api/config');
     const feishu = resp.feishu || {};
     const runtimePaths = resp.runtimePaths || {};
+    latestFeishuConfig = feishu;
+    latestRuntimePaths = runtimePaths;
     document.getElementById('feishuAppId').value = feishu.appId || '';
     document.getElementById('feishuAppSecret').value = feishu.appSecret || '';
     document.getElementById('feishuAppToken').value = feishu.appToken || '';
@@ -1480,8 +2735,11 @@ async function loadFeishuConfig(force = false) {
       : '当前是首次生成的空白配置，请补全 App ID、App Secret、App Token 和 Table ID。';
     feishuConfigLoaded = true;
   } catch (e) {
+    latestFeishuConfig = null;
     statusEl.className = 'config-status error';
     statusEl.textContent = `读取飞书配置失败：${e.message}`;
+  } finally {
+    renderContextPreview();
   }
 }
 
@@ -1507,6 +2765,7 @@ async function saveFeishuConfig() {
     document.getElementById('feishuAppSecret').value = '******';
     feishuConfigLoaded = true;
     addLog('success', resp.message || '飞书接入配置已保存');
+    await loadFeishuConfig(true);
     refreshRecords(true);
     refreshStatus();
   } catch (e) {
@@ -1637,11 +2896,16 @@ function renderAccountAliases(item) {
 function renderLogs(logs) {
   logEntries = Array.isArray(logs) ? logs.slice(-MAX_LOG_ENTRIES) : [];
   const el = document.getElementById('logPanel');
+  if (!el) {
+    renderContextPreview();
+    return;
+  }
   el.innerHTML = logEntries.map(l => {
     const cls = l.level === 'error' ? 'log-error' : l.level === 'success' ? 'log-success' : 'log-info';
     return `<div class="log-entry"><span class="log-time">[${l.time}]</span> <span class="${cls}">${l.message}</span></div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
+  renderContextPreview();
 }
 
 function addLog(level, message) {
@@ -1666,6 +2930,7 @@ function connectSSE() {
 async function loadCurrentMusic() {
   try {
     const resp = await fetchApi('/api/music/default/validate');
+    latestMusicValidation = resp;
     const musicEl = document.getElementById('currentMusic').querySelector('.music-status');
     const hintEl = document.getElementById('musicStatusHint');
     hintEl.className = 'music-status-hint';
@@ -1680,7 +2945,12 @@ async function loadCurrentMusic() {
       hintEl.textContent = '当前未设置默认配乐，发布时会自动回退到热门纯音乐。';
       hintEl.classList.add('warning');
     }
-  } catch (e) { console.error('加载当前音乐失败:', e); }
+  } catch (e) {
+    latestMusicValidation = null;
+    console.error('加载当前音乐失败:', e);
+  } finally {
+    renderContextPreview();
+  }
 }
 
 async function searchMusic() { await openMusicLibrary(); }
