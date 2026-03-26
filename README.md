@@ -27,6 +27,22 @@ npm start
 4. 打开 [http://localhost:3210](http://localhost:3210)，进入“飞书接入”页填写配置
 5. `config.example.json` 仅作为字段结构参考，不再要求复制到项目根目录
 
+如需启动桌面壳（Electron）：
+
+```bash
+npm run desktop
+```
+
+桌面版会自动拉起内置本地服务并加载同一套管理界面。
+
+如需本地生成 Windows 安装包：
+
+```bash
+npm run dist:win
+```
+
+仓库内已提供 GitHub Actions 工作流，会在推送后自动构建 `NotePublisher Setup.exe` 并上传为构建产物。
+
 ---
 
 ## 配置与数据目录

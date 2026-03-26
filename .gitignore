@@ -3,6 +3,7 @@ config.local.json
 node_modules/
 .codepilot-uploads/
 /tmp/
+dist/
 publish-ledger.json
 .claude/
 小雨老师/

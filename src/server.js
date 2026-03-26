@@ -17,10 +17,12 @@ const storage = initializeAppStorage();
 const runtimePaths = storage.paths;
 const storageState = storage.state;
 const config = storage.config;
-const PORT = 3210;
+const DEFAULT_PORT = Number(process.env.NOTE_PUBLISHER_PORT) || 3210;
+const DEFAULT_HOST = process.env.NOTE_PUBLISHER_HOST || '127.0.0.1';
 
 const scheduler = new Scheduler(config);
 let feishu = new FeishuClient(config.feishu);
+let activeServerInfo = null;
 
 function syncConfigObject(nextConfig) {
   for (const key of Object.keys(config)) {
@@ -734,19 +736,14 @@ const server = http.createServer(async (req, res) => {
   res.end('Not Found');
 });
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`\n❌ 端口 ${PORT} 已被占用，请先关闭之前的服务`);
-    console.error(`   运行: lsof -ti:${PORT} | xargs kill -9\n`);
-  } else {
-    console.error(`\n❌ 启动失败: ${err.message}\n`);
-  }
-  process.exit(1);
+server.on('close', () => {
+  activeServerInfo = null;
+  scheduler.stop();
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+function logStartup(port, host) {
   console.log(`\n🚀 笔记发布工具已启动！`);
-  console.log(`📡 访问地址: http://localhost:${PORT}`);
+  console.log(`📡 访问地址: http://${host}:${port}`);
   console.log(`📁 配置文件: ${runtimePaths.configPath}`);
   console.log(`🗂 数据目录: ${runtimePaths.dataDir}`);
   if (storageState.config === 'migrated') {
@@ -758,4 +755,125 @@ server.listen(PORT, '127.0.0.1', () => {
     console.log(`♻️ 已从旧路径迁移发布账本: ${runtimePaths.legacyLedgerPath}`);
   }
   console.log(`\n按 Ctrl+C 停止服务\n`);
-});
+}
+
+function printStartError(err, port) {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ 端口 ${port} 已被占用，请先关闭之前的服务`);
+    console.error(`   运行: lsof -ti:${port} | xargs kill -9\n`);
+  } else {
+    console.error(`\n❌ 启动失败: ${err.message}\n`);
+  }
+}
+
+function normalizeServerAddress(address, fallbackHost) {
+  if (!address || typeof address === 'string') {
+    return {
+      port: DEFAULT_PORT,
+      host: fallbackHost,
+    };
+  }
+
+  let host = address.address || fallbackHost;
+  if (host === '::' || host === '0.0.0.0') {
+    host = '127.0.0.1';
+  }
+
+  return {
+    port: address.port,
+    host,
+  };
+}
+
+function startServer(options = {}) {
+  if (server.listening) {
+    return Promise.resolve(activeServerInfo || {
+      ...normalizeServerAddress(server.address(), options.host || DEFAULT_HOST),
+      server,
+    });
+  }
+
+  const port = options.port ?? DEFAULT_PORT;
+  const host = options.host || DEFAULT_HOST;
+  const exitOnError = options.exitOnError === true;
+  const silent = options.silent === true;
+
+  return new Promise((resolve, reject) => {
+    const handleError = (err) => {
+      cleanup();
+      if (!silent) {
+        printStartError(err, port);
+      }
+      if (exitOnError) {
+        process.exit(1);
+        return;
+      }
+      reject(err);
+    };
+
+    const handleListening = () => {
+      cleanup();
+      const info = normalizeServerAddress(server.address(), host);
+      activeServerInfo = { ...info, server };
+      if (!silent) {
+        logStartup(info.port, info.host);
+      }
+      resolve(activeServerInfo);
+    };
+
+    const cleanup = () => {
+      server.off('error', handleError);
+      server.off('listening', handleListening);
+    };
+
+    server.once('error', handleError);
+    server.once('listening', handleListening);
+    server.listen(port, host);
+  });
+}
+
+function stopServer() {
+  for (const res of sseClients) {
+    try { res.end(); } catch (_) {}
+  }
+  sseClients.clear();
+
+  if (!server.listening) {
+    activeServerInfo = null;
+    scheduler.stop();
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) return reject(err);
+      activeServerInfo = null;
+      resolve();
+    });
+  });
+}
+
+function getServerState() {
+  return {
+    runtimePaths: getPublicRuntimePaths(),
+    storageState,
+    configState: getConfigState(),
+    server: activeServerInfo,
+  };
+}
+
+module.exports = {
+  startServer,
+  stopServer,
+  getServerState,
+  scheduler,
+  config,
+};
+
+if (require.main === module) {
+  startServer({
+    port: DEFAULT_PORT,
+    host: DEFAULT_HOST,
+    exitOnError: true,
+  }).catch(() => {});
+}
