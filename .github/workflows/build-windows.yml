@@ -13,12 +13,12 @@ jobs:
         include:
           - os: windows-latest
             build_script: dist:win
-            artifact_name: NotePublisher-windows
-            artifact_paths: dist/NotePublisher Portable.exe
+            artifact_name: Zhifa-windows
+            artifact_paths: dist/知发 Portable.exe
           - os: macos-latest
             build_script: dist:mac
-            artifact_name: NotePublisher-macos
-            artifact_paths: dist/NotePublisher macOS.zip
+            artifact_name: Zhifa-macos
+            artifact_paths: dist/知发 macOS.zip
 
     steps:
       - name: Checkout

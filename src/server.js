@@ -18,6 +18,7 @@ const {
 const storage = initializeAppStorage();
 const runtimePaths = storage.paths;
 const storageState = storage.state;
+const migrationSources = storage.migrationSources || {};
 const config = storage.config;
 const DEFAULT_PORT = Number(process.env.NOTE_PUBLISHER_PORT) || 3210;
 const DEFAULT_HOST = process.env.NOTE_PUBLISHER_HOST || '127.0.0.1';
@@ -91,7 +92,7 @@ function writeJsonDownload(res, filename, payload) {
 
 function cloneDataBackupForExport() {
   return {
-    type: 'note-publisher-data-backup',
+    type: 'zhifa-data-backup',
     version: 1,
     exportedAt: new Date().toISOString(),
     appName: runtimePaths.appName,
@@ -480,7 +481,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/config/export' && req.method === 'GET') {
     const stamp = buildBackupStamp();
-    const filename = `note-publisher-config-backup-${stamp}.json`;
+    const filename = `zhifa-config-backup-${stamp}.json`;
     writeJsonDownload(res, filename, cloneConfigForExport());
     return;
   }
@@ -514,7 +515,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/data/export' && req.method === 'GET') {
     const stamp = buildBackupStamp();
-    const filename = `note-publisher-data-backup-${stamp}.json`;
+    const filename = `zhifa-data-backup-${stamp}.json`;
     writeJsonDownload(res, filename, cloneDataBackupForExport());
     return;
   }
@@ -821,17 +822,17 @@ server.on('close', () => {
 });
 
 function logStartup(port, host) {
-  console.log(`\n🚀 笔记发布工具已启动！`);
+  console.log(`\n🚀 知发已启动！`);
   console.log(`📡 访问地址: http://${host}:${port}`);
   console.log(`📁 配置文件: ${runtimePaths.configPath}`);
   console.log(`🗂 数据目录: ${runtimePaths.dataDir}`);
   if (storageState.config === 'migrated') {
-    console.log(`♻️ 已从旧路径迁移配置: ${runtimePaths.legacyConfigPath}`);
+    console.log(`♻️ 已从旧路径迁移配置: ${migrationSources.config || runtimePaths.legacyConfigPath}`);
   } else if (storageState.config === 'created') {
     console.log(`🆕 已生成空白配置模板，请先在页面或配置文件中完成接入信息`);
   }
   if (storageState.ledger === 'migrated') {
-    console.log(`♻️ 已从旧路径迁移发布账本: ${runtimePaths.legacyLedgerPath}`);
+    console.log(`♻️ 已从旧路径迁移发布账本: ${migrationSources.ledger || runtimePaths.legacyLedgerPath}`);
   }
   console.log(`\n按 Ctrl+C 停止服务\n`);
 }

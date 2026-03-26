@@ -9,7 +9,7 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-ARTIFACT_PATH="${1:-dist/NotePublisher macOS.zip}"
+ARTIFACT_PATH="${1:-dist/知发 macOS.zip}"
 
 if [ ! -f "$ARTIFACT_PATH" ]; then
   echo "未找到本地 mac 安装包：$ARTIFACT_PATH"
@@ -36,8 +36,8 @@ CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 CURRENT_SHA="$(git rev-parse --short HEAD)"
 DEFAULT_TAG="local-mac-${CURRENT_BRANCH}-$(date +%Y%m%d-%H%M%S)"
 RELEASE_TAG="${2:-$DEFAULT_TAG}"
-RELEASE_TITLE="${3:-Local macOS build ${CURRENT_BRANCH} ${CURRENT_SHA}}"
-RELEASE_NOTES="${4:-本地 Mac 打包上传。分支：${CURRENT_BRANCH}，提交：${CURRENT_SHA}。}"
+RELEASE_TITLE="${3:-知发 macOS 本地构建 ${CURRENT_BRANCH} ${CURRENT_SHA}}"
+RELEASE_NOTES="${4:-知发本地 Mac 打包上传。分支：${CURRENT_BRANCH}，提交：${CURRENT_SHA}。}"
 
 if gh release view "$RELEASE_TAG" --repo "$REPO_SLUG" >/dev/null 2>&1; then
   gh release upload "$RELEASE_TAG" "$ARTIFACT_PATH" --clobber --repo "$REPO_SLUG"

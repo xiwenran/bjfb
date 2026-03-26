@@ -27,7 +27,7 @@ async function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#f2f2f7',
-    title: '笔记发布工具',
+    title: '知发',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

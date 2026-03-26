@@ -1,4 +1,6 @@
-# 笔记发布工具
+# 知发
+
+> 笔记多平台发布工具
 
 飞书多维表格驱动的自动发布项目：
 
@@ -49,8 +51,8 @@ npm run dist:mac
 
 当前分发方式：
 
-- Windows：`NotePublisher Portable.exe`，免安装，可直接运行
-- macOS：`NotePublisher macOS.zip`，解压后直接打开 `.app`
+- Windows：`知发 Portable.exe`，免安装，可直接运行
+- macOS：`知发 macOS.zip`，解压后直接打开 `.app`
 
 两者都会继续把配置和运行数据放在系统用户目录，因此删掉程序文件本体后，本机配置默认仍会保留。
 
@@ -62,10 +64,10 @@ npm run dist:mac
 
 程序实际读写的本机数据不再放在项目根目录，而是放在当前系统用户目录：
 
-- Windows 配置目录：`%AppData%/NotePublisher/config.json`
-- Windows 数据目录：`%LocalAppData%/NotePublisher/`
-- macOS 配置目录：`~/Library/Application Support/NotePublisher/config.json`
-- macOS 数据目录：`~/Library/Caches/NotePublisher/`
+- Windows 配置目录：`%AppData%/Zhifa/config.json`
+- Windows 数据目录：`%LocalAppData%/Zhifa/`
+- macOS 配置目录：`~/Library/Application Support/Zhifa/config.json`
+- macOS 数据目录：`~/Library/Caches/Zhifa/`
 
 其中：
 
@@ -290,10 +292,10 @@ npm run dist:mac
 npm run release:mac-local
 ```
 
-默认会上传 `dist/NotePublisher macOS.zip`，并自动创建一个带时间戳的 Release。你也可以手动指定文件路径和 tag：
+默认会上传 `dist/知发 macOS.zip`，并自动创建一个带时间戳的 Release。你也可以手动指定文件路径和 tag：
 
 ```bash
-npm run release:mac-local -- "dist/NotePublisher macOS.zip" "local-mac-manual-20260327"
+npm run release:mac-local -- "dist/知发 macOS.zip" "local-mac-manual-20260327"
 ```
 
 这种方式上传的是发布附件，不会把安装包提交进代码仓库。
@@ -301,6 +303,7 @@ npm run release:mac-local -- "dist/NotePublisher macOS.zip" "local-mac-manual-20
 如果你更习惯直接双击文件，也可以在项目根目录双击：
 
 - `打包并上传Mac.command`
-- `打包安装包并上传GitHub.command`
+- `仅打包Mac.command`
 
-它会自动执行本地 mac 打包，并把生成的 zip 上传到 GitHub Release。
+- `打包并上传Mac.command`：本地打包后上传到 GitHub Release
+- `仅打包Mac.command`：只在本地生成 mac 安装包，不上传 GitHub

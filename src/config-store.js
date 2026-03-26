@@ -2,7 +2,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const APP_DIRECTORY_NAME = 'NotePublisher';
+const APP_DIRECTORY_NAME = 'Zhifa';
+const LEGACY_APP_DIRECTORY_NAMES = ['NotePublisher'];
 const WORKSPACE_ROOT = path.join(__dirname, '..');
 const LEGACY_CONFIG_PATH = path.join(WORKSPACE_ROOT, 'config.json');
 const LEGACY_LEDGER_PATH = path.join(WORKSPACE_ROOT, 'publish-ledger.json');
@@ -121,12 +122,14 @@ function resolveDataBaseDir() {
 }
 
 function getRuntimePaths() {
+  const configBaseDir = resolveConfigBaseDir();
+  const dataBaseDir = resolveDataBaseDir();
   const configDir = process.env.NOTE_PUBLISHER_CONFIG_DIR
     ? path.resolve(process.env.NOTE_PUBLISHER_CONFIG_DIR)
-    : path.join(resolveConfigBaseDir(), APP_DIRECTORY_NAME);
+    : path.join(configBaseDir, APP_DIRECTORY_NAME);
   const dataDir = process.env.NOTE_PUBLISHER_DATA_DIR
     ? path.resolve(process.env.NOTE_PUBLISHER_DATA_DIR)
-    : path.join(resolveDataBaseDir(), APP_DIRECTORY_NAME);
+    : path.join(dataBaseDir, APP_DIRECTORY_NAME);
 
   return {
     appName: APP_DIRECTORY_NAME,
@@ -140,6 +143,8 @@ function getRuntimePaths() {
     ledgerPath: path.join(dataDir, 'publish-ledger.json'),
     legacyConfigPath: LEGACY_CONFIG_PATH,
     legacyLedgerPath: LEGACY_LEDGER_PATH,
+    legacyNamedConfigPaths: LEGACY_APP_DIRECTORY_NAMES.map((name) => path.join(configBaseDir, name, 'config.json')),
+    legacyNamedLedgerPaths: LEGACY_APP_DIRECTORY_NAMES.map((name) => path.join(dataBaseDir, name, 'publish-ledger.json')),
   };
 }
 
@@ -192,6 +197,16 @@ function ensureConfigFile(paths = getRuntimePaths()) {
     };
   }
 
+  for (const legacyPath of paths.legacyNamedConfigPaths || []) {
+    if (fs.existsSync(legacyPath)) {
+      return {
+        state: 'migrated',
+        config: normalizeConfig(readJsonFile(legacyPath, {}, { throwOnError: true })),
+        sourcePath: legacyPath,
+      };
+    }
+  }
+
   return {
     state: 'created',
     config: cloneDefaultConfig(),
@@ -205,6 +220,16 @@ function ensureLedgerFile(paths = getRuntimePaths()) {
 
   if (fs.existsSync(paths.legacyLedgerPath)) {
     return { state: 'migrated', ledger: readJsonFile(paths.legacyLedgerPath, {}) || {} };
+  }
+
+  for (const legacyPath of paths.legacyNamedLedgerPaths || []) {
+    if (fs.existsSync(legacyPath)) {
+      return {
+        state: 'migrated',
+        ledger: readJsonFile(legacyPath, {}) || {},
+        sourcePath: legacyPath,
+      };
+    }
   }
 
   return { state: 'created', ledger: {} };
@@ -227,6 +252,10 @@ function initializeAppStorage() {
     state: {
       config: configResult.state,
       ledger: ledgerResult.state,
+    },
+    migrationSources: {
+      config: configResult.sourcePath || null,
+      ledger: ledgerResult.sourcePath || null,
     },
   };
 }
