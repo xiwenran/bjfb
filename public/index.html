@@ -684,13 +684,17 @@
             <button class="btn btn-sm btn-primary" onclick="saveFeishuConfig()">保存飞书配置</button>
             <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
             <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
+            <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
+            <button class="btn btn-sm btn-secondary" onclick="triggerDataImport()">导入完整数据</button>
           </div>
           <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
+          <input id="dataImportFile" type="file" accept="application/json" style="display:none" onchange="handleDataImport(event)">
           <div class="config-note-list">
             <div class="config-note">提示：这里能保存本地访问凭证，但“把应用添加到飞书多维表格/文档协作者”这一步仍需你在飞书里手动完成。</div>
             <div class="config-note">如果 App Secret 一栏保持 `******`，保存时会沿用当前已存在的 Secret。</div>
             <div class="config-note" id="configStoragePath">配置会保存到当前系统用户目录。</div>
             <div class="config-note">导出的配置备份会包含真实密钥，请只保存到可信位置。</div>
+            <div class="config-note">完整数据备份会包含配置和发布账本，但不会包含缓存与临时文件。</div>
           </div>
         </div>
       </div>
@@ -1528,6 +1532,22 @@ function triggerConfigImport() {
   input.click();
 }
 
+function exportDataBackup() {
+  const link = document.createElement('a');
+  link.href = `${API}/api/data/export`;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  addLog('info', '已开始导出完整数据备份');
+}
+
+function triggerDataImport() {
+  const input = document.getElementById('dataImportFile');
+  input.value = '';
+  input.click();
+}
+
 async function handleConfigImport(event) {
   const statusEl = document.getElementById('feishuConfigStatus');
   const file = event.target.files && event.target.files[0];
@@ -1559,6 +1579,42 @@ async function handleConfigImport(event) {
     statusEl.className = 'config-status error';
     statusEl.textContent = `导入失败：${e.message}`;
     addLog('error', `导入配置备份失败: ${e.message}`);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function handleDataImport(event) {
+  const statusEl = document.getElementById('feishuConfigStatus');
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  if (!confirm('导入完整数据后会覆盖当前本机配置和发布账本，是否继续？')) {
+    event.target.value = '';
+    return;
+  }
+
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在导入完整数据备份...';
+
+  try {
+    const text = await file.text();
+    const imported = JSON.parse(text);
+    const resp = await fetchApi('/api/data/import', 'POST', { backup: imported });
+    if (!resp.success) throw new Error(resp.error || '导入失败');
+
+    feishuConfigLoaded = false;
+    bitbrowserMappings = [];
+    statusEl.className = 'config-status success';
+    statusEl.textContent = resp.message || '完整数据备份已导入';
+    await loadFeishuConfig(true);
+    refreshStatus();
+    refreshRecords(true);
+    addLog('success', resp.message || '完整数据备份已导入');
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `导入失败：${e.message}`;
+    addLog('error', `导入完整数据备份失败: ${e.message}`);
   } finally {
     event.target.value = '';
   }

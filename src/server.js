@@ -8,6 +8,8 @@ const FeishuClient = require('./feishu.js');
 const {
   initializeAppStorage,
   saveConfig: persistConfig,
+  readLedger,
+  saveLedger,
   getRuntimePaths,
   isFeishuConfigured,
   isYixiaoerConfigured,
@@ -63,6 +65,73 @@ function cloneConfigForExport() {
   const exported = JSON.parse(JSON.stringify(config));
   delete exported.yixiaoerAccountCache;
   return exported;
+}
+
+function buildBackupStamp() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '-',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('');
+}
+
+function writeJsonDownload(res, filename, payload) {
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.end(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function cloneDataBackupForExport() {
+  return {
+    type: 'note-publisher-data-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    appName: runtimePaths.appName,
+    data: {
+      config: cloneConfigForExport(),
+      ledger: readLedger(),
+    },
+  };
+}
+
+function applyImportedDataBackup(importedBackup) {
+  if (!importedBackup || typeof importedBackup !== 'object' || Array.isArray(importedBackup)) {
+    throw createConfigError('导入的数据备份格式错误');
+  }
+
+  const payload = importedBackup.data;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw createConfigError('导入的数据备份缺少 data 字段');
+  }
+
+  const importedConfig = payload.config;
+  if (!importedConfig || typeof importedConfig !== 'object' || Array.isArray(importedConfig)) {
+    throw createConfigError('导入的数据备份缺少有效的 config');
+  }
+
+  const importedLedger = payload.ledger;
+  if (importedLedger !== undefined && (!importedLedger || typeof importedLedger !== 'object' || Array.isArray(importedLedger))) {
+    throw createConfigError('导入的数据备份中的 ledger 格式错误');
+  }
+
+  syncConfigObject(persistConfig(importedConfig));
+  saveLedger(importedLedger || {});
+  refreshFeishuClients();
+  publisher.resetRuntimeState();
+  restartSchedulerIfRunning();
+
+  return {
+    configState: getConfigState(),
+    runtimePaths: getPublicRuntimePaths(),
+  };
 }
 
 function restartSchedulerIfRunning() {
@@ -410,23 +479,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/config/export' && req.method === 'GET') {
-    const now = new Date();
-    const stamp = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, '0'),
-      String(now.getDate()).padStart(2, '0'),
-      '-',
-      String(now.getHours()).padStart(2, '0'),
-      String(now.getMinutes()).padStart(2, '0'),
-      String(now.getSeconds()).padStart(2, '0'),
-    ].join('');
+    const stamp = buildBackupStamp();
     const filename = `note-publisher-config-backup-${stamp}.json`;
-    res.writeHead(200, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Access-Control-Allow-Origin': '*',
-    });
-    res.end(`${JSON.stringify(cloneConfigForExport(), null, 2)}\n`);
+    writeJsonDownload(res, filename, cloneConfigForExport());
     return;
   }
 
@@ -449,6 +504,30 @@ const server = http.createServer(async (req, res) => {
           message: '配置备份已导入，当前运行配置已刷新',
           configState: getConfigState(),
           runtimePaths: getPublicRuntimePaths(),
+        });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/data/export' && req.method === 'GET') {
+    const stamp = buildBackupStamp();
+    const filename = `note-publisher-data-backup-${stamp}.json`;
+    writeJsonDownload(res, filename, cloneDataBackupForExport());
+    return;
+  }
+
+  if (pathname === '/api/data/import' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const result = applyImportedDataBackup(payload.backup);
+        return sendJson(res, {
+          success: true,
+          message: '完整数据备份已导入，配置和发布账本已刷新',
+          ...result,
         });
       } catch (e) {
         return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
