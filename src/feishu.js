@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 class FeishuClient {
-  constructor(config) {
+  constructor(config = {}) {
     this.appId = config.appId;
     this.appSecret = config.appSecret;
     this.appToken = config.appToken;

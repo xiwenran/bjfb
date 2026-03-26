@@ -11,27 +11,49 @@
 
 ## 快速开始
 
-1. 复制 `config.example.json` 为 `config.json`
-2. 按下方《配置字段说明》填写各字段
-3. 安装依赖：
+1. 安装依赖：
 
 ```bash
 npm install
 ```
 
-4. 启动服务：
+2. 启动服务：
 
 ```bash
 npm start
 ```
 
-启动后访问：[http://localhost:3210](http://localhost:3210)
+3. 首次启动时，程序会在当前系统用户目录自动生成空白配置模板
+4. 打开 [http://localhost:3210](http://localhost:3210)，进入“飞书接入”页填写配置
+5. `config.example.json` 仅作为字段结构参考，不再要求复制到项目根目录
+
+---
+
+## 配置与数据目录
+
+程序实际读写的本机数据不再放在项目根目录，而是放在当前系统用户目录：
+
+- Windows 配置目录：`%AppData%/NotePublisher/config.json`
+- Windows 数据目录：`%LocalAppData%/NotePublisher/`
+- macOS 配置目录：`~/Library/Application Support/NotePublisher/config.json`
+- macOS 数据目录：`~/Library/Caches/NotePublisher/`
+
+其中：
+
+- 配置文件：`config.json`
+- 发布账本：`publish-ledger.json`
+- 临时素材：`tmp/`
+- 运行缓存：`cache/`
+
+如果用户目录里还没有配置文件，程序会自动创建空白模板。
+如果检测到旧版项目根目录下已有 `config.json` 或 `publish-ledger.json`，会在首次启动时自动迁移到新位置。
+管理页“飞书接入”中还提供“导出配置备份 / 导入配置备份”按钮，便于在不同机器间迁移配置。
 
 ---
 
 ## 配置字段说明
 
-`config.json` 不会进入 Git（已加入 `.gitignore`）。完整结构参考 `config.example.json`。
+实际生效的 `config.json` 位于系统用户目录中。完整结构可参考 `config.example.json`。
 
 ### feishu — 飞书应用凭证（必填）
 
@@ -169,9 +191,10 @@ npm start
 
 ## 常见问题排查
 
-**启动报错 `Cannot find module` / `config.json`**
+**启动后提示未完成飞书接入配置**
 - 确认已执行 `npm install`
-- 确认项目根目录存在 `config.json`（从 `config.example.json` 复制并填写）
+- 打开管理页“飞书接入”，补全 App ID / App Secret / App Token / Table ID
+- 如需手动编辑配置，路径见上方《配置与数据目录》
 
 **蚁小二连接失败**
 - 检查 `yixiaoer.apiKey` 和 `yixiaoer.teamId` 是否正确

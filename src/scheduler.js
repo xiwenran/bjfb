@@ -1,10 +1,7 @@
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const FeishuClient = require('./feishu.js');
 const publisher = require('./publisher.js');
-
-const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
+const { getRecordTempDir, isFeishuConfigured } = require('./config-store.js');
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
 class Scheduler {
@@ -211,13 +208,20 @@ class Scheduler {
     return records.some(record => this.shouldUseYixiaoer(record));
   }
 
+  ensureFeishuConfigured() {
+    if (isFeishuConfigured(this.config)) return;
+    throw new Error('请先在“飞书接入”页完成 App ID、App Secret、App Token、Table ID 配置');
+  }
+
   async loadCurrentPendingRecord(recordId) {
+    this.ensureFeishuConfigured();
     const records = await this.feishu.getUnpublishedRecords();
     const parsed = records.map(r => this.feishu.parseRecord(r));
     return parsed.find(item => item.recordId === recordId) || null;
   }
 
   async publishRecords(records, reason = 'auto') {
+    this.ensureFeishuConfigured();
     if (this.publishing) {
       this.log('info', '⚠️ 上一轮发布尚未完成，跳过本次');
       return { published: 0, failed: 0, skipped: true };
@@ -272,7 +276,7 @@ class Scheduler {
         });
         this.log('info', `📝 处理: "${record.title}"`);
 
-        const tmpDir = path.join(os.tmpdir(), 'yixiaoer-publish', record.recordId);
+        const tmpDir = getRecordTempDir(record.recordId);
         try {
           this.setProgress({
             active: true,
@@ -439,6 +443,7 @@ class Scheduler {
   }
 
   async checkAndPublish() {
+    this.ensureFeishuConfigured();
     if (!this.running) {
       return { scheduled: 0, skipped: true };
     }
@@ -552,6 +557,7 @@ class Scheduler {
   }
 
   async manualPublishNow() {
+    this.ensureFeishuConfigured();
     const records = await this.feishu.getUnpublishedRecords();
     const parsed = records.map(r => this.feishu.parseRecord(r));
     const now = new Date();

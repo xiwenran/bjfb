@@ -2,9 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
-
-const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
-const LEDGER_PATH = path.join(__dirname, '..', 'publish-ledger.json');
+const { loadConfig, readLedger, saveLedger } = require('./config-store.js');
 const DEFAULT_API_BASE_URL = 'https://www.yixiaoer.cn/api';
 const PLATFORM_RULES = {
   DouYin: { code: 'DouYin', name: '抖音', supportedTypes: ['video', 'imageText', 'article'] },
@@ -12,11 +10,7 @@ const PLATFORM_RULES = {
 };
 
 function getProjectConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-  } catch (error) {
-    return {};
-  }
+  return loadConfig();
 }
 
 function normalizeAccountAlias(value) {
@@ -60,6 +54,14 @@ let authSignature = null;
 let activeYixiaoerConfig = null;
 let cachedHttpClient = null;
 let cachedHttpClientSignature = null;
+
+function resetRuntimeState() {
+  loginDone = false;
+  authSignature = null;
+  activeYixiaoerConfig = null;
+  cachedHttpClient = null;
+  cachedHttpClientSignature = null;
+}
 
 function getYixiaoerConfig(config) {
   return config?.yixiaoer || config || {};
@@ -705,8 +707,7 @@ const publishedCache = new Map(); // key: "recordId:platform" → true
 
 function loadPublishedLedger() {
   try {
-    if (!fs.existsSync(LEDGER_PATH)) return;
-    const data = JSON.parse(fs.readFileSync(LEDGER_PATH, 'utf-8'));
+    const data = readLedger();
     for (const key of Object.keys(data || {})) {
       if (data[key]) publishedCache.set(key, true);
     }
@@ -718,7 +719,7 @@ function loadPublishedLedger() {
 function savePublishedLedger() {
   try {
     const data = Object.fromEntries(publishedCache.entries());
-    fs.writeFileSync(LEDGER_PATH, JSON.stringify(data, null, 2), 'utf-8');
+    saveLedger(data);
   } catch (e) {
     console.warn(`⚠️ 保存发布账本失败: ${e.message}`);
   }
@@ -1118,6 +1119,7 @@ module.exports = {
   getPublishRecords,
   getAccountAliasIndex,
   collectAccountAliases,
+  resetRuntimeState,
   searchMusic: searchMusicGeneral, // 导出通用搜索函数
   searchMusicByAccount: searchMusic, // 保留原函数
   browseMusicByAccount: browseMusic,

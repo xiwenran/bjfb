@@ -682,10 +682,15 @@
           <div class="settings-actions">
             <button class="btn btn-sm btn-secondary" onclick="loadFeishuConfig(true)">重新读取</button>
             <button class="btn btn-sm btn-primary" onclick="saveFeishuConfig()">保存飞书配置</button>
+            <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
+            <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
           </div>
+          <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
           <div class="config-note-list">
             <div class="config-note">提示：这里能保存本地访问凭证，但“把应用添加到飞书多维表格/文档协作者”这一步仍需你在飞书里手动完成。</div>
             <div class="config-note">如果 App Secret 一栏保持 `******`，保存时会沿用当前已存在的 Secret。</div>
+            <div class="config-note" id="configStoragePath">配置会保存到当前系统用户目录。</div>
+            <div class="config-note">导出的配置备份会包含真实密钥，请只保存到可信位置。</div>
           </div>
         </div>
       </div>
@@ -1133,6 +1138,8 @@ async function refreshRecords(force = false) {
   if (isRefreshingRecords) return;
   isRefreshingRecords = true;
   const el = document.getElementById('recordList');
+  const summaryEl = document.getElementById('recordSummary');
+  const moreBtn = document.getElementById('recordMoreBtn');
   if (!recordListData.length || force) {
     el.innerHTML = '<div class="empty">加载中...</div>';
   }
@@ -1147,7 +1154,14 @@ async function refreshRecords(force = false) {
     if (force) recordRenderLimit = 80;
     renderRecordList(records);
   } catch (e) {
-    el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${e.message}</div>`;
+    if (String(e.message || '').includes('飞书接入')) {
+      el.innerHTML = '<div class="empty">请先到“飞书接入”页完成配置，然后再刷新记录。</div>';
+      summaryEl.textContent = '程序已在当前系统用户目录生成空白配置模板，完成飞书接入后即可开始加载记录。';
+      moreBtn.style.display = 'none';
+      document.getElementById('pendingCount').textContent = '-';
+    } else {
+      el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${e.message}</div>`;
+    }
   } finally {
     isRefreshingRecords = false;
   }
@@ -1446,16 +1460,20 @@ async function loadFeishuConfig(force = false) {
   try {
     const resp = await fetchApi('/api/config');
     const feishu = resp.feishu || {};
+    const runtimePaths = resp.runtimePaths || {};
     document.getElementById('feishuAppId').value = feishu.appId || '';
     document.getElementById('feishuAppSecret').value = feishu.appSecret || '';
     document.getElementById('feishuAppToken').value = feishu.appToken || '';
     document.getElementById('feishuTableId').value = feishu.tableId || '';
     document.getElementById('feishuWikiUrl').value = feishu.wikiUrl || '';
+    document.getElementById('configStoragePath').textContent = runtimePaths.configPath
+      ? `本机数据位置：配置文件 ${runtimePaths.configPath}；数据目录 ${runtimePaths.dataDir || '-'}`
+      : '配置会保存到当前系统用户目录。';
     const hasCoreConfig = !!(feishu.appId && feishu.appToken && feishu.tableId);
     statusEl.className = `config-status ${hasCoreConfig ? 'success' : ''}`.trim();
     statusEl.textContent = hasCoreConfig
       ? '当前飞书凭证已加载。你可以直接修改并保存。'
-      : '当前飞书接入信息不完整，请补全 App ID、App Secret、App Token 和 Table ID。';
+      : '当前是首次生成的空白配置，请补全 App ID、App Secret、App Token 和 Table ID。';
     feishuConfigLoaded = true;
   } catch (e) {
     statusEl.className = 'config-status error';
@@ -1491,6 +1509,58 @@ async function saveFeishuConfig() {
     statusEl.className = 'config-status error';
     statusEl.textContent = `保存失败：${e.message}`;
     addLog('error', `保存飞书接入配置失败: ${e.message}`);
+  }
+}
+
+function exportConfigBackup() {
+  const link = document.createElement('a');
+  link.href = `${API}/api/config/export`;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  addLog('info', '已开始导出配置备份');
+}
+
+function triggerConfigImport() {
+  const input = document.getElementById('configImportFile');
+  input.value = '';
+  input.click();
+}
+
+async function handleConfigImport(event) {
+  const statusEl = document.getElementById('feishuConfigStatus');
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  if (!confirm('导入后会覆盖当前本机配置，是否继续？')) {
+    event.target.value = '';
+    return;
+  }
+
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在导入配置备份...';
+
+  try {
+    const text = await file.text();
+    const imported = JSON.parse(text);
+    const resp = await fetchApi('/api/config/import', 'POST', { config: imported });
+    if (!resp.success) throw new Error(resp.error || '导入失败');
+
+    feishuConfigLoaded = false;
+    bitbrowserMappings = [];
+    statusEl.className = 'config-status success';
+    statusEl.textContent = resp.message || '配置备份已导入';
+    await loadFeishuConfig(true);
+    refreshStatus();
+    refreshRecords(true);
+    addLog('success', resp.message || '配置备份已导入');
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `导入失败：${e.message}`;
+    addLog('error', `导入配置备份失败: ${e.message}`);
+  } finally {
+    event.target.value = '';
   }
 }
 

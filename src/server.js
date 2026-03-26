@@ -5,21 +5,84 @@ const url = require('url');
 const Scheduler = require('./scheduler.js');
 const publisher = require('./publisher.js');
 const FeishuClient = require('./feishu.js');
+const {
+  initializeAppStorage,
+  saveConfig: persistConfig,
+  getRuntimePaths,
+  isFeishuConfigured,
+  isYixiaoerConfigured,
+} = require('./config-store.js');
 
-const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
-const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+const storage = initializeAppStorage();
+const runtimePaths = storage.paths;
+const storageState = storage.state;
+const config = storage.config;
 const PORT = 3210;
 
 const scheduler = new Scheduler(config);
 let feishu = new FeishuClient(config.feishu);
 
+function syncConfigObject(nextConfig) {
+  for (const key of Object.keys(config)) {
+    delete config[key];
+  }
+  Object.assign(config, nextConfig);
+}
+
 function saveConfig() {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+  syncConfigObject(persistConfig(config));
 }
 
 function refreshFeishuClients() {
   feishu = new FeishuClient(config.feishu);
   scheduler.feishu = new FeishuClient(config.feishu);
+}
+
+function getConfigState() {
+  return {
+    feishuConfigured: isFeishuConfigured(config),
+    yixiaoerConfigured: isYixiaoerConfigured(config),
+  };
+}
+
+function getPublicRuntimePaths() {
+  const paths = getRuntimePaths();
+  return {
+    configDir: paths.configDir,
+    configPath: paths.configPath,
+    dataDir: paths.dataDir,
+    cacheDir: paths.cacheDir,
+    logsDir: paths.logsDir,
+    ledgerPath: paths.ledgerPath,
+  };
+}
+
+function cloneConfigForExport() {
+  const exported = JSON.parse(JSON.stringify(config));
+  delete exported.yixiaoerAccountCache;
+  return exported;
+}
+
+function restartSchedulerIfRunning() {
+  if (!scheduler.running) return;
+  scheduler.stop();
+  scheduler.start();
+}
+
+function createConfigError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function ensureFeishuConfigReady() {
+  if (isFeishuConfigured(config)) return;
+  throw createConfigError('请先在“飞书接入”页完成 App ID、App Secret、App Token、Table ID 配置');
+}
+
+function ensureYixiaoerConfigReady() {
+  if (isYixiaoerConfigured(config)) return;
+  throw createConfigError(`请先在配置文件中补全蚁小二 API Key 和 Team ID：${getRuntimePaths().configPath}`);
 }
 
 function normalizeAlias(value) {
@@ -223,11 +286,15 @@ const server = http.createServer(async (req, res) => {
 
   // API 路由
   if (pathname === '/api/status') {
-    return sendJson(res, scheduler.getStatus());
+    return sendJson(res, {
+      ...scheduler.getStatus(),
+      configState: getConfigState(),
+    });
   }
 
   if (pathname === '/api/pending-count') {
     try {
+      ensureFeishuConfigReady();
       const records = await feishu.getRecords();
       const count = records
         .map(r => feishu.parseRecord(r))
@@ -235,27 +302,29 @@ const server = http.createServer(async (req, res) => {
         .length;
       return sendJson(res, { success: true, count });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
   if (pathname === '/api/records') {
     try {
+      ensureFeishuConfigReady();
       const records = await feishu.getUnpublishedRecords();
       const parsed = records.map(r => decorateRecord(feishu.parseRecord(r)));
       return sendJson(res, { success: true, data: parsed });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
   if (pathname === '/api/all-records') {
     try {
+      ensureFeishuConfigReady();
       const records = await feishu.getRecords();
       const parsed = records.map(r => decorateRecord(feishu.parseRecord(r)));
       return sendJson(res, { success: true, data: parsed });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
@@ -286,16 +355,18 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/accounts') {
     try {
+      ensureYixiaoerConfigReady();
       await publisher.ensureLogin(config.yixiaoer);
       const accounts = await publisher.getAccountList({ loginStatus: 1 });
       return sendJson(res, { success: true, data: accounts });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
   if (pathname === '/api/accounts/status') {
     try {
+      ensureYixiaoerConfigReady();
       await publisher.ensureLogin(config.yixiaoer);
       const accounts = await publisher.getAccountList();
       updateYixiaoerAccountCache(accounts);
@@ -319,7 +390,7 @@ const server = http.createServer(async (req, res) => {
       }));
       return sendJson(res, { success: true, data });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
@@ -329,9 +400,59 @@ const server = http.createServer(async (req, res) => {
       if (safeConfig.yixiaoer.password) safeConfig.yixiaoer.password = '******';
       if (safeConfig.yixiaoer.apiKey) safeConfig.yixiaoer.apiKey = '******';
       if (safeConfig.yixiaoer.clientId) safeConfig.yixiaoer.clientId = '******';
-      safeConfig.feishu.appSecret = '******';
+      if (safeConfig.feishu.appSecret) safeConfig.feishu.appSecret = '******';
+      safeConfig.configState = getConfigState();
+      safeConfig.runtimePaths = getPublicRuntimePaths();
       return sendJson(res, safeConfig);
     }
+  }
+
+  if (pathname === '/api/config/export' && req.method === 'GET') {
+    const now = new Date();
+    const stamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+      '-',
+      String(now.getHours()).padStart(2, '0'),
+      String(now.getMinutes()).padStart(2, '0'),
+      String(now.getSeconds()).padStart(2, '0'),
+    ].join('');
+    const filename = `note-publisher-config-backup-${stamp}.json`;
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.end(`${JSON.stringify(cloneConfigForExport(), null, 2)}\n`);
+    return;
+  }
+
+  if (pathname === '/api/config/import' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const importedConfig = payload.config;
+        if (!importedConfig || typeof importedConfig !== 'object' || Array.isArray(importedConfig)) {
+          return sendJson(res, { success: false, error: '导入的配置格式错误' }, 400);
+        }
+
+        syncConfigObject(persistConfig(importedConfig));
+        refreshFeishuClients();
+        publisher.resetRuntimeState();
+        restartSchedulerIfRunning();
+
+        return sendJson(res, {
+          success: true,
+          message: '配置备份已导入，当前运行配置已刷新',
+          configState: getConfigState(),
+          runtimePaths: getPublicRuntimePaths(),
+        });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
   }
 
   if (pathname === '/api/config/feishu' && req.method === 'POST') {
@@ -372,6 +493,7 @@ const server = http.createServer(async (req, res) => {
 
         saveConfig();
         refreshFeishuClients();
+        restartSchedulerIfRunning();
 
         return sendJson(res, {
           success: true,
@@ -393,10 +515,11 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/bitbrowser/accounts' && req.method === 'GET') {
     try {
+      ensureFeishuConfigReady();
       const data = await getBitBrowserAccountMappings();
       return sendJson(res, { success: true, data });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
@@ -436,6 +559,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/bitbrowser/sync-feishu' && req.method === 'POST') {
     try {
+      ensureFeishuConfigReady();
       const synced = await syncFeishuSelectFields();
       const data = await getBitBrowserAccountMappings();
       return sendJson(res, {
@@ -444,7 +568,7 @@ const server = http.createServer(async (req, res) => {
         data,
       });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
@@ -484,6 +608,7 @@ const server = http.createServer(async (req, res) => {
   // 音乐设置相关 API
   if (pathname === '/api/music/default/validate' && req.method === 'GET') {
     try {
+      ensureYixiaoerConfigReady();
       await publisher.ensureLogin(config.yixiaoer);
       const accountId = getPrimaryDouyinAccountId();
       const result = await publisher.resolveDouyinMusic(accountId, config.defaultMusic || null);
@@ -498,7 +623,7 @@ const server = http.createServer(async (req, res) => {
         message: result.message,
       });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
@@ -562,6 +687,7 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/music/categories' && req.method === 'GET') {
     try {
+      ensureYixiaoerConfigReady();
       await publisher.ensureLogin(config.yixiaoer);
       const accountId = getPrimaryDouyinAccountId();
       const categories = await publisher.getMusicCategories(accountId);
@@ -570,7 +696,7 @@ const server = http.createServer(async (req, res) => {
         categories: categories || [],
       });
     } catch (e) {
-      return sendJson(res, { success: false, error: e.message }, 500);
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
   }
 
@@ -621,5 +747,15 @@ server.on('error', (err) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n🚀 笔记发布工具已启动！`);
   console.log(`📡 访问地址: http://localhost:${PORT}`);
+  console.log(`📁 配置文件: ${runtimePaths.configPath}`);
+  console.log(`🗂 数据目录: ${runtimePaths.dataDir}`);
+  if (storageState.config === 'migrated') {
+    console.log(`♻️ 已从旧路径迁移配置: ${runtimePaths.legacyConfigPath}`);
+  } else if (storageState.config === 'created') {
+    console.log(`🆕 已生成空白配置模板，请先在页面或配置文件中完成接入信息`);
+  }
+  if (storageState.ledger === 'migrated') {
+    console.log(`♻️ 已从旧路径迁移发布账本: ${runtimePaths.legacyLedgerPath}`);
+  }
   console.log(`\n按 Ctrl+C 停止服务\n`);
 });
