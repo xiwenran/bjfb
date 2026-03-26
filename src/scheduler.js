@@ -12,7 +12,8 @@ class Scheduler {
     this.config = config;
     this.feishu = new FeishuClient(config.feishu);
     this.running = false;
-    this.timer = null;
+    this.scanTimer = null;
+    this.scheduledTasks = new Map();
     this.logs = [];
     this.maxLogs = 200;
     this.onLog = null;
@@ -103,6 +104,18 @@ class Scheduler {
     return new Date(`${tomorrowStr}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`);
   }
 
+  getScheduledTaskKey(recordId, publishTime) {
+    const ts = publishTime instanceof Date ? publishTime.getTime() : new Date(publishTime).getTime();
+    return `${recordId}:${ts}`;
+  }
+
+  clearScheduledTasks() {
+    for (const task of this.scheduledTasks.values()) {
+      clearTimeout(task.timer);
+    }
+    this.scheduledTasks.clear();
+  }
+
   formatLocalDate(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -116,6 +129,20 @@ class Scheduler {
 
   isPlatformPending(status) {
     return status === '待发布';
+  }
+
+  recordHasPendingPlatform(record) {
+    const xhsPending = record.xiaohongshuAccount && this.isPlatformPending(record.xiaohongshuStatus);
+    const dyPending = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
+    return Boolean(xhsPending || dyPending);
+  }
+
+  shouldUseYixiaoer(record) {
+    const xhsNeedsYixiaoer = record.xiaohongshuAccount
+      && this.isPlatformPending(record.xiaohongshuStatus)
+      && record.xiaohongshuPublishChannel !== '比特浏览器';
+    const dyNeedsYixiaoer = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
+    return Boolean(xhsNeedsYixiaoer || dyNeedsYixiaoer);
   }
 
   // 解析备注中的平台发布状态
@@ -181,16 +208,16 @@ class Scheduler {
   }
 
   requiresYixiaoerLogin(records) {
-    return records.some(record => {
-      const xhsNeedsYixiaoer = record.xiaohongshuAccount
-        && this.isPlatformPending(record.xiaohongshuStatus)
-        && record.xiaohongshuPublishChannel !== '比特浏览器';
-      const dyNeedsYixiaoer = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
-      return xhsNeedsYixiaoer || dyNeedsYixiaoer;
-    });
+    return records.some(record => this.shouldUseYixiaoer(record));
   }
 
-  async checkAndPublish() {
+  async loadCurrentPendingRecord(recordId) {
+    const records = await this.feishu.getUnpublishedRecords();
+    const parsed = records.map(r => this.feishu.parseRecord(r));
+    return parsed.find(item => item.recordId === recordId) || null;
+  }
+
+  async publishRecords(records, reason = 'auto') {
     if (this.publishing) {
       this.log('info', '⚠️ 上一轮发布尚未完成，跳过本次');
       return { published: 0, failed: 0, skipped: true };
@@ -199,31 +226,17 @@ class Scheduler {
     this.publishing = true;
     this.setProgress({
       active: true,
-      stage: 'checking',
+      stage: reason === 'manual' ? 'manual-checking' : 'checking',
       title: '',
       recordId: '',
       platform: '',
       account: '',
-      detail: '正在检查飞书待发布记录',
+      detail: reason === 'manual' ? '正在处理手动发布记录' : '正在执行到点发布任务',
     });
-    this.log('info', '🔍 开始检查飞书表格...');
+    this.log('info', reason === 'manual' ? '🚀 开始执行手动发布...' : '🚀 开始执行到点发布任务...');
 
     try {
-      const records = await this.feishu.getUnpublishedRecords();
-      const parsed = records.map(r => this.feishu.parseRecord(r));
-      const now = new Date();
-
-      const toPublish = parsed.filter(r => {
-        const xhsPending = r.xiaohongshuAccount && this.isPlatformPending(r.xiaohongshuStatus);
-        const dyPending = r.douyinAccount && this.isPlatformPending(r.douyinStatus);
-        if (!xhsPending && !dyPending) return false;
-        if (!r.xiaohongshuAccount && !r.douyinAccount) return false;
-        if (r.publishTime && r.publishTime > now) {
-          this.log('info', `⏰ "${r.title}" 发布时间未到 (${r.publishTime.toLocaleString('zh-CN')})`);
-          return false;
-        }
-        return true;
-      });
+      const toPublish = records.filter(record => this.recordHasPendingPlatform(record));
 
       if (toPublish.length === 0) {
         this.setProgress({
@@ -235,11 +248,11 @@ class Scheduler {
           account: '',
           detail: '当前没有需要发布的记录',
         });
-        this.log('info', '📭 没有需要发布的记录');
+        this.log('info', reason === 'manual' ? '📭 没有可手动发布的记录' : '📭 当前没有需要执行的定时任务');
         return { published: 0, failed: 0 };
       }
 
-      this.log('info', `📋 找到 ${toPublish.length} 条待发布记录`);
+      this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
       if (this.requiresYixiaoerLogin(toPublish)) {
         await publisher.ensureLogin(this.config.yixiaoer);
       }
@@ -425,6 +438,131 @@ class Scheduler {
     }
   }
 
+  async checkAndPublish() {
+    if (!this.running) {
+      return { scheduled: 0, skipped: true };
+    }
+
+    this.setProgress({
+      active: true,
+      stage: 'scanning',
+      title: '',
+      recordId: '',
+      platform: '',
+      account: '',
+      detail: '正在扫描飞书定时发布记录',
+    });
+    this.log('info', '🔍 开始扫描飞书表格，补建精准发布时间任务...');
+
+    try {
+      const records = await this.feishu.getUnpublishedRecords();
+      const parsed = records.map(r => this.feishu.parseRecord(r));
+      const now = new Date();
+      let scheduledCount = 0;
+      let dueNow = [];
+
+      for (const record of parsed) {
+        if (!this.recordHasPendingPlatform(record)) continue;
+        if (!record.publishTime) continue;
+
+        const publishTime = new Date(record.publishTime);
+        const taskKey = this.getScheduledTaskKey(record.recordId, publishTime);
+        if (this.scheduledTasks.has(taskKey)) continue;
+
+        if (publishTime <= now) {
+          dueNow.push(record);
+          continue;
+        }
+
+        this.scheduleRecordTask(record, publishTime);
+        scheduledCount++;
+      }
+
+      this.log('info', `🗓 本轮扫描新增 ${scheduledCount} 个精准发布任务`);
+
+      if (dueNow.length > 0) {
+        this.log('info', `⏰ 发现 ${dueNow.length} 条已到发布时间但未建任务的记录，立即补发`);
+        await this.publishRecords(dueNow, 'scheduled');
+      } else {
+        this.setProgress({
+          active: false,
+          stage: 'idle',
+          title: '',
+          recordId: '',
+          platform: '',
+          account: '',
+          detail: scheduledCount > 0 ? `已新增 ${scheduledCount} 个精准任务` : '当前无需补建新的发布时间任务',
+        });
+      }
+
+      return { scheduled: scheduledCount, published: dueNow.length, failed: 0 };
+    } catch (e) {
+      this.setProgress({
+        active: false,
+        stage: 'failed',
+        title: '',
+        recordId: '',
+        platform: '',
+        account: '',
+        detail: `扫描失败: ${e.message}`,
+      });
+      this.log('error', `❌ 扫描失败: ${e.message}`);
+      return { scheduled: 0, failed: 0, error: e.message };
+    }
+  }
+
+  scheduleRecordTask(record, publishTime) {
+    const taskKey = this.getScheduledTaskKey(record.recordId, publishTime);
+    const delay = Math.max(0, publishTime.getTime() - Date.now());
+    const timer = setTimeout(async () => {
+      this.scheduledTasks.delete(taskKey);
+      if (!this.running) return;
+
+      const latestRecord = await this.loadCurrentPendingRecord(record.recordId);
+      if (!latestRecord) {
+        this.log('info', `🧹 精准任务已跳过：记录 ${record.recordId} 已不在待发布列表`);
+        return;
+      }
+      if (!this.recordHasPendingPlatform(latestRecord)) {
+        this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》平台状态已非待发布`);
+        return;
+      }
+      if (!latestRecord.publishTime) {
+        this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》已移除发布时间`);
+        return;
+      }
+
+      const latestPublishTime = new Date(latestRecord.publishTime);
+      if (latestPublishTime.getTime() !== publishTime.getTime()) {
+        this.log('info', `🔁 记录《${latestRecord.title}》发布时间已变更，重建精准任务`);
+        this.scheduleRecordTask(latestRecord, latestPublishTime);
+        return;
+      }
+
+      await this.publishRecords([latestRecord], 'scheduled');
+    }, delay);
+
+    this.scheduledTasks.set(taskKey, {
+      recordId: record.recordId,
+      title: record.title,
+      publishTime: publishTime.getTime(),
+      timer,
+    });
+    this.log('info', `🗓 已创建精准任务：${record.title} -> ${publishTime.toLocaleString('zh-CN')}`);
+  }
+
+  async manualPublishNow() {
+    const records = await this.feishu.getUnpublishedRecords();
+    const parsed = records.map(r => this.feishu.parseRecord(r));
+    const now = new Date();
+    const toPublish = parsed.filter(record => {
+      if (!this.recordHasPendingPlatform(record)) return false;
+      if (!record.publishTime) return true;
+      return new Date(record.publishTime) <= now;
+    });
+    return this.publishRecords(toPublish, 'manual');
+  }
+
   start() {
     if (this.running) return;
     this.running = true;
@@ -437,7 +575,7 @@ class Scheduler {
     const nextTime = this.getNextCheckTime();
     const delay = nextTime.getTime() - Date.now();
     this.log('info', `⏰ 下次检查: ${nextTime.toLocaleString('zh-CN')} (${Math.round(delay / 60000)} 分钟后)`);
-    this.timer = setTimeout(async () => {
+    this.scanTimer = setTimeout(async () => {
       await this.checkAndPublish();
       this.scheduleNext();
     }, delay);
@@ -445,10 +583,11 @@ class Scheduler {
 
   stop() {
     this.running = false;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
+    if (this.scanTimer) {
+      clearTimeout(this.scanTimer);
+      this.scanTimer = null;
     }
+    this.clearScheduledTasks();
     this.log('info', '⏹ 定时发布服务已停止');
   }
 
@@ -457,7 +596,8 @@ class Scheduler {
     const desc = schedule.periods.map(p => `${p.startTime}-${p.endTime}(${p.intervalMinutes}分钟)`).join(', ');
     this.log('info', `⚙️ 定时配置已更新: ${desc}`);
     if (this.running) {
-      if (this.timer) clearTimeout(this.timer);
+      if (this.scanTimer) clearTimeout(this.scanTimer);
+      this.scanTimer = null;
       this.scheduleNext();
     }
   }
@@ -466,6 +606,7 @@ class Scheduler {
     return {
       running: this.running,
       nextCheck: this.running ? this.getNextCheckTime().toLocaleString('zh-CN') : null,
+      scheduledCount: this.scheduledTasks.size,
       schedule: this.config.schedule,
       recentLogs: this.logs.slice(-50),
       currentProgress: this.currentProgress,

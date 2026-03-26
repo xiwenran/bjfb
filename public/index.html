@@ -332,6 +332,53 @@
   .mapping-input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,0.12); }
   .mapping-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 
+  /* ===== Feishu Config ===== */
+  .config-form {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .config-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+  }
+  .config-field {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .config-field.full {
+    grid-column: 1 / -1;
+  }
+  .config-label {
+    font-size: 13px; font-weight: 600; color: #3a3a3c;
+  }
+  .config-input, .config-textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 10px; background: #fff; color: #1d1d1f; font-size: 13px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .config-input:focus, .config-textarea:focus {
+    outline: none; border-color: #0071e3; box-shadow: 0 0 0 4px rgba(0,113,227,0.12);
+  }
+  .config-textarea {
+    min-height: 88px; resize: vertical; line-height: 1.55;
+  }
+  .config-help {
+    font-size: 12px; color: #8e8e93; line-height: 1.6;
+  }
+  .config-status {
+    padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+    background: #f2f2f7; color: #6e6e73; border: 1px solid rgba(0,0,0,0.05);
+  }
+  .config-status.success {
+    background: rgba(52,199,89,0.08); color: #248a3d; border-color: rgba(52,199,89,0.16);
+  }
+  .config-status.error {
+    background: rgba(255,59,48,0.08); color: #d70015; border-color: rgba(255,59,48,0.14);
+  }
+  .config-note-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .config-note {
+    font-size: 12px; color: #6e6e73;
+  }
+
   /* ===== Schedule Settings ===== */
   .period-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
   .period-row {
@@ -506,6 +553,10 @@
       <span class="nav-icon">🔐</span>
       <span>账号授权</span>
     </button>
+    <button class="nav-item" data-tab="feishu" onclick="switchTab('feishu'); loadFeishuConfig()">
+      <span class="nav-icon">🪪</span>
+      <span>飞书接入</span>
+    </button>
     <button class="nav-item" data-tab="bitbrowser" onclick="switchTab('bitbrowser'); if(!bitbrowserMappings.length) refreshBitbrowserMappings()">
       <span class="nav-icon">🧩</span>
       <span>比特浏览器</span>
@@ -589,6 +640,53 @@
         <div id="bitbrowserSummary" class="record-summary" style="margin-bottom:12px;">点击"同步飞书账号"加载账号列表。</div>
         <div id="bitbrowserList" class="account-list">
           <div class="empty">点击"同步飞书账号"加载比特浏览器映射</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: 飞书接入 -->
+    <div class="tab-panel" id="tab-feishu">
+      <div class="panel" id="feishuPanel">
+        <h2>🪪 飞书接入配置</h2>
+        <div class="config-form">
+          <div class="config-status" id="feishuConfigStatus">保存飞书应用凭证后，工具会立即用新的配置访问多维表格。</div>
+          <div class="config-grid">
+            <div class="config-field">
+              <label class="config-label" for="feishuAppId">App ID</label>
+              <input class="config-input" id="feishuAppId" placeholder="如：cli_xxx">
+            </div>
+            <div class="config-field">
+              <label class="config-label" for="feishuAppSecret">App Secret</label>
+              <input class="config-input" id="feishuAppSecret" type="password" placeholder="未修改可保留为掩码">
+            </div>
+            <div class="config-field">
+              <label class="config-label" for="feishuAppToken">App Token</label>
+              <input class="config-input" id="feishuAppToken" placeholder="多维表格 app_token">
+            </div>
+            <div class="config-field">
+              <label class="config-label" for="feishuTableId">Table ID</label>
+              <input class="config-input" id="feishuTableId" placeholder="多维表格 table_id">
+            </div>
+            <div class="config-field full">
+              <label class="config-label" for="feishuWikiUrl">飞书文档/知识库链接（可选）</label>
+              <input class="config-input" id="feishuWikiUrl" placeholder="https://...">
+            </div>
+            <div class="config-field full">
+              <label class="config-label" for="feishuConfigNotes">接入说明</label>
+              <div class="config-textarea" id="feishuConfigNotes" style="pointer-events:none; background:#f8f8fb;" tabindex="-1">1. 先在飞书开放平台创建应用并获取 App ID / App Secret。
+2. 在多维表格或对应文档里，把这个应用添加进去，确保它有读取/编辑表格权限。
+3. 把 App Token、Table ID 一并填到这里后保存。
+4. 保存后可点“刷新数据”或“立即发布”验证接入是否生效。</div>
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button class="btn btn-sm btn-secondary" onclick="loadFeishuConfig(true)">重新读取</button>
+            <button class="btn btn-sm btn-primary" onclick="saveFeishuConfig()">保存飞书配置</button>
+          </div>
+          <div class="config-note-list">
+            <div class="config-note">提示：这里能保存本地访问凭证，但“把应用添加到飞书多维表格/文档协作者”这一步仍需你在飞书里手动完成。</div>
+            <div class="config-note">如果 App Secret 一栏保持 `******`，保存时会沿用当前已存在的 Secret。</div>
+          </div>
         </div>
       </div>
     </div>
@@ -706,6 +804,7 @@ let recordRenderLimit = 80;
 let showCompletedRecords = false;
 let logEntries = [];
 let bitbrowserMappings = [];
+let feishuConfigLoaded = false;
 const MAX_LOG_ENTRIES = 200;
 
 function switchTab(tabName) {
@@ -965,7 +1064,7 @@ function renderRecordList(records) {
   const visibleBlocked = blockedRecords.slice(0, recordRenderLimit);
   const visibleCompleted = showCompletedRecords ? completedRecords.slice(0, recordRenderLimit) : [];
   const visibleCount = visiblePending.length + visibleBlocked.length + visibleCompleted.length;
-  summaryEl.textContent = `待发布 ${pendingRecords.length} 条会优先显示在上方；非待发布 ${blockedRecords.length} 条不会自动提交；已完成 ${completedRecords.length} 条默认折叠。当前展开 ${visibleCount} / ${orderedRecords.length} 条记录。`;
+  summaryEl.textContent = `待发布 ${pendingRecords.length} 条会优先显示在上方；其中有发布时间的记录会在扫描窗口内补建精准任务，无发布时间的记录只会在手动“立即发布”时提交；非待发布 ${blockedRecords.length} 条不会自动提交；已完成 ${completedRecords.length} 条默认折叠。当前展开 ${visibleCount} / ${orderedRecords.length} 条记录。`;
   moreBtn.style.display = (
     visiblePending.length < pendingRecords.length
     || visibleBlocked.length < blockedRecords.length
@@ -1336,6 +1435,62 @@ async function refreshAccounts() {
       </div>`).join('');
   } catch (e) {
     el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadFeishuConfig(force = false) {
+  if (feishuConfigLoaded && !force) return;
+  const statusEl = document.getElementById('feishuConfigStatus');
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在读取当前飞书接入配置...';
+  try {
+    const resp = await fetchApi('/api/config');
+    const feishu = resp.feishu || {};
+    document.getElementById('feishuAppId').value = feishu.appId || '';
+    document.getElementById('feishuAppSecret').value = feishu.appSecret || '';
+    document.getElementById('feishuAppToken').value = feishu.appToken || '';
+    document.getElementById('feishuTableId').value = feishu.tableId || '';
+    document.getElementById('feishuWikiUrl').value = feishu.wikiUrl || '';
+    const hasCoreConfig = !!(feishu.appId && feishu.appToken && feishu.tableId);
+    statusEl.className = `config-status ${hasCoreConfig ? 'success' : ''}`.trim();
+    statusEl.textContent = hasCoreConfig
+      ? '当前飞书凭证已加载。你可以直接修改并保存。'
+      : '当前飞书接入信息不完整，请补全 App ID、App Secret、App Token 和 Table ID。';
+    feishuConfigLoaded = true;
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `读取飞书配置失败：${e.message}`;
+  }
+}
+
+async function saveFeishuConfig() {
+  const statusEl = document.getElementById('feishuConfigStatus');
+  const payload = {
+    feishu: {
+      appId: document.getElementById('feishuAppId').value.trim(),
+      appSecret: document.getElementById('feishuAppSecret').value.trim(),
+      appToken: document.getElementById('feishuAppToken').value.trim(),
+      tableId: document.getElementById('feishuTableId').value.trim(),
+      wikiUrl: document.getElementById('feishuWikiUrl').value.trim(),
+    }
+  };
+
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在保存飞书接入配置...';
+  try {
+    const resp = await fetchApi('/api/config/feishu', 'POST', payload);
+    if (!resp.success) throw new Error(resp.error || '保存失败');
+    statusEl.className = 'config-status success';
+    statusEl.textContent = resp.message || '飞书接入配置已保存';
+    document.getElementById('feishuAppSecret').value = '******';
+    feishuConfigLoaded = true;
+    addLog('success', resp.message || '飞书接入配置已保存');
+    refreshRecords(true);
+    refreshStatus();
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `保存失败：${e.message}`;
+    addLog('error', `保存飞书接入配置失败: ${e.message}`);
   }
 }
 

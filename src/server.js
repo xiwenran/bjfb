@@ -11,10 +11,15 @@ const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 const PORT = 3210;
 
 const scheduler = new Scheduler(config);
-const feishu = new FeishuClient(config.feishu);
+let feishu = new FeishuClient(config.feishu);
 
 function saveConfig() {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+}
+
+function refreshFeishuClients() {
+  feishu = new FeishuClient(config.feishu);
+  scheduler.feishu = new FeishuClient(config.feishu);
 }
 
 function normalizeAlias(value) {
@@ -267,7 +272,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/publish/now' && req.method === 'POST') {
     readBody(req).then(async () => {
       try {
-        const result = await scheduler.checkAndPublish();
+        const result = await scheduler.manualPublishNow();
         if (result && result.error) {
           return sendJson(res, { success: false, ...result }, 500);
         }
@@ -327,6 +332,63 @@ const server = http.createServer(async (req, res) => {
       safeConfig.feishu.appSecret = '******';
       return sendJson(res, safeConfig);
     }
+  }
+
+  if (pathname === '/api/config/feishu' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const next = payload.feishu || {};
+        const appId = String(next.appId || '').trim();
+        const appSecret = String(next.appSecret || '').trim();
+        const wikiUrl = String(next.wikiUrl || '').trim();
+        const appToken = String(next.appToken || '').trim();
+        const tableId = String(next.tableId || '').trim();
+
+        if (!appId) {
+          return sendJson(res, { success: false, error: '飞书 App ID 不能为空' }, 400);
+        }
+        if (!appToken) {
+          return sendJson(res, { success: false, error: '飞书 App Token 不能为空' }, 400);
+        }
+        if (!tableId) {
+          return sendJson(res, { success: false, error: '飞书 Table ID 不能为空' }, 400);
+        }
+
+        config.feishu = config.feishu || {};
+        config.feishu.appId = appId;
+        config.feishu.appToken = appToken;
+        config.feishu.tableId = tableId;
+        config.feishu.wikiUrl = wikiUrl;
+
+        // 页面不回显真实 secret。空值或掩码都视为“保持不变”。
+        if (appSecret && appSecret !== '******') {
+          config.feishu.appSecret = appSecret;
+        }
+
+        if (!config.feishu.appSecret) {
+          return sendJson(res, { success: false, error: '飞书 App Secret 不能为空' }, 400);
+        }
+
+        saveConfig();
+        refreshFeishuClients();
+
+        return sendJson(res, {
+          success: true,
+          message: '飞书接入配置已保存',
+          data: {
+            appId: config.feishu.appId,
+            wikiUrl: config.feishu.wikiUrl || '',
+            appToken: config.feishu.appToken,
+            tableId: config.feishu.tableId,
+            appSecretConfigured: !!config.feishu.appSecret,
+          }
+        });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
   }
 
   if (pathname === '/api/bitbrowser/accounts' && req.method === 'GET') {
