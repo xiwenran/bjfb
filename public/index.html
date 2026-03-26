@@ -506,7 +506,7 @@
       <span class="nav-icon">🔐</span>
       <span>账号授权</span>
     </button>
-    <button class="nav-item" data-tab="bitbrowser" onclick="switchTab('bitbrowser'); refreshBitbrowserMappings()">
+    <button class="nav-item" data-tab="bitbrowser" onclick="switchTab('bitbrowser'); if(!bitbrowserMappings.length) refreshBitbrowserMappings()">
       <span class="nav-icon">🧩</span>
       <span>比特浏览器</span>
     </button>
@@ -804,13 +804,15 @@ function renderPlatformStatus(record) {
   if (xiaohongshuAccount) {
     if (xiaohongshuStatus === '已发布') parts.push('<span class="tag published">小红书 ✓</span>');
     else if (xiaohongshuStatus === '发布失败') parts.push('<span class="tag failed">小红书 ✗</span>');
-    else parts.push('<span class="tag pending">小红书 待发布</span>');
+    else if (xiaohongshuStatus === '待发布') parts.push('<span class="tag pending">小红书 待发布</span>');
+    else parts.push(`<span class="tag" style="background:rgba(0,0,0,0.05);color:#6b7280">小红书 ${escapeHtml(xiaohongshuStatus || '未设置')}</span>`);
     parts.push(`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(xiaohongshuPublishChannel || '蚁小二')}</span>`);
   }
   if (douyinAccount) {
     if (douyinStatus === '已发布') parts.push('<span class="tag published">抖音 ✓</span>');
     else if (douyinStatus === '发布失败') parts.push('<span class="tag failed">抖音 ✗</span>');
-    else parts.push('<span class="tag pending">抖音 待发布</span>');
+    else if (douyinStatus === '待发布') parts.push('<span class="tag pending">抖音 待发布</span>');
+    else parts.push(`<span class="tag" style="background:rgba(0,0,0,0.05);color:#6b7280">抖音 ${escapeHtml(douyinStatus || '未设置')}</span>`);
   }
   if (record.musicSongName) {
     parts.push(`<span class="tag" style="background:#fef3c7;color:#d97706">🎵 ${escapeHtml(record.musicSongName)}</span>`);
@@ -881,7 +883,10 @@ async function refreshStatus() {
   if (isRefreshingStatus) return;
   isRefreshingStatus = true;
   try {
-    const status = await fetchApi('/api/status');
+    const [status, pendingResp] = await Promise.all([
+      fetchApi('/api/status'),
+      fetchApi('/api/pending-count').catch(() => null),
+    ]);
     const signature = buildStatusSignature(status);
     if (signature === lastStatusSignature) return;
     lastStatusSignature = signature;
@@ -898,6 +903,9 @@ async function refreshStatus() {
       document.getElementById('btnStop').disabled = true;
     }
     document.getElementById('nextCheck').textContent = status.nextCheck || '-';
+    if (pendingResp && pendingResp.success) {
+      document.getElementById('pendingCount').textContent = pendingResp.count ?? '-';
+    }
 
     if (status.schedule && status.schedule.periods) {
       periods = JSON.parse(JSON.stringify(status.schedule.periods));
@@ -920,12 +928,17 @@ function renderRecordList(records) {
   const moreBtn = document.getElementById('recordMoreBtn');
   const pendingRecords = [];
   const completedRecords = [];
+  const blockedRecords = [];
 
   for (const record of records) {
+    const xhsPending = record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布';
+    const dyPending = record.douyinAccount && record.douyinStatus === '待发布';
     const xhsDone = record.xiaohongshuStatus === '已发布' || !record.xiaohongshuAccount;
     const dyDone = record.douyinStatus === '已发布' || !record.douyinAccount;
-    if (xhsDone && dyDone) completedRecords.push(record);
-    else pendingRecords.push(record);
+
+    if (xhsPending || dyPending) pendingRecords.push(record);
+    else if (xhsDone && dyDone) completedRecords.push(record);
+    else blockedRecords.push(record);
   }
 
   pendingRecords.sort((a, b) => {
@@ -947,12 +960,17 @@ function renderRecordList(records) {
     return;
   }
 
-  const orderedRecords = [...pendingRecords, ...completedRecords];
+  const orderedRecords = [...pendingRecords, ...blockedRecords, ...completedRecords];
   const visiblePending = pendingRecords.slice(0, recordRenderLimit);
+  const visibleBlocked = blockedRecords.slice(0, recordRenderLimit);
   const visibleCompleted = showCompletedRecords ? completedRecords.slice(0, recordRenderLimit) : [];
-  const visibleCount = visiblePending.length + visibleCompleted.length;
-  summaryEl.textContent = `待发布 ${pendingRecords.length} 条会优先显示在上方；已完成 ${completedRecords.length} 条默认折叠。当前展开 ${visibleCount} / ${orderedRecords.length} 条记录。`;
-  moreBtn.style.display = (visiblePending.length < pendingRecords.length || (showCompletedRecords && visibleCompleted.length < completedRecords.length)) ? 'inline-flex' : 'none';
+  const visibleCount = visiblePending.length + visibleBlocked.length + visibleCompleted.length;
+  summaryEl.textContent = `待发布 ${pendingRecords.length} 条会优先显示在上方；非待发布 ${blockedRecords.length} 条不会自动提交；已完成 ${completedRecords.length} 条默认折叠。当前展开 ${visibleCount} / ${orderedRecords.length} 条记录。`;
+  moreBtn.style.display = (
+    visiblePending.length < pendingRecords.length
+    || visibleBlocked.length < blockedRecords.length
+    || (showCompletedRecords && visibleCompleted.length < completedRecords.length)
+  ) ? 'inline-flex' : 'none';
 
   const renderCards = (list) => list.map(r => {
     const tags = (r.tags || []).slice(0, 5).map(t => `<span class="tag">#${escapeHtml(t)}</span>`).join(' ');
@@ -983,6 +1001,12 @@ function renderRecordList(records) {
         <div class="record-section-title">待发布记录 (${pendingRecords.length})</div>
       </div>
       ${visiblePending.length ? renderCards(visiblePending) : '<div class="empty">当前没有待发布记录</div>'}
+    </div>
+    <div class="record-section">
+      <div class="record-section-head">
+        <div class="record-section-title">非待发布记录 (${blockedRecords.length})</div>
+      </div>
+      ${visibleBlocked.length ? renderCards(visibleBlocked) : '<div class="empty">当前没有非待发布记录</div>'}
     </div>
     <div class="record-section">
       <div class="record-section-head">
@@ -1031,14 +1055,16 @@ async function refreshRecords(force = false) {
 }
 
 async function startScheduler() {
-  await fetchApi('/api/scheduler/start', 'POST');
-  addLog('info', '定时服务已启动');
+  const resp = await fetchApi('/api/scheduler/start', 'POST');
+  if (resp.success) addLog('info', resp.message || '定时服务已启动');
+  else addLog('error', `启动失败: ${resp.error || '未知错误'}`);
   refreshStatus();
 }
 
 async function stopScheduler() {
-  await fetchApi('/api/scheduler/stop', 'POST');
-  addLog('info', '定时服务已停止');
+  const resp = await fetchApi('/api/scheduler/stop', 'POST');
+  if (resp.success) addLog('info', resp.message || '定时服务已停止');
+  else addLog('error', `停止失败: ${resp.error || '未知错误'}`);
   refreshStatus();
 }
 
@@ -1101,8 +1127,12 @@ function updateBitbrowserMapping(index, value) {
   bitbrowserMappings[index].browserId = String(value || '').trim();
 }
 
-async function refreshBitbrowserMappings(forceLog = false) {
+async function refreshBitbrowserMappings(forceLog = false, forceReload = false) {
   const listEl = document.getElementById('bitbrowserList');
+  if (!forceReload && bitbrowserMappings.length > 0) {
+    renderBitbrowserMappings();
+    return;
+  }
   listEl.innerHTML = '<div class="empty">正在同步飞书账号与本地 browserId 映射...</div>';
   try {
     const resp = await fetchApi('/api/bitbrowser/accounts');
@@ -1296,6 +1326,7 @@ async function refreshAccounts() {
         <div class="account-main">
           <div class="account-title">${escapeHtml(item.accountName || '未命名账号')}</div>
           <div class="account-meta">${escapeHtml(item.platform || '-')} · ID: ${escapeHtml(item.id || '-')}</div>
+          ${renderAccountAliases(item)}
           <div class="account-meta">${item.status === 1 ? '状态正常' : '状态异常'} · ${item.isFreeze ? '已冻结' : '未冻结'} · ${item.isOperate ? '可操作' : '不可操作'} · ${item.isRealNameVerified ? '已实名' : '未实名'}</div>
         </div>
         <div class="account-badges">
@@ -1306,6 +1337,20 @@ async function refreshAccounts() {
   } catch (e) {
     el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${escapeHtml(e.message)}</div>`;
   }
+}
+
+function renderAccountAliases(item) {
+  const aliases = Array.isArray(item.aliases) ? item.aliases : [];
+  const normalizedPrimary = String(item.accountName || '').trim().toLowerCase();
+  const visibleAliases = aliases
+    .map(alias => String(alias || '').trim())
+    .filter(Boolean)
+    .filter((alias, index, arr) => arr.findIndex(v => v.toLowerCase() === alias.toLowerCase()) === index)
+    .filter(alias => alias.toLowerCase() !== normalizedPrimary);
+
+  if (visibleAliases.length === 0) return '';
+
+  return `<div class="account-meta">备注/别名：${escapeHtml(visibleAliases.join('、'))}</div>`;
 }
 
 function renderLogs(logs) {

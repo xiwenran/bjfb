@@ -19,6 +19,42 @@ function getProjectConfig() {
   }
 }
 
+function normalizeAccountAlias(value) {
+  return String(value || '').trim();
+}
+
+function collectAccountAliases(account = {}) {
+  const candidates = [
+    account.platformAccountName,
+    account.accountName,
+    account.name,
+    account.nick,
+    account.nickname,
+    account.nickName,
+    account.userName,
+    account.displayName,
+    account.remark,
+    account.remarkName,
+    account.memo,
+    account.platformAccountNickname,
+    account.platformAccountRemark,
+    account.platformAccountAlias,
+    account.alias,
+  ];
+
+  const aliases = [];
+  const seen = new Set();
+  for (const item of candidates) {
+    const text = normalizeAccountAlias(item);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    aliases.push(text);
+  }
+  return aliases;
+}
+
 let loginDone = false;
 let authSignature = null;
 let activeYixiaoerConfig = null;
@@ -42,6 +78,10 @@ function getApiSignature(config) {
 function getActiveYixiaoerConfig() {
   if (activeYixiaoerConfig) return activeYixiaoerConfig;
   return getProjectConfig().yixiaoer || {};
+}
+
+function isPendingStatus(status) {
+  return status === '待发布';
 }
 
 function createHttpClient(config) {
@@ -377,6 +417,24 @@ async function getAccountList(options = {}) {
     params.loginStatus = options.loginStatus;
   }
   return getAllAccounts(yixiaoerConfig, params);
+}
+
+async function getAccountAliasIndex(options = {}) {
+  const accounts = await getAccountList(options);
+  const index = new Map();
+
+  for (const account of accounts) {
+    const aliases = collectAccountAliases(account);
+    for (const alias of aliases) {
+      index.set(alias.toLowerCase(), {
+        id: account.id,
+        account,
+        aliases,
+      });
+    }
+  }
+
+  return index;
 }
 
 async function validateAccount(platformAccountId) {
@@ -836,25 +894,60 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   const yixiaoerConfig = config.yixiaoer || config;
   const bitbrowserConfig = config.bitbrowser || {};
   const teamId = yixiaoerConfig.teamId;
+  const accountAliasCache = config.yixiaoerAccountCache || {};
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
+
+  function resolveMappedAccountId(platformName, accountName) {
+    const platformKey = platformName === '小红书' ? 'xiaohongshu' : 'douyin';
+    const directId = accountMapping?.[platformKey]?.[accountName];
+    if (directId) {
+      return { accountId: directId, matchType: 'direct' };
+    }
+
+    const normalizedTarget = normalizeAccountAlias(accountName).toLowerCase();
+    if (!normalizedTarget) {
+      return { accountId: null, matchType: 'none' };
+    }
+
+    const cachedPlatform = accountAliasCache?.[platformKey] || {};
+    for (const [mappedName, mappedId] of Object.entries(accountMapping?.[platformKey] || {})) {
+      const aliases = [
+        mappedName,
+        ...(cachedPlatform?.[mappedId]?.aliases || []),
+      ]
+        .map(normalizeAccountAlias)
+        .filter(Boolean);
+
+      if (aliases.some(alias => alias.toLowerCase() === normalizedTarget)) {
+        return { accountId: mappedId, matchType: 'alias' };
+      }
+    }
+
+    return { accountId: null, matchType: 'none' };
+  }
 
   // 飞书平台状态是是否允许重发的唯一开关。
   // 若用户手动把平台状态改回“待发布”，则清除本地防重账本，允许重新提交到蚁小二。
   if (record.xiaohongshuStatus === '已发布') {
     markAsPublished(record.recordId, '小红书');
-  } else {
+  } else if (isPendingStatus(record.xiaohongshuStatus)) {
     unmarkAsPublished(record.recordId, '小红书');
   }
 
   if (record.douyinStatus === '已发布') {
     markAsPublished(record.recordId, '抖音');
-  } else {
+  } else if (isPendingStatus(record.douyinStatus)) {
     unmarkAsPublished(record.recordId, '抖音');
   }
 
   // 发布到单个平台的通用函数
   async function publishToPlatform(platformName, accountName, accountId, extraOpts) {
     const xhsPublishChannel = record.xiaohongshuPublishChannel === '比特浏览器' ? '比特浏览器' : '蚁小二';
+    const platformStatus = platformName === '小红书' ? record.xiaohongshuStatus : record.douyinStatus;
+
+    if (!isPendingStatus(platformStatus)) {
+      return null;
+    }
 
     // 防重复：检查是否已在该平台发布过
     if (isAlreadyPublished(record.recordId, platformName)) {
@@ -1002,15 +1095,17 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   }
 
   // 发布到小红书（跳过已发布的）
-  if (record.xiaohongshuAccount && record.xiaohongshuStatus !== '已发布') {
-    const accountId = accountMapping.xiaohongshu[record.xiaohongshuAccount];
-    results.push(await publishToPlatform('小红书', record.xiaohongshuAccount, accountId));
+  if (record.xiaohongshuAccount && isPendingStatus(record.xiaohongshuStatus)) {
+    const resolved = resolveMappedAccountId('小红书', record.xiaohongshuAccount);
+    const result = await publishToPlatform('小红书', record.xiaohongshuAccount, resolved.accountId);
+    if (result) results.push(result);
   }
 
   // 发布到抖音（跳过已发布的）
-  if (record.douyinAccount && record.douyinStatus !== '已发布') {
-    const accountId = accountMapping.douyin[record.douyinAccount];
-    results.push(await publishToPlatform('抖音', record.douyinAccount, accountId));
+  if (record.douyinAccount && isPendingStatus(record.douyinStatus)) {
+    const resolved = resolveMappedAccountId('抖音', record.douyinAccount);
+    const result = await publishToPlatform('抖音', record.douyinAccount, resolved.accountId);
+    if (result) results.push(result);
   }
 
   return results;
@@ -1021,6 +1116,8 @@ module.exports = {
   getAccountList,
   validateAccount,
   getPublishRecords,
+  getAccountAliasIndex,
+  collectAccountAliases,
   searchMusic: searchMusicGeneral, // 导出通用搜索函数
   searchMusicByAccount: searchMusic, // 保留原函数
   browseMusicByAccount: browseMusic,

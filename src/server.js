@@ -17,6 +17,34 @@ function saveConfig() {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
 }
 
+function normalizeAlias(value) {
+  return String(value || '').trim();
+}
+
+function updateYixiaoerAccountCache(accounts = []) {
+  config.yixiaoerAccountCache = config.yixiaoerAccountCache || { xiaohongshu: {}, douyin: {} };
+
+  for (const account of accounts) {
+    const platformKey = account.platformName === '小红书'
+      ? 'xiaohongshu'
+      : (account.platformName === '抖音' ? 'douyin' : null);
+    if (!platformKey || !account.id) continue;
+
+    const aliases = (publisher.collectAccountAliases(account) || [])
+      .map(normalizeAlias)
+      .filter(Boolean);
+
+    config.yixiaoerAccountCache[platformKey][account.id] = {
+      aliases,
+      platformName: account.platformName,
+      accountName: account.platformAccountName || aliases[0] || '',
+      syncedAt: new Date().toISOString(),
+    };
+  }
+
+  saveConfig();
+}
+
 async function getBitBrowserAccountMappings() {
   const records = await feishu.getRecords();
   const parsedRecords = records.map(r => feishu.parseRecord(r));
@@ -113,6 +141,12 @@ function decorateRecord(record) {
   };
 }
 
+function isPendingRecord(record) {
+  const xhsPending = !!record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布';
+  const dyPending = !!record.douyinAccount && record.douyinStatus === '待发布';
+  return xhsPending || dyPending;
+}
+
 // SSE clients for real-time log updates
 const sseClients = new Set();
 scheduler.onLog = (entry) => {
@@ -187,6 +221,19 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, scheduler.getStatus());
   }
 
+  if (pathname === '/api/pending-count') {
+    try {
+      const records = await feishu.getRecords();
+      const count = records
+        .map(r => feishu.parseRecord(r))
+        .filter(isPendingRecord)
+        .length;
+      return sendJson(res, { success: true, count });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, 500);
+    }
+  }
+
   if (pathname === '/api/records') {
     try {
       const records = await feishu.getUnpublishedRecords();
@@ -246,6 +293,7 @@ const server = http.createServer(async (req, res) => {
     try {
       await publisher.ensureLogin(config.yixiaoer);
       const accounts = await publisher.getAccountList();
+      updateYixiaoerAccountCache(accounts);
       const mappedIds = new Set([
         ...Object.values(config.accountMapping?.xiaohongshu || {}),
         ...Object.values(config.accountMapping?.douyin || {}),
@@ -262,6 +310,7 @@ const server = http.createServer(async (req, res) => {
           ? '在线/授权正常'
           : '需关注',
         mapped: mappedIds.has(account.id),
+        aliases: publisher.collectAccountAliases(account),
       }));
       return sendJson(res, { success: true, data });
     } catch (e) {

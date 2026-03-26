@@ -5,6 +5,7 @@ const FeishuClient = require('./feishu.js');
 const publisher = require('./publisher.js');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
+const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
 class Scheduler {
   constructor(config) {
@@ -109,6 +110,14 @@ class Scheduler {
     return `${year}-${month}-${day}`;
   }
 
+  findVideoPath(filePaths = []) {
+    return filePaths.find(filePath => VIDEO_FILE_RE.test(filePath)) || filePaths[0] || null;
+  }
+
+  isPlatformPending(status) {
+    return status === '待发布';
+  }
+
   // 解析备注中的平台发布状态
   parsePlatformStatus(note) {
     const result = { xiaohongshu: null, douyin: null };
@@ -174,9 +183,9 @@ class Scheduler {
   requiresYixiaoerLogin(records) {
     return records.some(record => {
       const xhsNeedsYixiaoer = record.xiaohongshuAccount
-        && record.xiaohongshuStatus !== '已发布'
+        && this.isPlatformPending(record.xiaohongshuStatus)
         && record.xiaohongshuPublishChannel !== '比特浏览器';
-      const dyNeedsYixiaoer = record.douyinAccount && record.douyinStatus !== '已发布';
+      const dyNeedsYixiaoer = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
       return xhsNeedsYixiaoer || dyNeedsYixiaoer;
     });
   }
@@ -205,10 +214,9 @@ class Scheduler {
       const now = new Date();
 
       const toPublish = parsed.filter(r => {
-        // 如果两个平台都已发布，跳过
-        const xhsPublished = r.xiaohongshuStatus === '已发布' || !r.xiaohongshuAccount;
-        const dyPublished = r.douyinStatus === '已发布' || !r.douyinAccount;
-        if (xhsPublished && dyPublished) return false;
+        const xhsPending = r.xiaohongshuAccount && this.isPlatformPending(r.xiaohongshuStatus);
+        const dyPending = r.douyinAccount && this.isPlatformPending(r.douyinStatus);
+        if (!xhsPending && !dyPending) return false;
         if (!r.xiaohongshuAccount && !r.douyinAccount) return false;
         if (r.publishTime && r.publishTime > now) {
           this.log('info', `⏰ "${r.title}" 发布时间未到 (${r.publishTime.toLocaleString('zh-CN')})`);
@@ -260,8 +268,16 @@ class Scheduler {
             recordId: record.recordId,
             detail: `正在下载《${record.title}》的素材`,
           });
-          const imagePaths = await this.feishu.downloadAllAttachments(record.attachments, tmpDir);
-          record.imagePaths = imagePaths;
+          const attachmentPaths = await this.feishu.downloadAllAttachments(record.attachments, tmpDir);
+          if (record.contentType === '视频') {
+            record.videoPath = this.findVideoPath(attachmentPaths);
+            record.imagePaths = [];
+            if (!record.videoPath) {
+              throw new Error('视频内容未找到可发布的视频素材');
+            }
+          } else {
+            record.imagePaths = attachmentPaths;
+          }
 
           if (record.contentType === '视频' && record.videoCover.length > 0) {
             this.setProgress({
@@ -279,6 +295,7 @@ class Scheduler {
             yixiaoer: this.config.yixiaoer,
             bitbrowser: this.config.bitbrowser || {},
             defaultMusic: this.config.defaultMusic || null,
+            yixiaoerAccountCache: this.config.yixiaoerAccountCache || {},
           };
           this.setProgress({
             active: true,

@@ -231,12 +231,27 @@ class FeishuClient {
   async downloadAllAttachments(attachments, destDir) {
     if (!attachments || attachments.length === 0) return [];
 
-    // 按文件名数字排序（0.png, 1.png, 2.png...）
-    const sorted = [...attachments].sort((a, b) => {
-      const numA = parseInt(a.name) || 0;
-      const numB = parseInt(b.name) || 0;
-      return numA - numB;
-    });
+    // 仅对“前缀就是数字”的文件名按数字排序，其余保持飞书原顺序，
+    // 避免“封面 (3).png”或“课程封面_11.png”被误排到最前面。
+    const sorted = [...attachments]
+      .map((att, index) => ({ att, index }))
+      .sort((left, right) => {
+        const leftName = path.basename(String(left.att.name || ''));
+        const rightName = path.basename(String(right.att.name || ''));
+        const leftMatch = leftName.match(/^(\d+)/);
+        const rightMatch = rightName.match(/^(\d+)/);
+        const leftNumber = leftMatch ? Number(leftMatch[1]) : null;
+        const rightNumber = rightMatch ? Number(rightMatch[1]) : null;
+
+        if (leftNumber !== null && rightNumber !== null) {
+          return leftNumber - rightNumber || left.index - right.index;
+        }
+
+        if (leftNumber !== null) return -1;
+        if (rightNumber !== null) return 1;
+        return left.index - right.index;
+      })
+      .map(item => item.att);
 
     const paths = [];
     for (const att of sorted) {
