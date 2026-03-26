@@ -12,7 +12,8 @@
     "check:syntax": "node --check src/config-store.js && node --check src/server.js && node --check src/scheduler.js && node --check src/publisher.js && node --check src/check.js && node --check src/feishu.js && node --check src/electron-main.js",
     "check": "node src/check.js",
     "backup:tag": "sh scripts/tag-backup.sh",
-    "git:sync": "sh scripts/git-sync.sh"
+    "git:sync": "sh scripts/git-sync.sh",
+    "release:mac-local": "sh scripts/upload-local-mac-release.sh"
   },
   "dependencies": {
     "axios": "^1.6.0",

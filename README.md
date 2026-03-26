@@ -282,3 +282,18 @@ npm run git:sync -- "feat: 更新说明"
 - 推送到当前分支对应的 `origin/<branch>`
 
 如果不传提交信息，会自动生成一个带时间戳的默认说明。
+
+如果 GitHub Actions 生成的 macOS 包和你的本机架构不匹配，也可以先在本地打包，再把本地产物上传到 GitHub Release：
+
+```bash
+npm run dist:mac
+npm run release:mac-local
+```
+
+默认会上传 `dist/NotePublisher macOS.zip`，并自动创建一个带时间戳的 Release。你也可以手动指定文件路径和 tag：
+
+```bash
+npm run release:mac-local -- "dist/NotePublisher macOS.zip" "local-mac-manual-20260327"
+```
+
+这种方式上传的是发布附件，不会把安装包提交进代码仓库。
