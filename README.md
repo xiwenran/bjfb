@@ -297,3 +297,9 @@ npm run release:mac-local -- "dist/NotePublisher macOS.zip" "local-mac-manual-20
 ```
 
 这种方式上传的是发布附件，不会把安装包提交进代码仓库。
+
+如果你更习惯直接双击文件，也可以在项目根目录双击：
+
+- `打包并上传Mac.command`
+
+它会自动执行本地 mac 打包，并把生成的 zip 上传到 GitHub Release。

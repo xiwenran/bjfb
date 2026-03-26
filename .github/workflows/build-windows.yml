@@ -13,19 +13,12 @@ jobs:
         include:
           - os: windows-latest
             build_script: dist:win
-            artifact_name: NotePublisher-windows-portable-${{ github.ref_name }}
-            artifact_paths: |
-              dist/*.exe
-              dist/*.blockmap
-              dist/latest*.yml
+            artifact_name: NotePublisher-windows
+            artifact_paths: dist/NotePublisher Portable.exe
           - os: macos-latest
             build_script: dist:mac
-            artifact_name: NotePublisher-macos-${{ github.ref_name }}
-            artifact_paths: |
-              dist/*.zip
-              dist/*.dmg
-              dist/*.blockmap
-              dist/latest*.yml
+            artifact_name: NotePublisher-macos
+            artifact_paths: dist/NotePublisher macOS.zip
 
     steps:
       - name: Checkout
