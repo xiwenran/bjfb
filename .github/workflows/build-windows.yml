@@ -1,12 +1,31 @@
-name: Build Windows Installer
+name: Build Desktop Packages
 
 on:
   workflow_dispatch:
   push:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            build_script: dist:win
+            artifact_name: NotePublisher-windows-portable-${{ github.ref_name }}
+            artifact_paths: |
+              dist/*.exe
+              dist/*.blockmap
+              dist/latest*.yml
+          - os: macos-latest
+            build_script: dist:mac
+            artifact_name: NotePublisher-macos-${{ github.ref_name }}
+            artifact_paths: |
+              dist/*.zip
+              dist/*.dmg
+              dist/*.blockmap
+              dist/latest*.yml
 
     steps:
       - name: Checkout
@@ -24,15 +43,12 @@ jobs:
       - name: Syntax check
         run: npm run check:syntax
 
-      - name: Build Windows installer
-        run: npm run dist:win
+      - name: Build desktop package
+        run: npm run ${{ matrix.build_script }}
 
-      - name: Upload installer artifacts
+      - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: NotePublisher-windows-${{ github.ref_name }}
-          path: |
-            dist/*.exe
-            dist/*.blockmap
-            dist/latest*.yml
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_paths }}
           if-no-files-found: error

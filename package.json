@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "desktop": "electron .",
-    "dist:win": "electron-builder --win nsis --publish never",
+    "dist:win": "electron-builder --win portable --publish never",
+    "dist:mac": "electron-builder --mac zip --publish never",
     "check:syntax": "node --check src/config-store.js && node --check src/server.js && node --check src/scheduler.js && node --check src/publisher.js && node --check src/check.js && node --check src/feishu.js && node --check src/electron-main.js",
     "check": "node src/check.js",
     "backup:tag": "sh scripts/tag-backup.sh"
@@ -48,18 +49,19 @@
     "extraMetadata": {
       "main": "src/electron-main.js"
     },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "artifactName": "${productName} macOS.${ext}",
+      "category": "public.app-category.productivity"
+    },
     "win": {
       "target": [
-        "nsis"
+        "portable"
       ],
-      "artifactName": "${productName} Setup.${ext}",
+      "artifactName": "${productName} Portable.${ext}",
       "executableName": "NotePublisher"
-    },
-    "nsis": {
-      "deleteAppDataOnUninstall": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "NotePublisher"
     }
   },
   "keywords": [

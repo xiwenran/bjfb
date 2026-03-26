@@ -41,7 +41,20 @@ npm run desktop
 npm run dist:win
 ```
 
-仓库内已提供 GitHub Actions 工作流，会在推送后自动构建 `NotePublisher Setup.exe` 并上传为构建产物。
+如需本地生成 macOS 分发包：
+
+```bash
+npm run dist:mac
+```
+
+当前分发方式：
+
+- Windows：`NotePublisher Portable.exe`，免安装，可直接运行
+- macOS：`NotePublisher macOS.zip`，解压后直接打开 `.app`
+
+两者都会继续把配置和运行数据放在系统用户目录，因此删掉程序文件本体后，本机配置默认仍会保留。
+
+仓库内已提供 GitHub Actions 工作流，会在推送后自动构建 Windows 与 macOS 两套产物并上传为构建产物。
 
 ---
 
