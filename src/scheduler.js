@@ -519,32 +519,36 @@ class Scheduler {
   scheduleRecordTask(record, publishTime) {
     const taskKey = this.getScheduledTaskKey(record.recordId, publishTime);
     const delay = Math.max(0, publishTime.getTime() - Date.now());
-    const timer = setTimeout(async () => {
-      this.scheduledTasks.delete(taskKey);
-      if (!this.running) return;
+    const timer = setTimeout(() => {
+      (async () => {
+        this.scheduledTasks.delete(taskKey);
+        if (!this.running) return;
 
-      const latestRecord = await this.loadCurrentPendingRecord(record.recordId);
-      if (!latestRecord) {
-        this.log('info', `🧹 精准任务已跳过：记录 ${record.recordId} 已不在待发布列表`);
-        return;
-      }
-      if (!this.recordHasPendingPlatform(latestRecord)) {
-        this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》平台状态已非待发布`);
-        return;
-      }
-      if (!latestRecord.publishTime) {
-        this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》已移除发布时间`);
-        return;
-      }
+        const latestRecord = await this.loadCurrentPendingRecord(record.recordId);
+        if (!latestRecord) {
+          this.log('info', `🧹 精准任务已跳过：记录 ${record.recordId} 已不在待发布列表`);
+          return;
+        }
+        if (!this.recordHasPendingPlatform(latestRecord)) {
+          this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》平台状态已非待发布`);
+          return;
+        }
+        if (!latestRecord.publishTime) {
+          this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》已移除发布时间`);
+          return;
+        }
 
-      const latestPublishTime = new Date(latestRecord.publishTime);
-      if (latestPublishTime.getTime() !== publishTime.getTime()) {
-        this.log('info', `🔁 记录《${latestRecord.title}》发布时间已变更，重建精准任务`);
-        this.scheduleRecordTask(latestRecord, latestPublishTime);
-        return;
-      }
+        const latestPublishTime = new Date(latestRecord.publishTime);
+        if (latestPublishTime.getTime() !== publishTime.getTime()) {
+          this.log('info', `🔁 记录《${latestRecord.title}》发布时间已变更，重建精准任务`);
+          this.scheduleRecordTask(latestRecord, latestPublishTime);
+          return;
+        }
 
-      await this.publishRecords([latestRecord], 'scheduled');
+        await this.publishRecords([latestRecord], 'scheduled');
+      })().catch(e => {
+        this.log('error', `❌ 精准任务执行失败：${record.title} - ${e.message}`);
+      });
     }, delay);
 
     this.scheduledTasks.set(taskKey, {
@@ -554,6 +558,18 @@ class Scheduler {
       timer,
     });
     this.log('info', `🗓 已创建精准任务：${record.title} -> ${publishTime.toLocaleString('zh-CN')}`);
+  }
+
+  getScheduledTasks() {
+    const now = Date.now();
+    return Array.from(this.scheduledTasks.values())
+      .map(task => ({
+        recordId: task.recordId,
+        title: task.title,
+        publishTime: task.publishTime,
+        remainingMs: task.publishTime - now,
+      }))
+      .sort((a, b) => a.publishTime - b.publishTime);
   }
 
   async manualPublishNow() {
@@ -567,6 +583,23 @@ class Scheduler {
       return new Date(record.publishTime) <= now;
     });
     return this.publishRecords(toPublish, 'manual');
+  }
+
+  async publishSpecificRecord(recordId) {
+    this.ensureFeishuConfigured();
+    const records = await this.feishu.getUnpublishedRecords();
+    const parsed = records.map(r => this.feishu.parseRecord(r));
+    const target = parsed.find(r => r.recordId === recordId);
+    if (!target) throw new Error('找不到该记录或已发布');
+    if (!this.recordHasPendingPlatform(target)) throw new Error('该记录没有待发布的平台');
+    for (const [key, task] of this.scheduledTasks.entries()) {
+      if (task.recordId === recordId) {
+        clearTimeout(task.timer);
+        this.scheduledTasks.delete(key);
+        this.log('info', `已取消「${target.title}」的定时任务，改为立即发布`);
+      }
+    }
+    return this.publishRecords([target], 'manual');
   }
 
   start() {

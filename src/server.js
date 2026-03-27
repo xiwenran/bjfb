@@ -410,10 +410,32 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { success: true, message: '定时服务已停止' });
   }
 
+  if (pathname === '/api/publish/scheduled-tasks' && req.method === 'GET') {
+    sendJson(res, { success: true, data: scheduler.getScheduledTasks() });
+    return;
+  }
+
   if (pathname === '/api/publish/now' && req.method === 'POST') {
     readBody(req).then(async () => {
       try {
         const result = await scheduler.manualPublishNow();
+        if (result && result.error) {
+          return sendJson(res, { success: false, ...result }, 500);
+        }
+        sendJson(res, { success: true, ...result });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/publish/record' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { recordId } = JSON.parse(body || '{}');
+        if (!recordId) return sendJson(res, { success: false, error: '缺少 recordId' }, 400);
+        const result = await scheduler.publishSpecificRecord(recordId);
         if (result && result.error) {
           return sendJson(res, { success: false, ...result }, 500);
         }
