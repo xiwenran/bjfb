@@ -3,6 +3,7 @@ const fs = require('fs');
 const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
 const { loadConfig, readLedger, saveLedger } = require('./config-store.js');
+const { mapWithConcurrency } = require('./async-utils.js');
 const DEFAULT_API_BASE_URL = 'https://www.yixiaoer.cn/api';
 const PLATFORM_RULES = {
   DouYin: { code: 'DouYin', name: '抖音', supportedTypes: ['video', 'imageText', 'article'] },
@@ -54,6 +55,10 @@ let authSignature = null;
 let activeYixiaoerConfig = null;
 let cachedHttpClient = null;
 let cachedHttpClientSignature = null;
+let cachedValidAccountIds = null;
+let cachedValidAccountIdsSignature = null;
+let cachedValidAccountIdsAt = 0;
+const ACCOUNT_VALIDATION_CACHE_TTL_MS = 60 * 1000;
 
 function resetRuntimeState() {
   loginDone = false;
@@ -61,6 +66,9 @@ function resetRuntimeState() {
   activeYixiaoerConfig = null;
   cachedHttpClient = null;
   cachedHttpClientSignature = null;
+  cachedValidAccountIds = null;
+  cachedValidAccountIdsSignature = null;
+  cachedValidAccountIdsAt = 0;
 }
 
 function getYixiaoerConfig(config) {
@@ -440,8 +448,20 @@ async function getAccountAliasIndex(options = {}) {
 }
 
 async function validateAccount(platformAccountId) {
-  const accounts = await getAccountList({ loginStatus: 1 });
-  return accounts.some(a => a.id === platformAccountId);
+  const nextSignature = getApiSignature(getActiveYixiaoerConfig());
+  const now = Date.now();
+  if (
+    !cachedValidAccountIds
+    || cachedValidAccountIdsSignature !== nextSignature
+    || now - cachedValidAccountIdsAt > ACCOUNT_VALIDATION_CACHE_TTL_MS
+  ) {
+    const accounts = await getAccountList({ loginStatus: 1 });
+    cachedValidAccountIds = new Set(accounts.map(account => account.id).filter(Boolean));
+    cachedValidAccountIdsSignature = nextSignature;
+    cachedValidAccountIdsAt = now;
+  }
+
+  return cachedValidAccountIds.has(platformAccountId);
 }
 
 async function getPublishRecords(options = {}) {
@@ -645,25 +665,26 @@ async function publishContent(params) {
   }
 
   if (publishType === 'imageText' && params.imagePaths?.length) {
-    const imageObjects = [];
-    for (const imagePath of params.imagePaths) {
+    const uploadConcurrency = Math.max(1, Number(params.rules?.uploadConcurrency) || 3);
+    const imageObjects = await mapWithConcurrency(params.imagePaths, uploadConcurrency, async (imagePath) => {
       if (imagePath.startsWith('http')) {
-        imageObjects.push({
+        return {
           path: imagePath,
           width: params.coverWidth || 1080,
           height: params.coverHeight || 1920,
           size: params.coverSize || 0,
-        });
-      } else {
-        const imageInfo = await uploadFileToOss(yixiaoerConfig, imagePath);
-        imageObjects.push({
-          key: imageInfo.key,
-          width: params.coverWidth || 1080,
-          height: params.coverHeight || 1920,
-          size: imageInfo.size,
-        });
+        };
       }
-    }
+
+      const imageInfo = await uploadFileToOss(yixiaoerConfig, imagePath);
+      return {
+        key: imageInfo.key,
+        width: params.coverWidth || 1080,
+        height: params.coverHeight || 1920,
+        size: imageInfo.size,
+      };
+    });
+
     accountForm.images = imageObjects;
     if (!accountForm.coverKey && imageObjects.length > 0) {
       const first = imageObjects[0];
@@ -1069,6 +1090,7 @@ async function publishRecord(record, config, accountMapping, options = {}) {
         imagePaths: record.imagePaths,
         tags,
         music,
+        rules: config.rules || {},
         clientId: yixiaoerConfig.clientId,
         publishChannel: yixiaoerConfig.clientId ? 'local' : 'cloud',
         videoPath: record.videoPath,

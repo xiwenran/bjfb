@@ -1,7 +1,13 @@
 const fs = require('fs');
 const FeishuClient = require('./feishu.js');
 const publisher = require('./publisher.js');
-const { getRecordTempDir, isFeishuConfigured } = require('./config-store.js');
+const { mapWithConcurrency } = require('./async-utils.js');
+const {
+  updateYixiaoerAccountCache,
+  buildDesiredAccountNamesFromRecords,
+  autoMapAccountMappings,
+} = require('./account-mapping.js');
+const { getRecordTempDir, isFeishuConfigured, saveConfig } = require('./config-store.js');
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
 class Scheduler {
@@ -15,6 +21,8 @@ class Scheduler {
     this.maxLogs = 200;
     this.onLog = null;
     this.publishing = false;
+    this.pendingPublishRecords = new Map();
+    this.processingRecordIds = new Set();
     this.currentProgress = {
       active: false,
       stage: 'idle',
@@ -220,11 +228,199 @@ class Scheduler {
     return parsed.find(item => item.recordId === recordId) || null;
   }
 
+  getPublishConcurrency() {
+    return Math.max(1, Number(this.config.rules?.publishRecordConcurrency) || 2);
+  }
+
+  enqueuePublishRecords(records = []) {
+    let queued = 0;
+    for (const record of records) {
+      if (!record || !record.recordId) continue;
+      if (!this.recordHasPendingPlatform(record)) continue;
+      if (this.processingRecordIds.has(record.recordId)) continue;
+      const hadRecord = this.pendingPublishRecords.has(record.recordId);
+      this.pendingPublishRecords.set(record.recordId, record);
+      if (!hadRecord) queued += 1;
+    }
+    return queued;
+  }
+
+  takeQueuedPublishRecords() {
+    const records = Array.from(this.pendingPublishRecords.values());
+    this.pendingPublishRecords.clear();
+    return records;
+  }
+
+  async syncAccountMappingsForRecords(records = []) {
+    if (!this.requiresYixiaoerLogin(records)) return;
+
+    const accounts = await publisher.getAccountList();
+    let configChanged = false;
+
+    const cacheResult = updateYixiaoerAccountCache(this.config, accounts, publisher.collectAccountAliases);
+    configChanged = configChanged || cacheResult.changed;
+
+    const desiredNames = buildDesiredAccountNamesFromRecords(records);
+    const mappingResult = autoMapAccountMappings(this.config, desiredNames, accounts, publisher.collectAccountAliases);
+    configChanged = configChanged || mappingResult.changed;
+
+    if (configChanged) {
+      saveConfig(this.config);
+    }
+  }
+
+  async processSingleRecord(record) {
+    this.setProgress({
+      active: true,
+      stage: 'preparing',
+      title: record.title,
+      recordId: record.recordId,
+      platform: '',
+      account: '',
+      detail: `正在准备记录《${record.title}》`,
+    });
+    this.log('info', `📝 处理: "${record.title}"`);
+
+    const tmpDir = getRecordTempDir(record.recordId);
+    try {
+      this.setProgress({
+        active: true,
+        stage: 'downloading',
+        title: record.title,
+        recordId: record.recordId,
+        detail: `正在下载《${record.title}》的素材`,
+      });
+      const attachmentPaths = await this.feishu.downloadAllAttachments(record.attachments, tmpDir);
+      if (record.contentType === '视频') {
+        record.videoPath = this.findVideoPath(attachmentPaths);
+        record.imagePaths = [];
+        if (!record.videoPath) {
+          throw new Error('视频内容未找到可发布的视频素材');
+        }
+      } else {
+        record.imagePaths = attachmentPaths;
+      }
+
+      if (record.contentType === '视频' && record.videoCover.length > 0) {
+        this.setProgress({
+          active: true,
+          stage: 'downloading-cover',
+          title: record.title,
+          recordId: record.recordId,
+          detail: `正在下载《${record.title}》的视频封面`,
+        });
+        const coverPaths = await this.feishu.downloadAllAttachments(record.videoCover, tmpDir);
+        record.coverPath = coverPaths[0];
+      }
+
+      const publishConfig = {
+        yixiaoer: this.config.yixiaoer,
+        bitbrowser: this.config.bitbrowser || {},
+        defaultMusic: this.config.defaultMusic || null,
+        rules: this.config.rules || {},
+        yixiaoerAccountCache: this.config.yixiaoerAccountCache || {},
+      };
+      this.setProgress({
+        active: true,
+        stage: 'publishing',
+        title: record.title,
+        recordId: record.recordId,
+        detail: `正在按已配置渠道提交《${record.title}》`,
+      });
+      const results = await publisher.publishRecord(record, publishConfig, this.config.accountMapping, {
+        onProgress: (progress) => this.setProgress({ active: true, ...progress }),
+      });
+
+      let allSuccess = true;
+      let noteChanged = false;
+      let nextNote = record.note || '';
+
+      for (const r of results) {
+        if (r.success) {
+          await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
+          const successEntry = `${r.platform}发布成功(${r.account})`;
+          nextNote = this.mergeNoteEntry(nextNote, successEntry);
+          if (r.titleMeta?.truncated) {
+            nextNote = this.mergeNoteEntry(nextNote, `${r.platform}标题已自动截断为${r.titleMeta.limit}字`);
+          }
+          if (r.musicMeta?.message) {
+            nextNote = this.mergeNoteEntry(nextNote, `${r.platform}配乐: ${r.musicMeta.message}`);
+          }
+          const taskEntry = this.formatTaskEntry(r);
+          nextNote = this.mergeNoteEntry(nextNote, taskEntry);
+          const latestRecord = await this.findLatestPublishRecord(r, record.title);
+          const publishRecordEntry = this.formatPublishRecordEntry(latestRecord, r.platform);
+          nextNote = this.mergeNoteEntry(nextNote, publishRecordEntry);
+          noteChanged = noteChanged || nextNote !== (record.note || '');
+          if (r.musicMeta?.fallbackUsed) {
+            this.log('info', `  🎵 ${r.platform}(${r.account}) ${r.musicMeta.message}`);
+          }
+          if (r.titleMeta?.truncated) {
+            this.log('info', `  ✂️ ${r.platform}(${r.account}) 标题超限，已自动截断为 ${r.titleMeta.limit} 字`);
+          }
+          this.log('success', `  ✅ ${r.platform}(${r.account}) ${r.skipped ? '已跳过(之前已发布)' : '发布成功'}`);
+        } else {
+          allSuccess = false;
+          await this.feishu.markPlatformStatus(record.recordId, r.platform, '发布失败');
+          const failEntry = `${r.platform}发布失败(${r.account}): ${r.error}`;
+          nextNote = this.mergeNoteEntry(nextNote, failEntry);
+          noteChanged = true;
+          this.log('error', `  ❌ ${r.platform}(${r.account}) 发布失败: ${r.error}`);
+        }
+      }
+
+      if (noteChanged) {
+        await this.feishu.setNote(record.recordId, nextNote);
+        record.note = nextNote;
+      }
+
+      if (allSuccess && results.length > 0) {
+        await this.feishu.markPublished(record.recordId);
+        this.setProgress({
+          active: true,
+          stage: 'completed',
+          title: record.title,
+          recordId: record.recordId,
+          detail: `《${record.title}》已完成全部平台发布`,
+        });
+        this.log('success', `  ✅ "${record.title}" 全部发布成功`);
+        return { published: 1, failed: 0 };
+      }
+
+      this.setProgress({
+        active: true,
+        stage: 'partial-failed',
+        title: record.title,
+        recordId: record.recordId,
+        detail: `《${record.title}》发布完成，但存在失败平台`,
+      });
+      return { published: 0, failed: 1 };
+    } catch (e) {
+      this.setProgress({
+        active: true,
+        stage: 'failed',
+        title: record.title,
+        recordId: record.recordId,
+        detail: `《${record.title}》处理失败: ${e.message}`,
+      });
+      this.log('error', `  ❌ "${record.title}" 处理失败: ${e.message}`);
+      const nextNote = this.mergeNoteEntry(record.note, `处理失败: ${e.message}`);
+      await this.feishu.setNote(record.recordId, nextNote);
+      return { published: 0, failed: 1 };
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  }
+
   async publishRecords(records, reason = 'auto') {
     this.ensureFeishuConfigured();
+    const queued = this.enqueuePublishRecords(records);
+
     if (this.publishing) {
-      this.log('info', '⚠️ 上一轮发布尚未完成，跳过本次');
-      return { published: 0, failed: 0, skipped: true };
+      if (queued > 0) {
+        this.log('info', `🗂 当前已有发布任务，已追加 ${queued} 条记录到队列`);
+      }
+      return { published: 0, failed: 0, queued, inProgress: true };
     }
 
     this.publishing = true;
@@ -240,9 +436,7 @@ class Scheduler {
     this.log('info', reason === 'manual' ? '🚀 开始执行手动发布...' : '🚀 开始执行到点发布任务...');
 
     try {
-      const toPublish = records.filter(record => this.recordHasPendingPlatform(record));
-
-      if (toPublish.length === 0) {
+      if (this.pendingPublishRecords.size === 0) {
         this.setProgress({
           active: false,
           stage: 'idle',
@@ -256,160 +450,35 @@ class Scheduler {
         return { published: 0, failed: 0 };
       }
 
-      this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
-      if (this.requiresYixiaoerLogin(toPublish)) {
-        await publisher.ensureLogin(this.config.yixiaoer);
-      }
-
       let publishedCount = 0;
       let failedCount = 0;
 
-      for (const record of toPublish) {
-        this.setProgress({
-          active: true,
-          stage: 'preparing',
-          title: record.title,
-          recordId: record.recordId,
-          platform: '',
-          account: '',
-          detail: `正在准备记录《${record.title}》`,
-        });
-        this.log('info', `📝 处理: "${record.title}"`);
+      while (this.pendingPublishRecords.size > 0) {
+        const toPublish = this.takeQueuedPublishRecords().filter(record => this.recordHasPendingPlatform(record));
+        if (toPublish.length === 0) continue;
 
-        const tmpDir = getRecordTempDir(record.recordId);
-        try {
-          this.setProgress({
-            active: true,
-            stage: 'downloading',
-            title: record.title,
-            recordId: record.recordId,
-            detail: `正在下载《${record.title}》的素材`,
-          });
-          const attachmentPaths = await this.feishu.downloadAllAttachments(record.attachments, tmpDir);
-          if (record.contentType === '视频') {
-            record.videoPath = this.findVideoPath(attachmentPaths);
-            record.imagePaths = [];
-            if (!record.videoPath) {
-              throw new Error('视频内容未找到可发布的视频素材');
-            }
-          } else {
-            record.imagePaths = attachmentPaths;
-          }
+        this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
+        if (this.requiresYixiaoerLogin(toPublish)) {
+          await publisher.ensureLogin(this.config.yixiaoer);
+          await this.syncAccountMappingsForRecords(toPublish);
+        }
 
-          if (record.contentType === '视频' && record.videoCover.length > 0) {
-            this.setProgress({
-              active: true,
-              stage: 'downloading-cover',
-              title: record.title,
-              recordId: record.recordId,
-              detail: `正在下载《${record.title}》的视频封面`,
-            });
-            const coverPaths = await this.feishu.downloadAllAttachments(record.videoCover, tmpDir);
-            record.coverPath = coverPaths[0];
-          }
-
-          const publishConfig = {
-            yixiaoer: this.config.yixiaoer,
-            bitbrowser: this.config.bitbrowser || {},
-            defaultMusic: this.config.defaultMusic || null,
-            yixiaoerAccountCache: this.config.yixiaoerAccountCache || {},
-          };
-          this.setProgress({
-            active: true,
-            stage: 'publishing',
-            title: record.title,
-            recordId: record.recordId,
-            detail: `正在按已配置渠道提交《${record.title}》`,
-          });
-          const results = await publisher.publishRecord(record, publishConfig, this.config.accountMapping, {
-            onProgress: (progress) => this.setProgress({ active: true, ...progress }),
-          });
-
-          const failReasons = [];
-          let allSuccess = true;
-          let noteChanged = false;
-          let nextNote = record.note || '';
-
-          for (const r of results) {
-            if (r.success) {
-              // 单独更新该平台的发布状态
-              await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
-              const successEntry = `${r.platform}发布成功(${r.account})`;
-              nextNote = this.mergeNoteEntry(nextNote, successEntry);
-              if (r.titleMeta?.truncated) {
-                nextNote = this.mergeNoteEntry(nextNote, `${r.platform}标题已自动截断为${r.titleMeta.limit}字`);
-              }
-              if (r.musicMeta?.message) {
-                nextNote = this.mergeNoteEntry(nextNote, `${r.platform}配乐: ${r.musicMeta.message}`);
-              }
-              const taskEntry = this.formatTaskEntry(r);
-              nextNote = this.mergeNoteEntry(nextNote, taskEntry);
-              const latestRecord = await this.findLatestPublishRecord(r, record.title);
-              const publishRecordEntry = this.formatPublishRecordEntry(latestRecord, r.platform);
-              nextNote = this.mergeNoteEntry(nextNote, publishRecordEntry);
-              noteChanged = noteChanged || nextNote !== (record.note || '');
-              if (r.musicMeta?.fallbackUsed) {
-                this.log('info', `  🎵 ${r.platform}(${r.account}) ${r.musicMeta.message}`);
-              }
-              if (r.titleMeta?.truncated) {
-                this.log('info', `  ✂️ ${r.platform}(${r.account}) 标题超限，已自动截断为 ${r.titleMeta.limit} 字`);
-              }
-              this.log('success', `  ✅ ${r.platform}(${r.account}) ${r.skipped ? '已跳过(之前已发布)' : '发布成功'}`);
-            } else {
-              allSuccess = false;
-              await this.feishu.markPlatformStatus(record.recordId, r.platform, '发布失败');
-              const failEntry = `${r.platform}发布失败(${r.account}): ${r.error}`;
-              failReasons.push(failEntry);
-              nextNote = this.mergeNoteEntry(nextNote, failEntry);
-              noteChanged = true;
-              this.log('error', `  ❌ ${r.platform}(${r.account}) 发布失败: ${r.error}`);
+        const batchResults = await mapWithConcurrency(
+          toPublish,
+          this.getPublishConcurrency(),
+          async (record) => {
+            this.processingRecordIds.add(record.recordId);
+            try {
+              return await this.processSingleRecord(record);
+            } finally {
+              this.processingRecordIds.delete(record.recordId);
             }
           }
+        );
 
-          if (noteChanged) {
-            await this.feishu.setNote(record.recordId, nextNote);
-            record.note = nextNote;
-          }
-
-          if (allSuccess && results.length > 0) {
-            await this.feishu.markPublished(record.recordId);
-            publishedCount++;
-            this.setProgress({
-              active: true,
-              stage: 'completed',
-              title: record.title,
-              recordId: record.recordId,
-              detail: `《${record.title}》已完成全部平台发布`,
-            });
-            this.log('success', `  ✅ "${record.title}" 全部发布成功`);
-          } else {
-            failedCount++;
-            this.setProgress({
-              active: true,
-              stage: 'partial-failed',
-              title: record.title,
-              recordId: record.recordId,
-              detail: `《${record.title}》发布完成，但存在失败平台`,
-            });
-          }
-
-          await new Promise(resolve => setTimeout(resolve, 3000));
-
-        } catch (e) {
-          failedCount++;
-          this.setProgress({
-            active: true,
-            stage: 'failed',
-            title: record.title,
-            recordId: record.recordId,
-            detail: `《${record.title}》处理失败: ${e.message}`,
-          });
-          this.log('error', `  ❌ "${record.title}" 处理失败: ${e.message}`);
-          const nextNote = this.mergeNoteEntry(record.note, `处理失败: ${e.message}`);
-          await this.feishu.setNote(record.recordId, nextNote);
-        } finally {
-          // 无论成功或失败都清理临时目录
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+        for (const item of batchResults) {
+          publishedCount += item?.published || 0;
+          failedCount += item?.failed || 0;
         }
       }
 
@@ -424,7 +493,6 @@ class Scheduler {
       });
       this.log('info', `📊 本轮完成: 成功 ${publishedCount}, 失败 ${failedCount}`);
       return { published: publishedCount, failed: failedCount };
-
     } catch (e) {
       this.setProgress({
         active: false,

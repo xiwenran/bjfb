@@ -6,6 +6,11 @@ const Scheduler = require('./scheduler.js');
 const publisher = require('./publisher.js');
 const FeishuClient = require('./feishu.js');
 const {
+  updateYixiaoerAccountCache,
+  autoMapAccountMappings,
+  collectMappedAccountIds,
+} = require('./account-mapping.js');
+const {
   initializeAppStorage,
   saveConfig: persistConfig,
   readLedger,
@@ -155,34 +160,6 @@ function ensureFeishuConfigReady() {
 function ensureYixiaoerConfigReady() {
   if (isYixiaoerConfigured(config)) return;
   throw createConfigError(`请先在配置文件中补全蚁小二 API Key 和 Team ID：${getRuntimePaths().configPath}`);
-}
-
-function normalizeAlias(value) {
-  return String(value || '').trim();
-}
-
-function updateYixiaoerAccountCache(accounts = []) {
-  config.yixiaoerAccountCache = config.yixiaoerAccountCache || { xiaohongshu: {}, douyin: {} };
-
-  for (const account of accounts) {
-    const platformKey = account.platformName === '小红书'
-      ? 'xiaohongshu'
-      : (account.platformName === '抖音' ? 'douyin' : null);
-    if (!platformKey || !account.id) continue;
-
-    const aliases = (publisher.collectAccountAliases(account) || [])
-      .map(normalizeAlias)
-      .filter(Boolean);
-
-    config.yixiaoerAccountCache[platformKey][account.id] = {
-      aliases,
-      platformName: account.platformName,
-      accountName: account.platformAccountName || aliases[0] || '',
-      syncedAt: new Date().toISOString(),
-    };
-  }
-
-  saveConfig();
 }
 
 async function getBitBrowserAccountMappings() {
@@ -463,11 +440,25 @@ const server = http.createServer(async (req, res) => {
       ensureYixiaoerConfigReady();
       await publisher.ensureLogin(config.yixiaoer);
       const accounts = await publisher.getAccountList();
-      updateYixiaoerAccountCache(accounts);
-      const mappedIds = new Set([
-        ...Object.values(config.accountMapping?.xiaohongshu || {}),
-        ...Object.values(config.accountMapping?.douyin || {}),
-      ]);
+      let configChanged = false;
+
+      const cacheResult = updateYixiaoerAccountCache(config, accounts, publisher.collectAccountAliases);
+      configChanged = configChanged || cacheResult.changed;
+
+      if (isFeishuConfigured(config)) {
+        const desiredNames = {
+          xiaohongshu: await feishu.getSingleSelectFieldOptionNames('小红书账号'),
+          douyin: await feishu.getSingleSelectFieldOptionNames('抖音账号'),
+        };
+        const autoMapResult = autoMapAccountMappings(config, desiredNames, accounts, publisher.collectAccountAliases);
+        configChanged = configChanged || autoMapResult.changed;
+      }
+
+      if (configChanged) {
+        saveConfig();
+      }
+
+      const mappedIds = collectMappedAccountIds(config);
       const data = accounts.map(account => ({
         id: account.id,
         platform: account.platformName,
