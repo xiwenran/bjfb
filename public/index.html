@@ -1929,6 +1929,8 @@ function parsePlatformNote(note) {
   if (!note) return result;
   if (note.includes('小红书:已发布') || note.includes('小红书发布成功')) result.xhs = 'success';
   if (note.includes('抖音:已发布') || note.includes('抖音发布成功')) result.dy = 'success';
+  if (note.includes('小红书已提交')) result.xhs = result.xhs || 'submitted';
+  if (note.includes('抖音已提交')) result.dy = result.dy || 'submitted';
   const failMatch = note.match(/失败原因:\s*(.+)/);
   if (failMatch) result.failReason = failMatch[1];
   if (note.includes('小红书') && note.includes('失败') && result.xhs !== 'success') result.xhs = 'failed';
@@ -1944,12 +1946,14 @@ function renderPlatformStatus(record) {
     if (xiaohongshuStatus === '已发布') parts.push('<span class="tag published">小红书 ✓</span>');
     else if (xiaohongshuStatus === '发布失败') parts.push('<span class="tag failed">小红书 ✗</span>');
     else if (xiaohongshuStatus === '待发布') parts.push('<span class="tag pending">小红书 待发布</span>');
+    else if (xiaohongshuStatus === '发布中') parts.push('<span class="tag" style="background:#fff7ed;color:#c2410c">小红书 发布中</span>');
     else parts.push(`<span class="tag" style="background:rgba(0,0,0,0.05);color:#6b7280">小红书 ${escapeHtml(xiaohongshuStatus || '未设置')}</span>`);
   }
   if (douyinAccount) {
     if (douyinStatus === '已发布') parts.push('<span class="tag published">抖音 ✓</span>');
     else if (douyinStatus === '发布失败') parts.push('<span class="tag failed">抖音 ✗</span>');
     else if (douyinStatus === '待发布') parts.push('<span class="tag pending">抖音 待发布</span>');
+    else if (douyinStatus === '发布中') parts.push('<span class="tag" style="background:#fff7ed;color:#c2410c">抖音 发布中</span>');
     else parts.push(`<span class="tag" style="background:rgba(0,0,0,0.05);color:#6b7280">抖音 ${escapeHtml(douyinStatus || '未设置')}</span>`);
   }
   if (record.musicSongName) {
@@ -2085,10 +2089,14 @@ function renderPublishPreview() {
 
   const xhsDone = record.xiaohongshuStatus === '已发布' || !record.xiaohongshuAccount;
   const dyDone = record.douyinStatus === '已发布' || !record.douyinAccount;
-  const hasPending = !(xhsDone && dyDone);
   const hasFailed = record.xiaohongshuStatus === '发布失败' || record.douyinStatus === '发布失败';
+  const hasProcessing = record.xiaohongshuStatus === '发布中' || record.douyinStatus === '发布中';
+  const canPublishNow = (
+    (record.xiaohongshuAccount && (record.xiaohongshuStatus === '待发布' || record.xiaohongshuStatus === '发布失败'))
+    || (record.douyinAccount && (record.douyinStatus === '待发布' || record.douyinStatus === '发布失败'))
+  );
 
-  const publishBtnHtml = hasPending
+  const publishBtnHtml = canPublishNow
     ? `<div class="preview-block" style="padding-top:4px;">
         <button onclick="publishRecord('${escapeJsSingleQuotedString(record.recordId)}')" style="
           width:100%; padding:10px 0; border:none; border-radius:12px;
@@ -2097,7 +2105,14 @@ function renderPublishPreview() {
         " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">${hasFailed ? '重试发布' : '立即发布'}</button>
         <div style="font-size:11px; color:#aeaeb2; margin-top:6px; text-align:center;">${hasFailed ? '将重新尝试失败的平台' : '最高优先级 · 将取消该记录的定时任务'}</div>
       </div>`
-    : '';
+    : (hasProcessing
+      ? `<div class="preview-block" style="padding-top:4px;">
+          <div style="padding:10px 12px; border-radius:12px; background:#fff7ed; color:#c2410c; font-size:13px; line-height:1.5;">
+            这条记录已经提交到蚁小二，正在等待平台处理，暂时不建议重复触发。
+          </div>
+        </div>`
+      : '')
+    ;
 
   return [
     buildPreviewMetaBlock('当前选中记录', [
@@ -2180,6 +2195,10 @@ function renderSetupPreview() {
         { label: '服务状态', value: latestStatusData?.running ? '运行中' : '已停止' },
       ]),
       buildPreviewListBlock('扫描窗口', getScheduleSummary().map(item => escapeHtml(item)), '还没有任何时间段设置'),
+      buildPreviewListBlock('使用说明', [
+        '点击“停止”后，当前正在发布的记录会收尾，未开始的定时任务会暂停。',
+        '点击“启动”后，系统会立即补扫，并继续处理还没完成的定时任务。'
+      ]),
     ].join('');
   }
 
@@ -2248,6 +2267,7 @@ function getProgressLabel(stage) {
     idle: '空闲', checking: '检查飞书中', preparing: '准备发布中',
     downloading: '下载素材中', 'downloading-cover': '下载封面中',
     publishing: '提交发布中', submitting: '上传发布中',
+    submitted: '已提交待处理', stopping: '停止中',
     completed: '发布完成', 'partial-failed': '部分失败', failed: '处理失败',
   };
   return labels[stage] || '处理中';
@@ -2572,7 +2592,12 @@ async function publishNow() {
   try {
     const result = await fetchApi('/api/publish/now', 'POST', {});
     if (result.success) {
-      addLog('success', `发布完成: 成功 ${result.published}, 失败 ${result.failed}`);
+      if (result.inProgress) {
+        addLog('info', `当前已有任务在执行，已追加 ${result.queued ?? 0} 条到队列`);
+      } else {
+        const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
+        addLog('success', `发布完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+      }
     } else {
       addLog('error', `发布失败: ${result.error}`);
     }
@@ -2590,7 +2615,12 @@ async function publishRecord(recordId) {
   try {
     const result = await fetchApi('/api/publish/record', 'POST', { recordId });
     if (result.success) {
-      addLog('success', `立即发布完成: 成功 ${result.published ?? 0}, 失败 ${result.failed ?? 0}`);
+      if (result.inProgress) {
+        addLog('info', `已有任务正在执行，这条记录已加入队列 (${result.queued ?? 0})`);
+      } else {
+        const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
+        addLog('success', `立即发布完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+      }
     } else {
       addLog('error', `发布失败: ${result.error}`);
     }

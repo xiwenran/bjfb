@@ -194,7 +194,18 @@ class FeishuClient {
 
   async markPlatformStatus(recordId, platform, status) {
     const fieldName = platform === '小红书' ? '小红书发布状态' : '抖音发布状态';
-    await this.updateRecord(recordId, { [fieldName]: status });
+    try {
+      await this.updateRecord(recordId, { [fieldName]: status });
+    } catch (error) {
+      try {
+        await this.syncSingleSelectFieldOptions(fieldName, ['待发布', '发布中', '已发布', '发布失败'], {
+          keepExisting: true,
+        });
+        await this.updateRecord(recordId, { [fieldName]: status });
+      } catch (_) {
+        throw error;
+      }
+    }
   }
 
   async markFailed(recordId, reason) {

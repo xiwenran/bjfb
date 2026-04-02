@@ -723,8 +723,10 @@ async function publishContent(params) {
   };
 
   const data = await publishTaskApi(yixiaoerConfig, payload);
+  const finalized = finalPublishChannel !== 'cloud';
   return {
     success: true,
+    finalized,
     message: `✅ ${(finalPublishChannel === 'local' ? '本机发布' : '云发布')}任务已提交到 ${platformNames.join(', ')}`,
     data,
   };
@@ -937,10 +939,15 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   const teamId = yixiaoerConfig.teamId;
   const accountAliasCache = config.yixiaoerAccountCache || {};
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
+  const allowPendingRepublish = options.allowPendingRepublish === true;
   const pendingStatusGuardMs = Math.max(
     0,
     Number(config.rules?.pendingStatusGuardMs) || DEFAULT_PENDING_STATUS_GUARD_MS
   );
+
+  function isPublishableStatus(status) {
+    return status === '待发布' || (allowPendingRepublish && status === '发布失败');
+  }
 
   function resolveMappedAccountId(platformName, accountName) {
     const platformKey = platformName === '小红书' ? 'xiaohongshu' : 'douyin';
@@ -972,9 +979,11 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   }
 
   // 飞书平台状态是是否允许重发的唯一开关。
-  // 若用户手动把平台状态改回“待发布”，则清除本地防重账本，允许重新提交到蚁小二。
+  // 对“立即发布指定记录”这类人工重发，优先信任人工操作，直接放开本地防重。
   if (record.xiaohongshuStatus === '已发布') {
     markAsObservedPublished(record.recordId, '小红书');
+  } else if (allowPendingRepublish && isPublishableStatus(record.xiaohongshuStatus)) {
+    unmarkAsPublished(record.recordId, '小红书');
   } else if (isPendingStatus(record.xiaohongshuStatus)) {
     const shouldKeep = shouldKeepEntryForPendingStatus(
       getPublishedEntry(record.recordId, '小红书'),
@@ -988,6 +997,8 @@ async function publishRecord(record, config, accountMapping, options = {}) {
 
   if (record.douyinStatus === '已发布') {
     markAsObservedPublished(record.recordId, '抖音');
+  } else if (allowPendingRepublish && isPublishableStatus(record.douyinStatus)) {
+    unmarkAsPublished(record.recordId, '抖音');
   } else if (isPendingStatus(record.douyinStatus)) {
     const shouldKeep = shouldKeepEntryForPendingStatus(
       getPublishedEntry(record.recordId, '抖音'),
@@ -1004,14 +1015,21 @@ async function publishRecord(record, config, accountMapping, options = {}) {
     const xhsPublishChannel = record.xiaohongshuPublishChannel === '比特浏览器' ? '比特浏览器' : '蚁小二';
     const platformStatus = platformName === '小红书' ? record.xiaohongshuStatus : record.douyinStatus;
 
-    if (!isPendingStatus(platformStatus)) {
+    if (!isPublishableStatus(platformStatus)) {
       return null;
     }
 
     // 防重复：检查是否已在该平台发布过
     if (isAlreadyPublished(record.recordId, platformName)) {
       console.log(`  ⏭ 跳过${platformName}: "${record.title}" 已在该平台发布过`);
-      return { platform: platformName, account: accountName, accountId, success: true, skipped: true };
+      return {
+        platform: platformName,
+        account: accountName,
+        accountId,
+        success: true,
+        skipped: true,
+        finalized: true,
+      };
     }
 
     if (platformName === '小红书' && xhsPublishChannel === '比特浏览器') {
@@ -1061,6 +1079,7 @@ async function publishRecord(record, config, accountMapping, options = {}) {
           accountId: browserId,
           success: result.success,
           error: result.success ? null : result.message,
+          finalized: true,
           publishMode: '比特浏览器发布',
           taskMeta: result.taskMeta || null,
           titleMeta,
@@ -1143,6 +1162,7 @@ async function publishRecord(record, config, accountMapping, options = {}) {
 
       return { platform: platformName, account: accountName, accountId,
         success: result.success, error: result.success ? null : result.message,
+        finalized: result.finalized !== false,
         publishMode: yixiaoerConfig.clientId ? '本机发布' : '云发布',
         taskMeta: result.success ? extractTaskMeta(result.data) : null,
         musicMeta,

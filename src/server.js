@@ -259,8 +259,8 @@ function decorateRecord(record) {
 }
 
 function isPendingRecord(record) {
-  const xhsPending = !!record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布';
-  const dyPending = !!record.douyinAccount && record.douyinStatus === '待发布';
+  const xhsPending = !!record.xiaohongshuAccount && record.xiaohongshuStatus !== '已发布';
+  const dyPending = !!record.douyinAccount && record.douyinStatus !== '已发布';
   return xhsPending || dyPending;
 }
 
@@ -379,12 +379,17 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/scheduler/start' && req.method === 'POST') {
     scheduler.start();
-    return sendJson(res, { success: true, message: '定时服务已启动' });
+    return sendJson(res, { success: true, message: '定时服务已启动：系统会立即补扫，并继续处理还没完成的定时任务' });
   }
 
   if (pathname === '/api/scheduler/stop' && req.method === 'POST') {
-    scheduler.stop();
-    return sendJson(res, { success: true, message: '定时服务已停止' });
+    const stopState = scheduler.stop();
+    return sendJson(res, {
+      success: true,
+      message: stopState?.draining
+        ? '定时服务已停止：当前正在发布的记录会收尾，未开始的定时任务已暂停'
+        : '定时服务已停止：未开始的定时任务已暂停',
+    });
   }
 
   if (pathname === '/api/publish/scheduled-tasks' && req.method === 'GET') {

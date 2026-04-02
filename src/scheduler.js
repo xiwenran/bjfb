@@ -22,6 +22,8 @@ class Scheduler {
     this.maxLogs = 200;
     this.onLog = null;
     this.publishing = false;
+    this.activePublishReason = null;
+    this.stopRequested = false;
     this.pendingPublishRecords = new Map();
     this.processingRecordIds = new Set();
     this.recentlyPublishedRecords = new Map();
@@ -35,6 +37,10 @@ class Scheduler {
       detail: '等待任务',
       updatedAt: null,
     };
+  }
+
+  shouldAbortQueuedWork(reason) {
+    return reason !== 'manual' && this.stopRequested;
   }
 
   log(level, message) {
@@ -144,11 +150,20 @@ class Scheduler {
     return Boolean(xhsPending || dyPending);
   }
 
-  shouldUseYixiaoer(record) {
+  recordHasPublishablePlatform(record, options = {}) {
+    if (this.recordHasPendingPlatform(record)) return true;
+    if (options.allowPendingRepublish !== true) return false;
+    const xhsRetryable = record.xiaohongshuAccount && record.xiaohongshuStatus === '发布失败';
+    const dyRetryable = record.douyinAccount && record.douyinStatus === '发布失败';
+    return Boolean(xhsRetryable || dyRetryable);
+  }
+
+  shouldUseYixiaoer(record, options = {}) {
     const xhsNeedsYixiaoer = record.xiaohongshuAccount
-      && this.isPlatformPending(record.xiaohongshuStatus)
+      && (this.isPlatformPending(record.xiaohongshuStatus) || (options.allowPendingRepublish === true && record.xiaohongshuStatus === '发布失败'))
       && record.xiaohongshuPublishChannel !== '比特浏览器';
-    const dyNeedsYixiaoer = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
+    const dyNeedsYixiaoer = record.douyinAccount
+      && (this.isPlatformPending(record.douyinStatus) || (options.allowPendingRepublish === true && record.douyinStatus === '发布失败'));
     return Boolean(xhsNeedsYixiaoer || dyNeedsYixiaoer);
   }
 
@@ -214,8 +229,8 @@ class Scheduler {
     }
   }
 
-  requiresYixiaoerLogin(records) {
-    return records.some(record => this.shouldUseYixiaoer(record));
+  requiresYixiaoerLogin(records, options = {}) {
+    return records.some(record => this.shouldUseYixiaoer(record, options));
   }
 
   ensureFeishuConfigured() {
@@ -263,7 +278,7 @@ class Scheduler {
     let queued = 0;
     for (const record of records) {
       if (!record || !record.recordId) continue;
-      if (!this.recordHasPendingPlatform(record)) continue;
+      if (!this.recordHasPublishablePlatform(record, options)) continue;
       if (this.processingRecordIds.has(record.recordId)) continue;
       if (!allowRecentPublished && this.isRecordRecentlyPublished(record.recordId)) continue;
       const hadRecord = this.pendingPublishRecords.has(record.recordId);
@@ -297,7 +312,7 @@ class Scheduler {
     }
   }
 
-  async processSingleRecord(record) {
+  async processSingleRecord(record, options = {}) {
     this.setProgress({
       active: true,
       stage: 'preparing',
@@ -356,18 +371,41 @@ class Scheduler {
         detail: `正在按已配置渠道提交《${record.title}》`,
       });
       const results = await publisher.publishRecord(record, publishConfig, this.config.accountMapping, {
+        allowPendingRepublish: options.allowPendingRepublish === true,
         onProgress: (progress) => this.setProgress({ active: true, ...progress }),
       });
 
       let allSuccess = true;
+      let hasSubmitted = false;
       let noteChanged = false;
       let nextNote = record.note || '';
 
       for (const r of results) {
         if (r.success) {
-          await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
-          const successEntry = `${r.platform}发布成功(${r.account})`;
-          nextNote = this.mergeNoteEntry(nextNote, successEntry);
+          const finalized = r.finalized !== false;
+          if (finalized) {
+            await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
+            const successEntry = `${r.platform}发布成功(${r.account})`;
+            nextNote = this.mergeNoteEntry(nextNote, successEntry);
+            const latestRecord = await this.findLatestPublishRecord(r, record.title);
+            const publishRecordEntry = this.formatPublishRecordEntry(latestRecord, r.platform);
+            nextNote = this.mergeNoteEntry(nextNote, publishRecordEntry);
+            if (r.musicMeta?.fallbackUsed) {
+              this.log('info', `  🎵 ${r.platform}(${r.account}) ${r.musicMeta.message}`);
+            }
+            if (r.titleMeta?.truncated) {
+              this.log('info', `  ✂️ ${r.platform}(${r.account}) 标题超限，已自动截断为 ${r.titleMeta.limit} 字`);
+            }
+            this.log('success', `  ✅ ${r.platform}(${r.account}) ${r.skipped ? '已跳过(之前已发布)' : '发布成功'}`);
+          } else {
+            allSuccess = false;
+            hasSubmitted = true;
+            await this.feishu.markPlatformStatus(record.recordId, r.platform, '发布中');
+            const submittedEntry = `${r.platform}已提交(${r.account})`;
+            nextNote = this.mergeNoteEntry(nextNote, submittedEntry);
+            this.log('info', `  ⏳ ${r.platform}(${r.account}) 已提交到蚁小二，等待平台完成`);
+          }
+
           if (r.titleMeta?.truncated) {
             nextNote = this.mergeNoteEntry(nextNote, `${r.platform}标题已自动截断为${r.titleMeta.limit}字`);
           }
@@ -376,17 +414,7 @@ class Scheduler {
           }
           const taskEntry = this.formatTaskEntry(r);
           nextNote = this.mergeNoteEntry(nextNote, taskEntry);
-          const latestRecord = await this.findLatestPublishRecord(r, record.title);
-          const publishRecordEntry = this.formatPublishRecordEntry(latestRecord, r.platform);
-          nextNote = this.mergeNoteEntry(nextNote, publishRecordEntry);
           noteChanged = noteChanged || nextNote !== (record.note || '');
-          if (r.musicMeta?.fallbackUsed) {
-            this.log('info', `  🎵 ${r.platform}(${r.account}) ${r.musicMeta.message}`);
-          }
-          if (r.titleMeta?.truncated) {
-            this.log('info', `  ✂️ ${r.platform}(${r.account}) 标题超限，已自动截断为 ${r.titleMeta.limit} 字`);
-          }
-          this.log('success', `  ✅ ${r.platform}(${r.account}) ${r.skipped ? '已跳过(之前已发布)' : '发布成功'}`);
         } else {
           allSuccess = false;
           await this.feishu.markPlatformStatus(record.recordId, r.platform, '发布失败');
@@ -416,6 +444,17 @@ class Scheduler {
         return { published: 1, failed: 0 };
       }
 
+      if (hasSubmitted && !results.some(item => !item.success)) {
+        this.setProgress({
+          active: true,
+          stage: 'submitted',
+          title: record.title,
+          recordId: record.recordId,
+          detail: `《${record.title}》已提交到蚁小二，等待平台完成`,
+        });
+        return { published: 0, failed: 0, submitted: 1 };
+      }
+
       this.setProgress({
         active: true,
         stage: 'partial-failed',
@@ -423,7 +462,7 @@ class Scheduler {
         recordId: record.recordId,
         detail: `《${record.title}》发布完成，但存在失败平台`,
       });
-      return { published: 0, failed: 1 };
+      return { published: 0, failed: 1, ...(hasSubmitted ? { submitted: 1 } : {}) };
     } catch (e) {
       this.setProgress({
         active: true,
@@ -453,6 +492,8 @@ class Scheduler {
     }
 
     this.publishing = true;
+    this.activePublishReason = reason;
+    this.stopRequested = false;
     this.setProgress({
       active: true,
       stage: reason === 'manual' ? 'manual-checking' : 'checking',
@@ -481,13 +522,20 @@ class Scheduler {
 
       let publishedCount = 0;
       let failedCount = 0;
+      let submittedCount = 0;
 
       while (this.pendingPublishRecords.size > 0) {
-        const toPublish = this.takeQueuedPublishRecords().filter(record => this.recordHasPendingPlatform(record));
+        if (this.shouldAbortQueuedWork(reason)) {
+          this.pendingPublishRecords.clear();
+          this.log('info', '🛑 服务已停止，剩余排队任务不再继续处理');
+          break;
+        }
+
+        const toPublish = this.takeQueuedPublishRecords().filter(record => this.recordHasPublishablePlatform(record, options));
         if (toPublish.length === 0) continue;
 
         this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
-        if (this.requiresYixiaoerLogin(toPublish)) {
+        if (this.requiresYixiaoerLogin(toPublish, options)) {
           await publisher.ensureLogin(this.config.yixiaoer);
           await this.syncAccountMappingsForRecords(toPublish);
         }
@@ -496,9 +544,12 @@ class Scheduler {
           toPublish,
           this.getPublishConcurrency(),
           async (record) => {
+            if (this.shouldAbortQueuedWork(reason)) {
+              return { published: 0, failed: 0 };
+            }
             this.processingRecordIds.add(record.recordId);
             try {
-              return await this.processSingleRecord(record);
+              return await this.processSingleRecord(record, options);
             } finally {
               this.processingRecordIds.delete(record.recordId);
             }
@@ -508,6 +559,7 @@ class Scheduler {
         for (const item of batchResults) {
           publishedCount += item?.published || 0;
           failedCount += item?.failed || 0;
+          submittedCount += item?.submitted || 0;
         }
       }
 
@@ -518,10 +570,21 @@ class Scheduler {
         recordId: '',
         platform: '',
         account: '',
-        detail: `本轮发布完成: 成功 ${publishedCount}, 失败 ${failedCount}`,
+        detail: submittedCount > 0
+          ? `本轮发布完成: 成功 ${publishedCount}, 提交中 ${submittedCount}, 失败 ${failedCount}`
+          : `本轮发布完成: 成功 ${publishedCount}, 失败 ${failedCount}`,
       });
-      this.log('info', `📊 本轮完成: 成功 ${publishedCount}, 失败 ${failedCount}`);
-      return { published: publishedCount, failed: failedCount };
+      this.log(
+        'info',
+        submittedCount > 0
+          ? `📊 本轮完成: 成功 ${publishedCount}, 提交中 ${submittedCount}, 失败 ${failedCount}`
+          : `📊 本轮完成: 成功 ${publishedCount}, 失败 ${failedCount}`
+      );
+      return {
+        published: publishedCount,
+        failed: failedCount,
+        ...(submittedCount > 0 ? { submitted: submittedCount } : {}),
+      };
     } catch (e) {
       this.setProgress({
         active: false,
@@ -536,6 +599,8 @@ class Scheduler {
       return { published: 0, failed: 0, error: e.message };
     } finally {
       this.publishing = false;
+      this.activePublishReason = null;
+      this.stopRequested = false;
     }
   }
 
@@ -688,7 +753,9 @@ class Scheduler {
     const parsed = records.map(r => this.feishu.parseRecord(r));
     const target = parsed.find(r => r.recordId === recordId);
     if (!target) throw new Error('找不到该记录或已发布');
-    if (!this.recordHasPendingPlatform(target)) throw new Error('该记录没有待发布的平台');
+    if (!this.recordHasPendingPlatform(target) && target.xiaohongshuStatus !== '发布失败' && target.douyinStatus !== '发布失败') {
+      throw new Error('该记录没有待发布的平台');
+    }
     for (const [key, task] of this.scheduledTasks.entries()) {
       if (task.recordId === recordId) {
         clearTimeout(task.timer);
@@ -696,13 +763,22 @@ class Scheduler {
         this.log('info', `已取消「${target.title}」的定时任务，改为立即发布`);
       }
     }
-    return this.publishRecords([target], 'manual', { allowRecentPublished: true });
+    return this.publishRecords([target], 'manual', {
+      allowRecentPublished: true,
+      allowPendingRepublish: true,
+    });
   }
 
   start() {
     if (this.running) return;
     this.running = true;
+    this.stopRequested = false;
     this.log('info', '🚀 定时发布服务已启动');
+    Promise.resolve()
+      .then(() => this.checkAndPublish())
+      .catch((error) => {
+        this.log('error', `❌ 启动后首次扫描失败: ${error.message}`);
+      });
     this.scheduleNext();
   }
 
@@ -724,7 +800,23 @@ class Scheduler {
       this.scanTimer = null;
     }
     this.clearScheduledTasks();
+    if (this.publishing && this.activePublishReason !== 'manual') {
+      this.stopRequested = true;
+      this.pendingPublishRecords.clear();
+      this.setProgress({
+        active: true,
+        stage: 'stopping',
+        title: '',
+        recordId: '',
+        platform: '',
+        account: '',
+        detail: '已停止接收新任务，等待当前执行中的记录收尾',
+      });
+      this.log('info', '⏹ 已停止接收新的定时任务，当前执行中的记录会收尾后结束');
+      return { draining: true };
+    }
     this.log('info', '⏹ 定时发布服务已停止');
+    return { draining: false };
   }
 
   updateSchedule(schedule) {
