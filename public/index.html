@@ -1313,7 +1313,7 @@
           <button class="btn btn-sm btn-secondary" onclick="refreshRecords(true)">刷新</button>
           <button class="btn btn-sm btn-success" id="btnStart" onclick="startScheduler()">启动</button>
           <button class="btn btn-sm btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止</button>
-          <button class="btn btn-sm btn-primary" onclick="publishNow()">立即发布</button>
+          <button class="btn btn-sm btn-primary" onclick="publishNow()">立即补发</button>
         </div>
       </div>
     </header>
@@ -1466,7 +1466,7 @@
                 <div class="config-textarea" id="feishuConfigNotes" style="pointer-events:none; background:#f8f8fb;" tabindex="-1">1. 先在飞书开放平台创建应用并获取 App ID / App Secret。
 2. 在多维表格或对应文档里，把这个应用添加进去，确保它有读取/编辑表格权限。
 3. 把 App Token、Table ID 一并填到这里后保存。
-4. 保存后可点"刷新数据"或"立即发布"验证接入是否生效。</div>
+4. 保存后可点"刷新数据"或"立即补发"验证接入是否生效。</div>
               </div>
             </div>
             <div class="settings-actions">
@@ -1644,7 +1644,7 @@ const SECTION_META = {
   publish: {
     eyebrow: '发布',
     title: '发布',
-    description: '按账号查看待发内容，点击展开后选中记录，右侧可一键立即发布或查看发布详情。',
+    description: '按账号查看待发内容，点击展开后选中记录，右侧可一键发布单条或查看发布详情。',
     previewEyebrow: '记录详情',
     previewTitle: '发布记录详情',
     previewDescription: '点击左侧任意记录，查看目标账号、发布时间和平台状态，并可立即触发发布。'
@@ -2587,8 +2587,8 @@ async function stopScheduler() {
 }
 
 async function publishNow() {
-  addLog('info', '手动触发发布检查...');
-  renderProgress({ active: true, stage: 'checking', title: '', detail: '正在手动触发发布检查', updatedAt: new Date().toLocaleString('zh-CN') });
+  addLog('info', '正在补发已到时间的笔记...');
+  renderProgress({ active: true, stage: 'checking', title: '', detail: '正在检查并补发已到时间的笔记', updatedAt: new Date().toLocaleString('zh-CN') });
   try {
     const result = await fetchApi('/api/publish/now', 'POST', {});
     if (result.success) {
@@ -2596,7 +2596,7 @@ async function publishNow() {
         addLog('info', `当前已有任务在执行，已追加 ${result.queued ?? 0} 条到队列`);
       } else {
         const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
-        addLog('success', `发布完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+        addLog('success', `已到时间笔记补发完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
       }
     } else {
       addLog('error', `发布失败: ${result.error}`);
