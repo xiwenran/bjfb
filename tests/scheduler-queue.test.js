@@ -8,6 +8,7 @@ process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
 
 const Scheduler = require('../src/scheduler.js');
+const publisher = require('../src/publisher.js');
 
 function createScheduler() {
   const scheduler = new Scheduler({
@@ -86,4 +87,64 @@ test('publishRecords does not enqueue a record that is already in flight', async
     published: 1,
     failed: 0,
   });
+});
+
+test('publishRecords should not reprocess a record immediately after a successful publish', async () => {
+  const scheduler = createScheduler();
+  const originalPublishRecord = publisher.publishRecord;
+  const originalGetPublishRecords = publisher.getPublishRecords;
+  const originalEnsureLogin = publisher.ensureLogin;
+
+  let publishCalls = 0;
+
+  scheduler.feishu = {
+    downloadAllAttachments: async () => [],
+    markPlatformStatus: async () => {},
+    setNote: async () => {},
+    markPublished: async () => {},
+  };
+  scheduler.log = () => {};
+  scheduler.setProgress = () => {};
+  scheduler.findLatestPublishRecord = async () => null;
+
+  const record = {
+    recordId: 'record-stale',
+    title: 'Stale snapshot',
+    attachments: [],
+    videoCover: [],
+    contentType: '图文',
+    note: '',
+    xiaohongshuAccount: '沐沐老师',
+    xiaohongshuStatus: '待发布',
+    douyinAccount: '',
+    douyinStatus: '',
+  };
+
+  publisher.publishRecord = async () => {
+    publishCalls += 1;
+    return [{
+      success: true,
+      skipped: false,
+      platform: '小红书',
+      account: '沐沐老师',
+      accountId: 'xhs-1',
+      publishMode: '云发布',
+      taskMeta: null,
+      titleMeta: null,
+      musicMeta: null,
+    }];
+  };
+  publisher.getPublishRecords = async () => [];
+  publisher.ensureLogin = async () => {};
+
+  try {
+    await scheduler.publishRecords([{ ...record }], 'scheduled');
+    await scheduler.publishRecords([{ ...record }], 'scheduled');
+
+    assert.equal(publishCalls, 1);
+  } finally {
+    publisher.publishRecord = originalPublishRecord;
+    publisher.getPublishRecords = originalGetPublishRecords;
+    publisher.ensureLogin = originalEnsureLogin;
+  }
 });

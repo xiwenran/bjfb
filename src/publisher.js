@@ -4,7 +4,14 @@ const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
 const { loadConfig, readLedger, saveLedger } = require('./config-store.js');
 const { mapWithConcurrency } = require('./async-utils.js');
+const {
+  normalizePublishedEntry,
+  createSubmittedEntry,
+  markEntryObservedPublished,
+  shouldKeepEntryForPendingStatus,
+} = require('./publish-guard.js');
 const DEFAULT_API_BASE_URL = 'https://www.yixiaoer.cn/api';
+const DEFAULT_PENDING_STATUS_GUARD_MS = 2 * 60 * 1000;
 const PLATFORM_RULES = {
   DouYin: { code: 'DouYin', name: '抖音', supportedTypes: ['video', 'imageText', 'article'] },
   XiaoHongShu: { code: 'XiaoHongShu', name: '小红书', supportedTypes: ['video', 'imageText'] },
@@ -724,13 +731,14 @@ async function publishContent(params) {
 }
 
 // 已发布记录缓存（防止同一内容重复发到同一平台）
-const publishedCache = new Map(); // key: "recordId:platform" → true
+const publishedCache = new Map(); // key: "recordId:platform" → ledger entry
 
 function loadPublishedLedger() {
   try {
     const data = readLedger();
     for (const key of Object.keys(data || {})) {
-      if (data[key]) publishedCache.set(key, true);
+      const entry = normalizePublishedEntry(data[key]);
+      if (entry) publishedCache.set(key, entry);
     }
   } catch (e) {
     console.warn(`⚠️ 读取发布账本失败: ${e.message}`);
@@ -750,12 +758,23 @@ function getPublishKey(recordId, platform) {
   return `${recordId}:${platform}`;
 }
 
+function getPublishedEntry(recordId, platform) {
+  return publishedCache.get(getPublishKey(recordId, platform)) || null;
+}
+
 function isAlreadyPublished(recordId, platform) {
   return publishedCache.has(getPublishKey(recordId, platform));
 }
 
-function markAsPublished(recordId, platform) {
-  publishedCache.set(getPublishKey(recordId, platform), true);
+function markAsPublished(recordId, platform, now = Date.now()) {
+  publishedCache.set(getPublishKey(recordId, platform), createSubmittedEntry(now));
+  savePublishedLedger();
+}
+
+function markAsObservedPublished(recordId, platform, now = Date.now()) {
+  const key = getPublishKey(recordId, platform);
+  const current = publishedCache.get(key);
+  publishedCache.set(key, markEntryObservedPublished(current, now));
   savePublishedLedger();
 }
 
@@ -918,6 +937,10 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   const teamId = yixiaoerConfig.teamId;
   const accountAliasCache = config.yixiaoerAccountCache || {};
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
+  const pendingStatusGuardMs = Math.max(
+    0,
+    Number(config.rules?.pendingStatusGuardMs) || DEFAULT_PENDING_STATUS_GUARD_MS
+  );
 
   function resolveMappedAccountId(platformName, accountName) {
     const platformKey = platformName === '小红书' ? 'xiaohongshu' : 'douyin';
@@ -951,15 +974,29 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   // 飞书平台状态是是否允许重发的唯一开关。
   // 若用户手动把平台状态改回“待发布”，则清除本地防重账本，允许重新提交到蚁小二。
   if (record.xiaohongshuStatus === '已发布') {
-    markAsPublished(record.recordId, '小红书');
+    markAsObservedPublished(record.recordId, '小红书');
   } else if (isPendingStatus(record.xiaohongshuStatus)) {
-    unmarkAsPublished(record.recordId, '小红书');
+    const shouldKeep = shouldKeepEntryForPendingStatus(
+      getPublishedEntry(record.recordId, '小红书'),
+      Date.now(),
+      pendingStatusGuardMs
+    );
+    if (!shouldKeep) {
+      unmarkAsPublished(record.recordId, '小红书');
+    }
   }
 
   if (record.douyinStatus === '已发布') {
-    markAsPublished(record.recordId, '抖音');
+    markAsObservedPublished(record.recordId, '抖音');
   } else if (isPendingStatus(record.douyinStatus)) {
-    unmarkAsPublished(record.recordId, '抖音');
+    const shouldKeep = shouldKeepEntryForPendingStatus(
+      getPublishedEntry(record.recordId, '抖音'),
+      Date.now(),
+      pendingStatusGuardMs
+    );
+    if (!shouldKeep) {
+      unmarkAsPublished(record.recordId, '抖音');
+    }
   }
 
   // 发布到单个平台的通用函数

@@ -8,6 +8,7 @@ const {
   autoMapAccountMappings,
 } = require('./account-mapping.js');
 const { getRecordTempDir, isFeishuConfigured, saveConfig } = require('./config-store.js');
+const DEFAULT_RECENT_RECORD_GUARD_MS = 2 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
 class Scheduler {
@@ -23,6 +24,7 @@ class Scheduler {
     this.publishing = false;
     this.pendingPublishRecords = new Map();
     this.processingRecordIds = new Set();
+    this.recentlyPublishedRecords = new Map();
     this.currentProgress = {
       active: false,
       stage: 'idle',
@@ -232,12 +234,38 @@ class Scheduler {
     return Math.max(1, Number(this.config.rules?.publishRecordConcurrency) || 2);
   }
 
-  enqueuePublishRecords(records = []) {
+  getRecentRecordGuardMs() {
+    return Math.max(0, Number(this.config.rules?.recentPublishedRecordGuardMs) || DEFAULT_RECENT_RECORD_GUARD_MS);
+  }
+
+  pruneRecentlyPublishedRecords(now = Date.now()) {
+    const guardMs = this.getRecentRecordGuardMs();
+    for (const [recordId, timestamp] of this.recentlyPublishedRecords.entries()) {
+      if (now - timestamp >= guardMs) {
+        this.recentlyPublishedRecords.delete(recordId);
+      }
+    }
+  }
+
+  markRecordRecentlyPublished(recordId, now = Date.now()) {
+    if (!recordId) return;
+    this.recentlyPublishedRecords.set(recordId, now);
+  }
+
+  isRecordRecentlyPublished(recordId, now = Date.now()) {
+    this.pruneRecentlyPublishedRecords(now);
+    if (!recordId) return false;
+    return this.recentlyPublishedRecords.has(recordId);
+  }
+
+  enqueuePublishRecords(records = [], options = {}) {
+    const allowRecentPublished = options.allowRecentPublished === true;
     let queued = 0;
     for (const record of records) {
       if (!record || !record.recordId) continue;
       if (!this.recordHasPendingPlatform(record)) continue;
       if (this.processingRecordIds.has(record.recordId)) continue;
+      if (!allowRecentPublished && this.isRecordRecentlyPublished(record.recordId)) continue;
       const hadRecord = this.pendingPublishRecords.has(record.recordId);
       this.pendingPublishRecords.set(record.recordId, record);
       if (!hadRecord) queued += 1;
@@ -376,6 +404,7 @@ class Scheduler {
 
       if (allSuccess && results.length > 0) {
         await this.feishu.markPublished(record.recordId);
+        this.markRecordRecentlyPublished(record.recordId);
         this.setProgress({
           active: true,
           stage: 'completed',
@@ -412,9 +441,9 @@ class Scheduler {
     }
   }
 
-  async publishRecords(records, reason = 'auto') {
+  async publishRecords(records, reason = 'auto', options = {}) {
     this.ensureFeishuConfigured();
-    const queued = this.enqueuePublishRecords(records);
+    const queued = this.enqueuePublishRecords(records, options);
 
     if (this.publishing) {
       if (queued > 0) {
@@ -667,7 +696,7 @@ class Scheduler {
         this.log('info', `已取消「${target.title}」的定时任务，改为立即发布`);
       }
     }
-    return this.publishRecords([target], 'manual');
+    return this.publishRecords([target], 'manual', { allowRecentPublished: true });
   }
 
   start() {
