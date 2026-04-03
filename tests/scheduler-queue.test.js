@@ -149,14 +149,63 @@ test('publishRecords should not reprocess a record immediately after a successfu
   }
 });
 
-test('publishSpecificRecord should forward manual republish intent to publisher', async () => {
+test('manualPublishNow should only publish records whose platform status is exactly 待发布', async () => {
+  const scheduler = createScheduler();
+  const processed = [];
+
+  scheduler.recordHasPendingPlatform = Scheduler.prototype.recordHasPendingPlatform.bind(scheduler);
+  scheduler.feishu = {
+    getUnpublishedRecords: async () => ([
+      {
+        recordId: 'record-failed',
+        title: 'Failed only',
+        attachments: [],
+        videoCover: [],
+        contentType: '图文',
+        note: '',
+        publishTime: new Date(Date.now() - 60 * 1000),
+        xiaohongshuAccount: '沐沐老师',
+        xiaohongshuStatus: '发布失败',
+        douyinAccount: '',
+        douyinStatus: '',
+      },
+      {
+        recordId: 'record-pending',
+        title: 'Pending only',
+        attachments: [],
+        videoCover: [],
+        contentType: '图文',
+        note: '',
+        publishTime: new Date(Date.now() - 60 * 1000),
+        xiaohongshuAccount: '沐沐老师',
+        xiaohongshuStatus: '待发布',
+        douyinAccount: '',
+        douyinStatus: '',
+      },
+    ]),
+    parseRecord: record => record,
+  };
+  scheduler.processSingleRecord = async (record) => {
+    processed.push(record.recordId);
+    return { published: 1, failed: 0 };
+  };
+
+  const result = await scheduler.manualPublishNow();
+
+  assert.deepEqual(processed, ['record-pending']);
+  assert.deepEqual(result, {
+    published: 1,
+    failed: 0,
+  });
+});
+
+test('publishSpecificRecord should reject a record whose platforms are not 待发布', async () => {
   const scheduler = createScheduler();
   const originalPublishRecord = publisher.publishRecord;
   const originalGetPublishRecords = publisher.getPublishRecords;
   const originalEnsureLogin = publisher.ensureLogin;
 
-  let receivedOptions = null;
-
+  scheduler.recordHasPendingPlatform = Scheduler.prototype.recordHasPendingPlatform.bind(scheduler);
   scheduler.feishu = {
     getUnpublishedRecords: async () => [{
       recordId: 'record-retry',
@@ -166,7 +215,7 @@ test('publishSpecificRecord should forward manual republish intent to publisher'
       contentType: '图文',
       note: '',
       xiaohongshuAccount: '沐沐老师',
-      xiaohongshuStatus: '待发布',
+      xiaohongshuStatus: '发布失败',
       douyinAccount: '',
       douyinStatus: '',
     }],
@@ -178,27 +227,20 @@ test('publishSpecificRecord should forward manual republish intent to publisher'
   };
   scheduler.findLatestPublishRecord = async () => null;
 
-  publisher.publishRecord = async (_record, _config, _mapping, options) => {
-    receivedOptions = options;
-    return [{
-      success: true,
-      finalized: true,
-      skipped: false,
-      platform: '小红书',
-      account: '沐沐老师',
-      accountId: 'xhs-1',
-      publishMode: '云发布',
-      taskMeta: null,
-      titleMeta: null,
-      musicMeta: null,
-    }];
+  let publishCalled = false;
+  publisher.publishRecord = async () => {
+    publishCalled = true;
+    return [];
   };
   publisher.getPublishRecords = async () => [];
   publisher.ensureLogin = async () => {};
 
   try {
-    await scheduler.publishSpecificRecord('record-retry');
-    assert.equal(receivedOptions?.allowPendingRepublish, true);
+    await assert.rejects(
+      scheduler.publishSpecificRecord('record-retry'),
+      /该记录没有待发布的平台/
+    );
+    assert.equal(publishCalled, false);
   } finally {
     publisher.publishRecord = originalPublishRecord;
     publisher.getPublishRecords = originalGetPublishRecords;

@@ -150,20 +150,15 @@ class Scheduler {
     return Boolean(xhsPending || dyPending);
   }
 
-  recordHasPublishablePlatform(record, options = {}) {
-    if (this.recordHasPendingPlatform(record)) return true;
-    if (options.allowPendingRepublish !== true) return false;
-    const xhsRetryable = record.xiaohongshuAccount && record.xiaohongshuStatus === '发布失败';
-    const dyRetryable = record.douyinAccount && record.douyinStatus === '发布失败';
-    return Boolean(xhsRetryable || dyRetryable);
+  recordHasPublishablePlatform(record) {
+    return this.recordHasPendingPlatform(record);
   }
 
-  shouldUseYixiaoer(record, options = {}) {
+  shouldUseYixiaoer(record) {
     const xhsNeedsYixiaoer = record.xiaohongshuAccount
-      && (this.isPlatformPending(record.xiaohongshuStatus) || (options.allowPendingRepublish === true && record.xiaohongshuStatus === '发布失败'))
+      && this.isPlatformPending(record.xiaohongshuStatus)
       && record.xiaohongshuPublishChannel !== '比特浏览器';
-    const dyNeedsYixiaoer = record.douyinAccount
-      && (this.isPlatformPending(record.douyinStatus) || (options.allowPendingRepublish === true && record.douyinStatus === '发布失败'));
+    const dyNeedsYixiaoer = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
     return Boolean(xhsNeedsYixiaoer || dyNeedsYixiaoer);
   }
 
@@ -229,8 +224,8 @@ class Scheduler {
     }
   }
 
-  requiresYixiaoerLogin(records, options = {}) {
-    return records.some(record => this.shouldUseYixiaoer(record, options));
+  requiresYixiaoerLogin(records) {
+    return records.some(record => this.shouldUseYixiaoer(record));
   }
 
   ensureFeishuConfigured() {
@@ -278,7 +273,7 @@ class Scheduler {
     let queued = 0;
     for (const record of records) {
       if (!record || !record.recordId) continue;
-      if (!this.recordHasPublishablePlatform(record, options)) continue;
+      if (!this.recordHasPublishablePlatform(record)) continue;
       if (this.processingRecordIds.has(record.recordId)) continue;
       if (!allowRecentPublished && this.isRecordRecentlyPublished(record.recordId)) continue;
       const hadRecord = this.pendingPublishRecords.has(record.recordId);
@@ -371,7 +366,6 @@ class Scheduler {
         detail: `正在按已配置渠道提交《${record.title}》`,
       });
       const results = await publisher.publishRecord(record, publishConfig, this.config.accountMapping, {
-        allowPendingRepublish: options.allowPendingRepublish === true,
         onProgress: (progress) => this.setProgress({ active: true, ...progress }),
       });
 
@@ -531,11 +525,11 @@ class Scheduler {
           break;
         }
 
-        const toPublish = this.takeQueuedPublishRecords().filter(record => this.recordHasPublishablePlatform(record, options));
+        const toPublish = this.takeQueuedPublishRecords().filter(record => this.recordHasPublishablePlatform(record));
         if (toPublish.length === 0) continue;
 
         this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
-        if (this.requiresYixiaoerLogin(toPublish, options)) {
+        if (this.requiresYixiaoerLogin(toPublish)) {
           await publisher.ensureLogin(this.config.yixiaoer);
           await this.syncAccountMappingsForRecords(toPublish);
         }
@@ -753,9 +747,7 @@ class Scheduler {
     const parsed = records.map(r => this.feishu.parseRecord(r));
     const target = parsed.find(r => r.recordId === recordId);
     if (!target) throw new Error('找不到该记录或已发布');
-    if (!this.recordHasPendingPlatform(target) && target.xiaohongshuStatus !== '发布失败' && target.douyinStatus !== '发布失败') {
-      throw new Error('该记录没有待发布的平台');
-    }
+    if (!this.recordHasPendingPlatform(target)) throw new Error('该记录没有待发布的平台');
     for (const [key, task] of this.scheduledTasks.entries()) {
       if (task.recordId === recordId) {
         clearTimeout(task.timer);
@@ -763,10 +755,7 @@ class Scheduler {
         this.log('info', `已取消「${target.title}」的定时任务，改为立即发布`);
       }
     }
-    return this.publishRecords([target], 'manual', {
-      allowRecentPublished: true,
-      allowPendingRepublish: true,
-    });
+    return this.publishRecords([target], 'manual', { allowRecentPublished: true });
   }
 
   start() {

@@ -2092,18 +2092,18 @@ function renderPublishPreview() {
   const hasFailed = record.xiaohongshuStatus === '发布失败' || record.douyinStatus === '发布失败';
   const hasProcessing = record.xiaohongshuStatus === '发布中' || record.douyinStatus === '发布中';
   const canPublishNow = (
-    (record.xiaohongshuAccount && (record.xiaohongshuStatus === '待发布' || record.xiaohongshuStatus === '发布失败'))
-    || (record.douyinAccount && (record.douyinStatus === '待发布' || record.douyinStatus === '发布失败'))
+    (record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布')
+    || (record.douyinAccount && record.douyinStatus === '待发布')
   );
 
   const publishBtnHtml = canPublishNow
     ? `<div class="preview-block" style="padding-top:4px;">
         <button onclick="publishRecord('${escapeJsSingleQuotedString(record.recordId)}')" style="
           width:100%; padding:10px 0; border:none; border-radius:12px;
-          background:${hasFailed ? '#d70015' : 'var(--accent)'}; color:#fff; font-size:14px; font-weight:600;
+          background:var(--accent); color:#fff; font-size:14px; font-weight:600;
           cursor:pointer; transition: opacity .15s;
-        " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">${hasFailed ? '重试发布' : '立即发布'}</button>
-        <div style="font-size:11px; color:#aeaeb2; margin-top:6px; text-align:center;">${hasFailed ? '将重新尝试失败的平台' : '最高优先级 · 将取消该记录的定时任务'}</div>
+        " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">立即发布</button>
+        <div style="font-size:11px; color:#aeaeb2; margin-top:6px; text-align:center;">只会发布状态为待发布的平台 · 会取消该记录的定时任务</div>
       </div>`
     : (hasProcessing
       ? `<div class="preview-block" style="padding-top:4px;">
@@ -2111,7 +2111,14 @@ function renderPublishPreview() {
             这条记录已经提交到蚁小二，正在等待平台处理，暂时不建议重复触发。
           </div>
         </div>`
-      : '')
+      : (hasFailed
+        ? `<div class="preview-block" style="padding-top:4px;">
+            <div style="padding:10px 12px; border-radius:12px; background:#fff1f2; color:#be123c; font-size:13px; line-height:1.5;">
+              当前有平台处于发布失败状态。按全局规则，只有待发布状态才能再次发布；如需重发，请先在飞书把对应平台状态改回待发布。
+            </div>
+          </div>`
+        : '')
+      )
     ;
 
   return [
