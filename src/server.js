@@ -89,7 +89,7 @@ function buildBackupStamp() {
 function writeJsonDownload(res, filename, payload) {
   res.writeHead(200, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Disposition': `attachment; filename=”${filename}”`,
     'Access-Control-Allow-Origin': '*',
   });
   res.end(`${JSON.stringify(payload, null, 2)}\n`);
@@ -154,13 +154,33 @@ function createConfigError(message, statusCode = 400) {
 
 function ensureFeishuConfigReady() {
   if (isFeishuConfigured(config)) return;
-  throw createConfigError('请先在“飞书接入”页完成 App ID、App Secret、App Token、Table ID 配置');
+  throw createConfigError('请先在”飞书接入”页完成 App ID、App Secret、App Token、Table ID 配置');
 }
 
 function ensureYixiaoerConfigReady() {
   if (isYixiaoerConfigured(config)) return;
   throw createConfigError(`请先在配置文件中补全蚁小二 API Key 和 Team ID：${getRuntimePaths().configPath}`);
 }
+
+// 安全：高权限路由（force-republish 等）必须确认请求来自本机，防御 DNS rebinding 攻击
+function isLocalRequest(req) {
+  const hostHeader = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (hostHeader && hostHeader !== 'localhost' && hostHeader !== '127.0.0.1' && hostHeader !== '::1') {
+    return false;
+  }
+  const remote = req.socket?.remoteAddress || '';
+  // IPv4 回环 / IPv6 回环 / IPv4-mapped IPv6 回环
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+// 启动期飞书字段类型校验所需的字段名
+const REQUIRED_SINGLE_SELECT_FIELDS = [
+  '小红书账号',
+  '小红书发布状态',
+  '小红书发布渠道',
+  '抖音账号',
+  '抖音发布状态',
+];
 
 async function getBitBrowserAccountMappings() {
   const records = await feishu.getRecords();
@@ -426,6 +446,59 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, { success: false, error: e.message }, 500);
       }
     }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  // 强制重发（仅同账号）：清掉本地 ledger 里某条 recordId+platform 的命中
+  // 服务端校验：当前飞书账号必须 ∈ 历史血统账号集合，否则拒绝
+  if (pathname === '/api/force-republish' && req.method === 'POST') {
+    // 安全：仅允许本机请求 + Host 头校验，防御 DNS rebinding / 局域网横向访问
+    if (!isLocalRequest(req)) {
+      return sendJson(res, { success: false, error: '🚨 拒绝：force-republish 仅允许本机访问' }, 403);
+    }
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { recordId, platform } = JSON.parse(body || '{}');
+        if (!recordId || !platform) {
+          return sendJson(res, { success: false, error: '缺少 recordId 或 platform' }, 400);
+        }
+        if (platform !== '小红书' && platform !== '抖音') {
+          return sendJson(res, { success: false, error: '不支持的平台' }, 400);
+        }
+        // 1. 拉飞书最新记录，取当前账号
+        const remote = await feishu.getRecordById(recordId);
+        if (!remote) {
+          return sendJson(res, { success: false, error: '飞书记录不存在' }, 404);
+        }
+        const parsed = feishu.parseRecord(remote);
+        const currentAccount = platform === '小红书' ? parsed.xiaohongshuAccount : parsed.douyinAccount;
+        if (!currentAccount) {
+          return sendJson(res, { success: false, error: `当前记录没有配置${platform}账号` }, 400);
+        }
+        // 2. 校验历史血统
+        const history = publisher.getHistoryAccounts(recordId, platform);
+        if (history.length > 0 && !history.includes(String(currentAccount).trim())) {
+          return sendJson(res, {
+            success: false,
+            error: `🚨 红线保护：拒绝强制重发到非历史账号。历史账号=[${history.join(',')}]，当前账号=[${currentAccount}]`,
+            historyAccounts: history,
+            currentAccount,
+          }, 403);
+        }
+        // 3. 清本地 ledger，把飞书状态改回"待发布"以便下次 checkAndPublish 重发
+        publisher.unmarkAsPublished(recordId, platform);
+        await feishu.markPlatformStatus(recordId, platform, '待发布');
+        return sendJson(res, {
+          success: true,
+          message: `已允许 ${platform}(${currentAccount}) 同账号重发，下次发布检查时会重新提交`,
+          historyAccounts: history,
+        });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    });
     return;
   }
 

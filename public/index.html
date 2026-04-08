@@ -2396,6 +2396,7 @@ function renderRecordList(records) {
   const moreBtn = document.getElementById('recordMoreBtn');
   const pendingRecords = [];
   const completedRecords = [];
+  const blockedRecords = [];
 
   const filteredRecords = recordSearchQuery
     ? records.filter(r => (r.title || '').toLowerCase().includes(recordSearchQuery))
@@ -2593,6 +2594,7 @@ async function stopScheduler() {
   refreshStatus();
 }
 
+let publishNowInFlight = false;
 async function publishNow() {
   addLog('info', '正在补发已到时间的笔记...');
   renderProgress({ active: true, stage: 'checking', title: '', detail: '正在检查并补发已到时间的笔记', updatedAt: new Date().toLocaleString('zh-CN') });

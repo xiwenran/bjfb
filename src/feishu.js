@@ -64,6 +64,38 @@ class FeishuClient {
     return items;
   }
 
+  // 根据 recordId 拉取单条最新记录。供 scheduler 在发布前做"二次校验账号字段"使用。
+  async getRecordById(recordId) {
+    if (!recordId) return null;
+    const token = await this.getAccessToken();
+    const resp = await axios.get(
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return resp.data?.data?.record || null;
+  }
+
+  // 启动期校验关键字段必须是 type=3 (单选)。
+  // 任何一个字段不是单选 → 抛错；调用方负责让进程退出。
+  async assertSingleSelectFields(fieldNames) {
+    const fields = await this.getFields();
+    const errors = [];
+    for (const name of fieldNames) {
+      const field = fields.find(item => item.field_name === name);
+      if (!field) {
+        errors.push(`字段不存在: ${name}`);
+        continue;
+      }
+      if (field.type !== 3) {
+        errors.push(`字段 ${name} 不是单选 (type=${field.type})`);
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(`飞书字段类型校验失败:\n  - ${errors.join('\n  - ')}`);
+    }
+    return true;
+  }
+
   async getFields() {
     const items = [];
     let pageToken;
@@ -288,10 +320,15 @@ class FeishuClient {
       return '';
     };
 
-    const getSelect = (field) => {
+    const getSelect = (field, fieldName = '') => {
       if (!field) return '';
       if (typeof field === 'string') return field;
-      if (field.text) return field.text;
+      // R3 修复：账号字段如果被错误地配置成多选，会以数组形式返回。
+      // 不能静默拼接或返回空字符串——直接抛错让调用层把这条记录跳过 + 写飞书备注。
+      if (Array.isArray(field)) {
+        throw new Error(`飞书字段 "${fieldName || '未知'}" 期望单选但返回了数组(${field.length}项)，请在飞书把字段类型改成"单选"`);
+      }
+      if (typeof field === 'object' && typeof field.text === 'string') return field.text;
       return '';
     };
 
@@ -345,18 +382,18 @@ class FeishuClient {
       title: getText(f['标题']),
       description: getText(f['正文']),
       tags,
-      contentType: getSelect(f['内容类型']) || '图文',
+      contentType: getSelect(f['内容类型'], '内容类型') || '图文',
       attachments: f['素材'] || [],
       videoCover: f['视频封面'] || [],
-      xiaohongshuAccount: getSelect(f['小红书账号']),
-      xiaohongshuPublishChannel: getSelect(f['小红书发布渠道']) || '蚁小二',
-      douyinAccount: getSelect(f['抖音账号']),
+      xiaohongshuAccount: getSelect(f['小红书账号'], '小红书账号'),
+      xiaohongshuPublishChannel: getSelect(f['小红书发布渠道'], '小红书发布渠道') || '蚁小二',
+      douyinAccount: getSelect(f['抖音账号'], '抖音账号'),
       musicKeyword: getText(f['配乐关键词']),
       musicSongName: getText(f['指定歌曲名']),
       publishTime,
-      published: getSelect(f['发布状态']) === '已发布',
-      xiaohongshuStatus: getSelect(f['小红书发布状态']),
-      douyinStatus: getSelect(f['抖音发布状态']),
+      published: getSelect(f['发布状态'], '发布状态') === '已发布',
+      xiaohongshuStatus: getSelect(f['小红书发布状态'], '小红书发布状态'),
+      douyinStatus: getSelect(f['抖音发布状态'], '抖音发布状态'),
       note: getText(f['备注']),
     };
   }

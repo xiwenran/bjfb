@@ -555,6 +555,10 @@ class Scheduler {
           failedCount += item?.failed || 0;
           submittedCount += item?.submitted || 0;
         }
+
+        // 子步骤 6：清理临时目录
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
 
       this.setProgress({

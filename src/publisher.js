@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
 const { loadConfig, readLedger, saveLedger } = require('./config-store.js');
@@ -111,7 +112,8 @@ function createHttpClient(config) {
 
   const client = axios.create({
     baseURL: yixiaoerConfig.baseUrl || DEFAULT_API_BASE_URL,
-    timeout: 30000,
+    // 链路 C1 防御：30s → 90s。慢网络/Mac 唤醒后的网络栈恢复需要更长容错。
+    timeout: 90000,
     headers: {
       'Content-Type': 'application/json',
       'x-client': 'openclaw',
@@ -732,10 +734,23 @@ async function publishContent(params) {
   };
 }
 
+// 原子写：先写 .tmp 再 rename，避免进程被强杀时只写一半。
+function atomicWriteJson(filePath, data) {
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmp, filePath);
+}
+
 // 已发布记录缓存（防止同一内容重复发到同一平台）
 const publishedCache = new Map(); // key: "recordId:platform" → ledger entry
 
+// 跨账号血统账本（永远只追加，不会被状态翻转清空）
+// 结构：{ recordId: { 小红书: [{accountName, accountId, channel, at, taskId, contentHash}], 抖音: [...] } }
+const publishHistoryCache = new Map();
+
 function loadPublishedLedger() {
+  if (!fs.existsSync(LEDGER_PATH)) return;
+  let data;
   try {
     const data = readLedger();
     for (const key of Object.keys(data || {})) {
@@ -743,7 +758,10 @@ function loadPublishedLedger() {
       if (entry) publishedCache.set(key, entry);
     }
   } catch (e) {
-    console.warn(`⚠️ 读取发布账本失败: ${e.message}`);
+    // 防重失效是不可接受的——宁可启动失败也不要静默继续
+    const msg = `🚨 读取发布账本失败 (${LEDGER_PATH}): ${e.message}。防重账本不可用，拒绝启动。`;
+    console.error(msg);
+    throw new Error(msg);
   }
 }
 
@@ -754,6 +772,41 @@ function savePublishedLedger() {
   } catch (e) {
     console.warn(`⚠️ 保存发布账本失败: ${e.message}`);
   }
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf-8'));
+  } catch (e) {
+    const msg = `🚨 读取血统账本失败 (${HISTORY_PATH}): ${e.message}。跨账号防护不可用，拒绝启动。`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+  for (const recordId of Object.keys(data || {})) {
+    publishHistoryCache.set(recordId, data[recordId] || {});
+  }
+}
+
+// P0.5 内容指纹跨记录扫描：返回 history 中所有 recordId（≠ currentRecordId）下相同 contentHash 的发布记录
+function findCrossRecordByContentHash(currentRecordId, platform, contentHash) {
+  if (!contentHash) return null;
+  for (const [otherRecordId, entry] of publishHistoryCache.entries()) {
+    if (otherRecordId === currentRecordId) continue;
+    const list = Array.isArray(entry?.[platform]) ? entry[platform] : [];
+    const match = list.find(item => item?.contentHash === contentHash);
+    if (match) {
+      return {
+        recordId: otherRecordId,
+        accountName: match.accountName || '',
+        accountId: match.accountId || null,
+        at: match.at || null,
+      };
+    }
+  }
+  return null;
+}
+
+function savePublishHistory() {
+  const data = Object.fromEntries(publishHistoryCache.entries());
+  atomicWriteJson(HISTORY_PATH, data);
 }
 
 function getPublishKey(recordId, platform) {
@@ -785,6 +838,113 @@ function unmarkAsPublished(recordId, platform) {
   if (!publishedCache.has(key)) return;
   publishedCache.delete(key);
   savePublishedLedger();
+}
+
+// 返回某条 record 在某个 platform 上历史发布过的所有账号名集合（去重，trim 后比较）
+function getHistoryAccounts(recordId, platform) {
+  const entry = publishHistoryCache.get(recordId);
+  if (!entry || !Array.isArray(entry[platform])) return [];
+  const names = new Set();
+  for (const item of entry[platform]) {
+    const name = String(item?.accountName || '').trim();
+    if (name) names.add(name);
+  }
+  return [...names];
+}
+
+// 追加一条血统记录（永远只追加，不删除）
+function appendHistory(recordId, platform, entry) {
+  if (!recordId || !platform || !entry) return;
+  const existing = publishHistoryCache.get(recordId) || {};
+  const list = Array.isArray(existing[platform]) ? existing[platform] : [];
+  list.push({
+    accountName: String(entry.accountName || '').trim(),
+    accountId: entry.accountId || null,
+    channel: entry.channel || '蚁小二',
+    at: entry.at || Date.now(),
+    taskId: entry.taskId || null,
+    contentHash: entry.contentHash || null,
+  });
+  existing[platform] = list;
+  publishHistoryCache.set(recordId, existing);
+  savePublishHistory();
+}
+
+function computeContentHash(record) {
+  // 内容指纹：所有可被用户修改的字段都做 normalize 后再 hash，避免被尾部空格 / 顺序调换绕过
+  const normalize = (s) => String(s || '').replace(/\s+/g, '').trim();
+  const tokens = (record.attachments || [])
+    .map(a => normalize(a?.file_token || a?.fileToken))
+    .filter(Boolean)
+    .sort(); // 排序消除顺序差异
+  const text = [
+    normalize(record.title),
+    normalize(record.description),
+    tokens.join(','),
+  ].join('\n');
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+// 链路 C1 防御：从蚁小二最近 30 条任务中查找近 N 小时内同 title + 同账号 的记录。
+// 返回 { found, lookupError }：
+//   - found: 命中的记录或 null
+//   - lookupError: 查询本身失败时的错误信息（区分"查到没匹配" vs "接口失败"）
+// 仅供 publishToPlatform 内部使用。
+async function findRecentTaskByTitleAndAccount(yixiaoerConfig, platformName, title, accountId, accountName, hoursWindow = C1_DEDUP_WINDOW_HOURS) {
+  if (!title) return { found: null, lookupError: null };
+  // 重试机制：避免短暂网络抖动让 fail-closed 大规模误判
+  let result;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      result = await getPublishRecordsApi(yixiaoerConfig, { page: 1, size: 30 });
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, attempt * 1500));
+      }
+    }
+  }
+  if (lastErr) {
+    const msg = lastErr?.message || 'unknown';
+    console.warn(`⚠️ C1 预查重 (${platformName}/${accountName}) 接口调用失败 (3 次重试均失败): ${msg}`);
+    return { found: null, lookupError: msg };
+  }
+  try {
+    const since = Date.now() - hoursWindow * 60 * 60 * 1000;
+    const records = result?.data || [];
+    const normTitle = String(title).trim();
+    const normAccountName = String(accountName || '').trim();
+    const normAccountId = String(accountId || '').trim();
+    const platformAliases = new Set([platformName]);
+    const ruleKey = normalizePlatform(platformName);
+    if (ruleKey && PLATFORM_RULES[ruleKey]?.name) platformAliases.add(PLATFORM_RULES[ruleKey].name);
+    const found = records.find(item => {
+      const itemTitle = item?.title ? String(item.title).trim() : '';
+      // 标题匹配：trim 后严格相等。
+      // 之前曾经放宽为前缀互含，但 codex 指出会让"前 20 字相同的不同笔记"误命中，回退到严格匹配。
+      // 如果出现服务端截断的兼容性问题再单独打补丁，不要在这里放宽。
+      const sameTitle = itemTitle && itemTitle === normTitle;
+      if (!sameTitle) return false;
+      const platforms = Array.isArray(item?.platforms) ? item.platforms : [];
+      const samePlatform = platforms.length === 0 || platforms.some(p => platformAliases.has(p));
+      if (!samePlatform) return false;
+      const itemAccountId = String(item?.platformAccountId || '').trim();
+      const itemNickName = String(item?.nickName || '').trim();
+      const sameAccount = (normAccountId && itemAccountId === normAccountId)
+        || (normAccountName && itemNickName === normAccountName);
+      if (!sameAccount) return false;
+      if (!item?.createdAt) return true;
+      return new Date(item.createdAt).getTime() >= since;
+    }) || null;
+    return { found, lookupError: null };
+  } catch (e) {
+    const msg = e?.message || 'unknown';
+    console.warn(`⚠️ C1 预查重 (${platformName}/${accountName}) 接口调用失败: ${msg}`);
+    return { found: null, lookupError: msg };
+  }
 }
 
 function normalizeTags(tags) {
@@ -977,8 +1137,10 @@ async function publishRecord(record, config, accountMapping, options = {}) {
     return { accountId: null, matchType: 'none' };
   }
 
+  const allowCrossAccount = options.allowCrossAccount === true;
+
   // 飞书平台状态是是否允许发布的唯一开关。
-  // 只有精确等于“待发布”时，才会清除本地保护并允许进入发布流程。
+  // 只有精确等于”待发布”时，才会清除本地保护并允许进入发布流程。
   if (record.xiaohongshuStatus === '已发布') {
     markAsObservedPublished(record.recordId, '小红书');
   } else if (isPendingStatus(record.xiaohongshuStatus)) {
@@ -991,7 +1153,6 @@ async function publishRecord(record, config, accountMapping, options = {}) {
       unmarkAsPublished(record.recordId, '小红书');
     }
   }
-
   if (record.douyinStatus === '已发布') {
     markAsObservedPublished(record.recordId, '抖音');
   } else if (isPendingStatus(record.douyinStatus)) {
@@ -1005,6 +1166,50 @@ async function publishRecord(record, config, accountMapping, options = {}) {
     }
   }
 
+  // P0 红线防御：跨账号血统硬锁 + 跨记录内容指纹软锁。
+  // 一条 recordId 一旦在某个平台上发过任何一个账号，就永远不能发到历史集合外的另一个账号。
+  // 此外：如果不同 recordId 但内容指纹完全一致（用户复制粘贴新建一条），也拦截掉。
+  const recordContentHash = computeContentHash(record);
+  function checkCrossAccountLock(platformName, currentAccountName) {
+    if (allowCrossAccount) return null; // /api/force-republish 显式同账号重发会传 false
+    // 1. 同 recordId 跨账号锁
+    const history = getHistoryAccounts(record.recordId, platformName);
+    if (history.length > 0) {
+      const current = String(currentAccountName || '').trim();
+      if (!history.includes(current)) {
+        return {
+          platform: platformName,
+          account: currentAccountName,
+          accountId: null,
+          success: false,
+          critical: true,
+          crossAccount: true,
+          historyAccounts: history,
+          markFailed: true,
+          error: `🚨 红线保护：此笔记已发布到账号 [${history.join(',')}]，拒绝发送到账号 [${currentAccountName}]`,
+        };
+      }
+    }
+    // 2. 跨记录内容指纹锁：防御”复制粘贴新建条目改账号”
+    const dup = findCrossRecordByContentHash(record.recordId, platformName, recordContentHash);
+    if (dup) {
+      return {
+        platform: platformName,
+        account: currentAccountName,
+        accountId: null,
+        success: false,
+        critical: true,
+        crossAccount: true,
+        crossRecordDuplicate: true,
+        historyAccounts: [dup.accountName].filter(Boolean),
+        duplicateRecordId: dup.recordId,
+        markFailed: true,
+        error: `🚨 红线保护：内容指纹与另一条记录 [recordId=${dup.recordId}, 账号=${dup.accountName || '?'}] 完全相同，拒绝重复发送到账号 [${currentAccountName}]`,
+      };
+    }
+    return null;
+  }
+
   // 发布到单个平台的通用函数
   async function publishToPlatform(platformName, accountName, accountId, extraOpts) {
     const xhsPublishChannel = record.xiaohongshuPublishChannel === '比特浏览器' ? '比特浏览器' : '蚁小二';
@@ -1012,6 +1217,13 @@ async function publishRecord(record, config, accountMapping, options = {}) {
 
     if (!isPublishableStatus(platformStatus)) {
       return null;
+    }
+
+    // P0 跨账号硬锁
+    const crossAccountReject = checkCrossAccountLock(platformName, accountName);
+    if (crossAccountReject) {
+      console.error(`  🚨 ${crossAccountReject.error}`);
+      return crossAccountReject;
     }
 
     // 防重复：检查是否已在该平台发布过
@@ -1064,10 +1276,7 @@ async function publishRecord(record, config, accountMapping, options = {}) {
           onProgress,
         });
 
-        if (result.success) {
-          markAsPublished(record.recordId, platformName);
-        }
-
+        // R6 修复：本地 ledger 不再在此处写入，由 scheduler 在飞书状态更新成功后统一写入。
         return {
           platform: platformName,
           account: accountName,
@@ -1106,6 +1315,37 @@ async function publishRecord(record, config, accountMapping, options = {}) {
       const tags = selectTagsForPlatform(platformName, record.tags, record.title);
       const titleMeta = resolveTitleForPlatform(platformName, record.title);
 
+      // 链路 C1 防御：发布前预查重。
+      // 在真正 POST 之前先查蚁小二最近 30 条任务，如果同 title + 同账号在最近 12h 内已存在，
+      // 判定为"上次请求虽然客户端报错，但服务端已经接收并执行"，跳过本次提交。
+      const preLookup = await findRecentTaskByTitleAndAccount(
+        yixiaoerConfig, platformName, titleMeta.text, accountId, accountName
+      );
+      if (preLookup.lookupError) {
+        // C1 预查重接口失败 → fail-closed：查不到就不敢发，宁可本次跳过也不冒重复发布的风险。
+        // 逻辑：蚁小二没响应 → 不知道这条笔记最近有没有发过 → 不发。
+        // 如果 /taskSets 接口路径有变（如迁移到 /v2/taskSets），需先修路径再上线。
+        return {
+          platform: platformName, account: accountName, accountId,
+          success: false,
+          c1LookupFailed: true,
+          markFailed: true,
+          error: `C1 预查重接口失败: ${preLookup.lookupError}。为防止重复发布，已暂缓本次提交，请检查蚁小二接口连通性后重试`,
+        };
+      }
+      if (preLookup.found) {
+        console.log(`  ⏭ C1 预查重命中: ${platformName}(${accountName}) 已存在最近任务 ${preLookup.found.id || ''}，跳过本次提交`);
+        return {
+          platform: platformName, account: accountName, accountId,
+          success: true,
+          skipped: true,
+          c1Skipped: true,
+          publishMode: yixiaoerConfig.clientId ? '本机发布' : '云发布',
+          taskMeta: { taskId: preLookup.found.id || null, raw: preLookup.found },
+          titleMeta,
+        };
+      }
+
       // 抖音使用全局默认配乐
       let music = null;
       let musicMeta = null;
@@ -1131,30 +1371,73 @@ async function publishRecord(record, config, accountMapping, options = {}) {
         console.log(`  ✂️ ${platformName}标题超限，已自动截断为 ${titleMeta.limit} 字`);
       }
 
-      const result = await publishContent({
-        teamId,
-        platforms: [platformName],
-        publishType: record.contentType === '视频' ? 'video' : 'imageText',
-        platformAccountId: accountId,
-        title: titleMeta.text,
-        description: record.description || undefined,
-        imagePaths: record.imagePaths,
-        tags,
-        music,
-        rules: config.rules || {},
-        clientId: yixiaoerConfig.clientId,
-        publishChannel: yixiaoerConfig.clientId ? 'local' : 'cloud',
-        videoPath: record.videoPath,
-        coverPath: record.coverPath,
-        videoDuration: record.videoDuration,
-        videoSize: record.videoSize,
-        ...extraOpts,
-      });
-
-      if (result.success) {
-        markAsPublished(record.recordId, platformName);
+      let result;
+      try {
+        result = await publishContent({
+          teamId,
+          platforms: [platformName],
+          publishType: record.contentType === '视频' ? 'video' : 'imageText',
+          platformAccountId: accountId,
+          title: titleMeta.text,
+          description: record.description || undefined,
+          imagePaths: record.imagePaths,
+          tags,
+          music,
+          rules: config.rules || {},
+          clientId: yixiaoerConfig.clientId,
+          publishChannel: yixiaoerConfig.clientId ? 'local' : 'cloud',
+          videoPath: record.videoPath,
+          coverPath: record.coverPath,
+          videoDuration: record.videoDuration,
+          videoSize: record.videoSize,
+          ...extraOpts,
+        });
+      } catch (publishErr) {
+        // 链路 C1 防御：发布异常后的二次确认。
+        // axios 超时 / ECONNRESET / 网络错误时，蚁小二服务端可能已经接收并执行了请求，
+        // 等 5 秒后再查 /taskSets，如果命中，回写为成功（避免下次重发造成重复）。
+        const errMsg = String(publishErr?.message || '');
+        const looksLikeNetworkErr = /timeout|ETIMEDOUT|ECONNRESET|ECONNABORTED|ECONNREFUSED|socket hang up|network/i.test(errMsg);
+        if (looksLikeNetworkErr) {
+          console.warn(`  ⚠️ ${platformName}(${accountName}) 网络异常 (${errMsg})，5 秒后做二次确认...`);
+          await new Promise(r => setTimeout(r, 5000));
+          const echoLookup = await findRecentTaskByTitleAndAccount(
+            yixiaoerConfig, platformName, titleMeta.text, accountId, accountName
+          );
+          if (echoLookup.lookupError) {
+            // 二次确认接口也挂了 → fail-closed：判定为"已发布(C1状态未知)"
+            // 不允许下次重发，避免和上次的疑似已落地请求叠加
+            console.error(`  🚨 二次确认接口失败 (${echoLookup.lookupError})，为安全起见判定为"疑似已发布"，本条不允许下次重发`);
+            return {
+              platform: platformName, account: accountName, accountId,
+              success: true,
+              c1Suspect: true,
+              recoveredFromNetworkError: true,
+              publishMode: yixiaoerConfig.clientId ? '本机发布' : '云发布',
+              taskMeta: { taskId: null, raw: null },
+              musicMeta,
+              titleMeta,
+              c1SuspectReason: `网络异常 + 二次确认接口失败: ${errMsg}; ${echoLookup.lookupError}`,
+            };
+          }
+          if (echoLookup.found) {
+            console.log(`  ✅ 二次确认命中: ${platformName}(${accountName}) 实际已发布 (taskId=${echoLookup.found.id || ''})，回写为成功`);
+            return {
+              platform: platformName, account: accountName, accountId,
+              success: true,
+              recoveredFromNetworkError: true,
+              publishMode: yixiaoerConfig.clientId ? '本机发布' : '云发布',
+              taskMeta: { taskId: echoLookup.found.id || null, raw: echoLookup.found },
+              musicMeta,
+              titleMeta,
+            };
+          }
+          console.warn(`  ⚠️ 二次确认未命中: ${platformName}(${accountName}) 判定为真失败`);
+        }
+        throw publishErr;
       }
 
+      // R6 修复：本地 ledger 不再在此处写入，由 scheduler 在 markPlatformStatus 成功后统一写入。
       return { platform: platformName, account: accountName, accountId,
         success: result.success, error: result.success ? null : result.message,
         finalized: result.finalized !== false,
@@ -1205,6 +1488,14 @@ module.exports = {
   selectTagsForPlatform,
   validateMusicSelection,
   resolveDouyinMusic,
+  // 暴露给 scheduler/server 使用，供"飞书状态成功后再写本地账本"的新顺序
+  markAsPublished,
+  unmarkAsPublished,
+  isAlreadyPublished,
+  appendHistory,
+  getHistoryAccounts,
+  computeContentHash,
 };
 
 loadPublishedLedger();
+loadPublishHistory();
