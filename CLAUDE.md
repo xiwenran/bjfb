@@ -305,6 +305,7 @@ npm run git:sync -- "提交信息"  # add + commit + push
 | 2026-03 | index.html | `updateWorkspaceCopy()` 调用 `getElementById('workspaceDescription')` 但元素已删除，null reference crash | 删除对应 JS 调用行 |
 | 2026-04 | publisher.js | 打包后崩溃：`LEDGER_PATH is not defined` + `loadPublishHistory` 函数体被意外合并进 `savePublishedLedger` | 迁移到 config-store.js 的 `readLedger/readHistory/saveHistory` |
 | 2026-04 | scheduler.js | cherry-pick 后 R6 修复（markPlatformStatus→appendHistory→markAsPublished 链）被丢失，云发布永远不落账本 | 手动补回完整链路 |
+| 2026-04 | server.js | `isPendingRecord` 用 `!== '已发布'`，平台状态为空也被算入待发布计数 | 改为 `=== '待发布'`，与调度器 `isPlatformPending` 保持一致 |
 
 ---
 
