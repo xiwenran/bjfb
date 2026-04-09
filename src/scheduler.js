@@ -374,12 +374,46 @@ class Scheduler {
       let noteChanged = false;
       let nextNote = record.note || '';
 
+      const contentHash = publisher.computeContentHash(record);
+
       for (const r of results) {
         if (r.success) {
           const finalized = r.finalized !== false;
           if (finalized) {
-            await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
-            const successEntry = `${r.platform}发布成功(${r.account})`;
+            // R6 修复：先飞书后本地。飞书写失败 → 本地账本不写，下次循环由 C1/血统账本兜底。
+            try {
+              await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
+            } catch (markErr) {
+              allSuccess = false;
+              const entry = `${r.platform}状态回写失败(${r.account}): ${markErr.message}`;
+              nextNote = this.mergeNoteEntry(nextNote, entry);
+              noteChanged = true;
+              this.log('error', `  ❌ ${r.platform}(${r.account}) 状态回写失败 → 本地账本不会标记，下次循环将由 C1/血统账本兜底`);
+              continue;
+            }
+            // 飞书已成功 → 写本地账本 + 追加血统记录（顺序：history 先，ledger 后）
+            try {
+              if (!r.skipped && !r.c1Skipped) {
+                publisher.appendHistory(record.recordId, r.platform, {
+                  accountName: r.account,
+                  accountId: r.accountId,
+                  channel: r.publishMode || '蚁小二',
+                  at: Date.now(),
+                  taskId: r.taskMeta?.taskId || null,
+                  contentHash,
+                });
+              }
+              publisher.markAsPublished(record.recordId, r.platform);
+            } catch (writeErr) {
+              allSuccess = false;
+              const critEntry = `🚨 CRITICAL: 飞书已写"已发布"但本地账本写入失败: ${writeErr.message}`;
+              nextNote = this.mergeNoteEntry(nextNote, critEntry);
+              noteChanged = true;
+              this.log('error', `  ${critEntry}`);
+            }
+            const successEntry = r.skipped
+              ? `${r.platform}已跳过(${r.c1Skipped ? 'C1预查重命中' : '之前已发布'})(${r.account})`
+              : `${r.platform}发布成功(${r.account})`;
             nextNote = this.mergeNoteEntry(nextNote, successEntry);
             const latestRecord = await this.findLatestPublishRecord(r, record.title);
             const publishRecordEntry = this.formatPublishRecordEntry(latestRecord, r.platform);
@@ -409,6 +443,18 @@ class Scheduler {
           const taskEntry = this.formatTaskEntry(r);
           nextNote = this.mergeNoteEntry(nextNote, taskEntry);
           noteChanged = noteChanged || nextNote !== (record.note || '');
+        } else if (r.crossAccount) {
+          // P0 跨账号硬锁：写"已发布(跨账号已拒绝)"避免下一轮再试
+          allSuccess = false;
+          try {
+            await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布(跨账号已拒绝)');
+          } catch (markErr) {
+            this.log('error', `  ❌ 写入跨账号拒绝状态失败: ${markErr.message}`);
+          }
+          const entry = `🚨 红线保护: ${r.platform}历史账号=[${(r.historyAccounts || []).join(',')}], 当前账号=[${r.account}], 已拒绝本次发布`;
+          nextNote = this.mergeNoteEntry(nextNote, entry);
+          noteChanged = true;
+          this.log('error', `  🚨 ${entry}`);
         } else {
           allSuccess = false;
           await this.feishu.markPlatformStatus(record.recordId, r.platform, '发布失败');
