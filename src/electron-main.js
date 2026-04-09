@@ -2,6 +2,20 @@ const path = require('path');
 const { app, BrowserWindow, dialog, shell } = require('electron');
 const { startServer, stopServer, getServerState } = require('./server.js');
 
+// 防止上传 OSS 时 ReadStream EPIPE 弹 Electron 错误弹窗。
+// 当 OSS 服务端因 403/400 等原因关闭连接时，Node.js ReadStream 会产生
+// EPIPE error，如果没有显式 error 监听，会作为 uncaughtException 冒泡。
+// axios 会通过 socket error 路径独立 reject Promise，上传失败会正常报错，
+// 不需要 EPIPE 额外弹窗。其他 uncaughtException 继续默认处理。
+process.on('uncaughtException', (err) => {
+  if (err.code === 'EPIPE') {
+    console.error('[warn] EPIPE suppressed in main process:', err.message);
+    return;
+  }
+  // 不是 EPIPE，走 Electron 默认（弹窗）
+  throw err;
+});
+
 let mainWindow = null;
 const WINDOW_ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png');
 

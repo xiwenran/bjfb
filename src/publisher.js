@@ -440,6 +440,11 @@ async function uploadFileToOss(config, filePath) {
   }
 
   const fileStream = fs.createReadStream(filePath);
+  // 防止 ReadStream 的 EPIPE 在 axios reject 之前作为 uncaught exception 冒泡。
+  // OSS 服务端因 403/400 关闭连接时，Node stream 层会先触发 EPIPE error 事件，
+  // 若无 error 监听则升级为 uncaughtException（Electron 弹窗）。
+  // axios 会通过 socket 路径独立 reject，这里只是防止 stream 层漏报。
+  fileStream.on('error', () => {});
   await axios.put(uploadResult.uploadUrl, fileStream, {
     headers: {
       'Content-Type': contentType,
