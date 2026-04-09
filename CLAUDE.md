@@ -202,7 +202,8 @@ this.logs = [];                  // 最多 200 条
 |------|------|
 | `start()` | 启动定时服务；会立即补扫一轮飞书并继续处理未完成任务 |
 | `stop()` | 停止；当前正在执行的记录会收尾，未开始的定时任务暂停 |
-| `checkAndPublish()` | 扫描飞书，补建精准任务；内部完整 try/catch，永不抛出 |
+| `checkAndPublish()` | 扫描飞书，补建精准任务；每轮开始前先调 reconcileCloudPublishing |
+| `reconcileCloudPublishing()` | 补查飞书中状态为”发布中”的记录，调蚁小二 /v2/taskSets 确认结果后写飞书+落账本 |
 | `publishRecords(records, reason)` | 实际发布；支持队列并发、停止后不再继续吃后续排队任务 |
 | `publishSpecificRecord(recordId)` | 立即发布指定记录，先取消该记录定时任务；仅处理平台状态为 `待发布` 的记录 |
 | `scheduleRecordTask(record, time)` | 创建精准定时器，async 回调包裹在 `.catch()` 中 |
@@ -214,9 +215,33 @@ this.logs = [];                  // 最多 200 条
 - 修复发布并发：支持同一时间多条记录并发处理，默认 `rules.publishRecordConcurrency = 2`
 - 修复重复发布回归：新增发布账本保护和最近成功记录保护，避免飞书状态回写延迟时同一条被重复提交
 - 调整云发布状态：蚁小二云发布提交成功后先写为 `发布中`，不再直接写成 `已发布`
-- 强化红线规则：自动调度、顶部“立即补发”、单条“立即发布”都只允许处理平台状态精确等于 `待发布` 的记录，`发布失败` 必须先人工改回 `待发布`
+- 强化红线规则：自动调度、顶部”立即补发”、单条”立即发布”都只允许处理平台状态精确等于 `待发布` 的记录，`发布失败` 必须先人工改回 `待发布`
 - 调整停止行为：点击停止后，只允许当前正在发布的记录收尾，后续排队和未开始的定时任务暂停
-- 调整顶部按钮文案：总览页顶部按钮改为“立即补发”，表示只补发当前已到时间的内容，不会把未来定时任务全部发出
+- 调整顶部按钮文案：总览页顶部按钮改为”立即补发”，表示只补发当前已到时间的内容，不会把未来定时任务全部发出
+
+### 红线防护架构（2026-04-08 加固）
+
+三层防护防止重复发布到多账号：
+1. **C1 预查重**：发布前查 `/v2/taskSets`（fail-closed，查不到就不发），12 小时窗口
+2. **R6 写入顺序**：先写飞书”已发布”，再落本地账本（飞书失败则本地不写，下轮由 C1 兜底）
+3. **血统账本（publish-history.json）**：append-only，跨账号+跨 recordId 的 contentHash 去重
+
+关键常量：`C1_DEDUP_WINDOW_HOURS = 12`
+
+数据文件：
+- `publish-ledger.json`（`~/Library/Caches/Zhifa/`）：recordId+platform 已发集合
+- `publish-history.json`（同目录）：完整血统记录，原子写（tmp+rename）
+
+### 蚁小二 API 路径（2026-04-09 更新）
+
+使用 `requestApiWithFallback`：主路径优先，404 自动降级旧路径。
+
+| 功能 | 主路径（新） | 降级路径（旧） |
+|------|------------|--------------|
+| 账号列表 | `/v2/platform/accounts` | `/platform-accounts` |
+| 任务列表/C1查重/轮询 | `/v2/taskSets` | `/taskSets` |
+| 分类/话题 | `/platform-accounts/:id/categories` | `/platform-accounts/:id/topics` |
+| 上传 URL | 参数双写 `fileKey`+`fileName`, `size`+`fileSize` | — |
 
 ### scheduleNext 模式
 
@@ -278,6 +303,8 @@ npm run git:sync -- "提交信息"  # add + commit + push
 | 2026-03 | server.js | `/api/publish/record` body 未 JSON.parse，recordId 永远 undefined，立即发布完全失效 | 改为 `JSON.parse(body \|\| '{}')` |
 | 2026-03 | scheduler.js | `scheduleRecordTask` 的 setTimeout async 回调无 `.catch()`，Feishu 失败时 unhandled rejection | 改为 `().catch(e => this.log('error', ...))` |
 | 2026-03 | index.html | `updateWorkspaceCopy()` 调用 `getElementById('workspaceDescription')` 但元素已删除，null reference crash | 删除对应 JS 调用行 |
+| 2026-04 | publisher.js | 打包后崩溃：`LEDGER_PATH is not defined` + `loadPublishHistory` 函数体被意外合并进 `savePublishedLedger` | 迁移到 config-store.js 的 `readLedger/readHistory/saveHistory` |
+| 2026-04 | scheduler.js | cherry-pick 后 R6 修复（markPlatformStatus→appendHistory→markAsPublished 链）被丢失，云发布永远不落账本 | 手动补回完整链路 |
 
 ---
 
@@ -286,3 +313,4 @@ npm run git:sync -- "提交信息"  # add + commit + push
 - [ ] SSE 重连目前无限循环，Electron 本地环境可接受，若需限制可加最大次数
 - [ ] 音乐库状态 `musicLibraryState` 多个异步函数共享，极端情况可能竞态
 - [ ] `refreshRecords()` 等 Promise 调用方未 await，失败时 UI 静默不同步（低优先级）
+- [ ] reconcileCloudPublishing 的 accountId 字段为 null（从飞书记录无法还原），影响跨账号检查精度（低优先级，contentHash 已兜底）
