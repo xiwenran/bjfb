@@ -683,8 +683,9 @@ class Scheduler {
           submittedCount += item?.submitted || 0;
         }
 
-        // 子步骤 6：清理临时目录
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+        // 临时目录已在每条记录的 processSingleRecord finally 中各自清理；
+        // 这里曾有一行 fs.rmSync(tmpDir, ...) 但 tmpDir 在该作用域未定义，
+        // 一直抛 ReferenceError 然后被静默吞掉，是死代码，已删除。
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
 
