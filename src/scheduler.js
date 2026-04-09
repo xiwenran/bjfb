@@ -385,6 +385,13 @@ class Scheduler {
 
       for (const r of results) {
         if (r.success) {
+          // 注意：r.success === true 包含一个特殊分支 r.c1Suspect === true。
+          // 那是 publisher.js 在"发布 POST 网络异常 + 二次 /taskSets 查询也失败"
+          // 的双重失败下做出的决策：宁可漏发也不双发，强制按"已发布"落盘。
+          // 这里**故意**不为 c1Suspect 走单独分支，因为当前设计就是要让它
+          // 走完整的成功路径（写飞书已发布 + 落本地账本），下轮调度不再重试。
+          // 详细决策记录见 publisher.js 中 echoLookup.lookupError 处的长注释。
+          // 已知漏发风险已记入 CLAUDE.md 待办，暂不修复，保稳定性为主。
           const finalized = r.finalized !== false;
           if (finalized) {
             // R6 修复：先飞书后本地。飞书写失败 → 本地账本不写，下次循环由 C1/血统账本兜底。
