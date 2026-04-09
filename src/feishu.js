@@ -284,24 +284,31 @@ class FeishuClient {
   async downloadAllAttachments(attachments, destDir) {
     if (!attachments || attachments.length === 0) return [];
 
-    // 仅对“前缀就是数字”的文件名按数字排序，其余保持飞书原顺序，
-    // 避免“封面 (3).png”或“课程封面_11.png”被误排到最前面。
+    // 仅对”前缀就是数字”的文件名按数字排序，其余保持飞书原顺序，
+    // 避免”封面 (3).png”或”课程封面_11.png”被误排到最前面。
+    // 支持 macOS 重名命名风格：1(1).png < 1(2).png < 1(3).png
     const sorted = [...attachments]
       .map((att, index) => ({ att, index }))
       .sort((left, right) => {
         const leftName = path.basename(String(left.att.name || ''));
         const rightName = path.basename(String(right.att.name || ''));
-        const leftMatch = leftName.match(/^(\d+)/);
-        const rightMatch = rightName.match(/^(\d+)/);
-        const leftNumber = leftMatch ? Number(leftMatch[1]) : null;
-        const rightNumber = rightMatch ? Number(rightMatch[1]) : null;
+        // 匹配 “数字” 或 “数字(子序号)”，如 “2.png”、”2(3).png”
+        const leftMatch = leftName.match(/^(\d+)(?:\((\d+)\))?/);
+        const rightMatch = rightName.match(/^(\d+)(?:\((\d+)\))?/);
+        const leftPrimary = leftMatch ? Number(leftMatch[1]) : null;
+        const rightPrimary = rightMatch ? Number(rightMatch[1]) : null;
 
-        if (leftNumber !== null && rightNumber !== null) {
-          return leftNumber - rightNumber || left.index - right.index;
+        if (leftPrimary !== null && rightPrimary !== null) {
+          const cmp = leftPrimary - rightPrimary;
+          if (cmp !== 0) return cmp;
+          // 同主序号：按括号内子序号排，无括号的排最前
+          const leftSub = leftMatch[2] != null ? Number(leftMatch[2]) : -1;
+          const rightSub = rightMatch[2] != null ? Number(rightMatch[2]) : -1;
+          return leftSub - rightSub || left.index - right.index;
         }
 
-        if (leftNumber !== null) return -1;
-        if (rightNumber !== null) return 1;
+        if (leftPrimary !== null) return -1;
+        if (rightPrimary !== null) return 1;
         return left.index - right.index;
       })
       .map(item => item.att);
