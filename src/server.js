@@ -279,8 +279,8 @@ function decorateRecord(record) {
 }
 
 function isPendingRecord(record) {
-  const xhsPending = !!record.xiaohongshuAccount && record.xiaohongshuStatus !== '已发布';
-  const dyPending = !!record.douyinAccount && record.douyinStatus !== '已发布';
+  const xhsPending = !!record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布';
+  const dyPending = !!record.douyinAccount && record.douyinStatus === '待发布';
   return xhsPending || dyPending;
 }
 
