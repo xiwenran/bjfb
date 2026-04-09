@@ -520,6 +520,87 @@ class Scheduler {
     }
   }
 
+  async reconcileCloudPublishing() {
+    const platforms = ['小红书', '抖音'];
+    for (const platform of platforms) {
+      let pendingRecords;
+      try {
+        pendingRecords = await this.feishu.getRecordsByPlatformStatus(platform, '发布中');
+      } catch (e) {
+        this.log('warn', `⚠️ 查询${platform}发布中记录失败: ${e.message}`);
+        continue;
+      }
+
+      if (!pendingRecords.length) continue;
+      this.log('info', `🔄 发现 ${pendingRecords.length} 条${platform}处于"发布中"，开始补查蚁小二状态...`);
+
+      for (const rawRecord of pendingRecords) {
+        let parsed;
+        try {
+          parsed = this.feishu.parseRecord(rawRecord);
+        } catch (e) {
+          this.log('warn', `  ⚠️ 解析记录失败(${rawRecord.record_id}): ${e.message}`);
+          continue;
+        }
+
+        const taskIdMatch = (parsed.note || '').match(/任务ID:(\S+)/);
+        const taskId = taskIdMatch?.[1] || null;
+        if (!taskId) {
+          this.log('warn', `  ⚠️ ${platform}(${parsed.recordId}) 备注中未找到任务ID，跳过轮询`);
+          continue;
+        }
+
+        let taskStatus;
+        try {
+          taskStatus = await publisher.getTaskSetStatus(taskId);
+        } catch (e) {
+          this.log('warn', `  ⚠️ 查询任务状态失败(taskId=${taskId}): ${e.message}`);
+          continue;
+        }
+
+        if (!taskStatus) {
+          this.log('info', `  ⏳ ${platform}(${parsed.recordId}) 任务 ${taskId} 暂无结果，继续等待`);
+          continue;
+        }
+
+        if (taskStatus === 'allsuccessful' || taskStatus === 'partialsuccessful') {
+          this.log('info', `  ✅ ${platform}(${parsed.recordId}) 云发布成功(${taskStatus})，写飞书+落账本`);
+          try {
+            await this.feishu.markPlatformStatus(parsed.recordId, platform, '已发布');
+          } catch (e) {
+            this.log('error', `  ❌ 更新飞书状态失败: ${e.message}`);
+            continue;
+          }
+          try {
+            const accountName = platform === '小红书' ? parsed.xiaohongshuAccount : parsed.douyinAccount;
+            const contentHash = publisher.computeContentHash(parsed);
+            publisher.appendHistory(parsed.recordId, platform, {
+              accountName,
+              accountId: null,
+              channel: '蚁小二(云发布)',
+              at: Date.now(),
+              taskId,
+              contentHash,
+            });
+            publisher.markAsPublished(parsed.recordId, platform);
+          } catch (e) {
+            this.log('error', `  ❌ 写本地账本失败: ${e.message}`);
+          }
+        } else if (taskStatus === 'allfailed' || taskStatus === 'cancel') {
+          this.log('info', `  ❌ ${platform}(${parsed.recordId}) 云发布失败(${taskStatus})，更新飞书`);
+          try {
+            await this.feishu.markPlatformStatus(parsed.recordId, platform, '发布失败');
+          } catch (e) {
+            this.log('error', `  ❌ 更新飞书失败状态失败: ${e.message}`);
+          }
+        } else {
+          // pending / publishing → 继续等待
+          this.log('info', `  ⏳ ${platform}(${parsed.recordId}) 任务状态: ${taskStatus}，继续等待`);
+        }
+      }
+    }
+  }
+
   async publishRecords(records, reason = 'auto', options = {}) {
     this.ensureFeishuConfigured();
     const queued = this.enqueuePublishRecords(records, options);
@@ -652,6 +733,13 @@ class Scheduler {
     this.ensureFeishuConfigured();
     if (!this.running) {
       return { scheduled: 0, skipped: true };
+    }
+
+    // 补查上轮云发布（finalized=false）的最终状态
+    try {
+      await this.reconcileCloudPublishing();
+    } catch (e) {
+      this.log('warn', `⚠️ 云发布状态补查失败: ${e.message}`);
     }
 
     this.setProgress({

@@ -210,6 +210,16 @@ class FeishuClient {
     });
   }
 
+  async getRecordsByPlatformStatus(platform, status) {
+    const fieldName = platform === '小红书' ? '小红书发布状态' : '抖音发布状态';
+    const records = await this.getRecords();
+    return records.filter(r => {
+      const field = r.fields[fieldName];
+      const val = typeof field === 'string' ? field : (field?.text || '');
+      return val === status;
+    });
+  }
+
   async updateRecord(recordId, fields) {
     await this.requestWithRetry(token =>
       axios.put(

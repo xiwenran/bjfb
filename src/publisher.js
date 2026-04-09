@@ -140,7 +140,22 @@ async function requestApi(config, method, endpoint, data) {
     return response.data?.data !== undefined ? response.data.data : response.data;
   } catch (error) {
     const message = error.response?.data?.message || error.message;
-    throw new Error(`蚁小二API错误: ${message}`);
+    const err = new Error(`蚁小二API错误: ${message}`);
+    err.response = error.response;
+    throw err;
+  }
+}
+
+// 自动降级：先用新路径，404 时降级到旧路径
+async function requestApiWithFallback(config, method, primaryPath, fallbackPath, params) {
+  try {
+    return await requestApi(config, method, primaryPath, params);
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      console.warn(`⚠️ ${primaryPath} 返回 404，降级到 ${fallbackPath}`);
+      return await requestApi(config, method, fallbackPath, params);
+    }
+    throw e;
   }
 }
 
@@ -150,7 +165,7 @@ async function getTeams(config) {
 }
 
 async function getAccounts(config, params = {}) {
-  const result = await requestApi(config, 'GET', '/platform-accounts', {
+  const result = await requestApiWithFallback(config, 'GET', '/v2/platform/accounts', '/platform-accounts', {
     page: 1,
     size: 200,
     ...params,
@@ -188,7 +203,7 @@ async function getAllAccounts(config, params = {}) {
 }
 
 async function getPublishRecordsApi(config, params = {}) {
-  const result = await requestApi(config, 'GET', '/taskSets', {
+  const result = await requestApiWithFallback(config, 'GET', '/v2/taskSets', '/taskSets', {
     page: params.page || 1,
     size: params.size || 20,
   });
@@ -201,8 +216,11 @@ async function getPublishRecordsApi(config, params = {}) {
 }
 
 async function getUploadUrlApi(config, fileName, fileSize, contentType) {
+  // 同时发送新旧参数名，服务端选其一；兼容新版（fileKey/size）和旧版（fileName/fileSize）
   const result = await requestApi(config, 'GET', '/storages/cloud-publish/upload-url', {
+    fileKey: fileName,
     fileName,
+    size: fileSize,
     fileSize,
     contentType,
   });
@@ -221,11 +239,25 @@ async function getAccountMusicCategoryApi(config, platformAccountId) {
   return requestApi(config, 'GET', `/platform-accounts/${platformAccountId}/music/category`);
 }
 
-async function getAccountTopicsApi(config, platformAccountId, keyword) {
-  return requestApi(config, 'GET', `/platform-accounts/${platformAccountId}/topics`, {
-    keyWord: keyword,
-  });
+async function getAccountCategoriesApi(config, platformAccountId, publishType = 'imageText') {
+  try {
+    return await requestApi(config, 'GET',
+      `/platform-accounts/${platformAccountId}/categories`,
+      { publishType }
+    );
+  } catch (e) {
+    if (e?.response?.status === 404) {
+      console.warn(`⚠️ /categories 返回 404，降级到旧版 /topics 接口`);
+      return await requestApi(config, 'GET',
+        `/platform-accounts/${platformAccountId}/topics`,
+        { keyWord: '' }
+      );
+    }
+    throw e;
+  }
 }
+// 向后兼容别名
+const getAccountTopicsApi = getAccountCategoriesApi;
 
 async function publishTaskApi(config, payload) {
   return requestApi(config, 'POST', '/taskSets/v2', payload);
@@ -482,6 +514,25 @@ async function getPublishRecords(options = {}) {
     size: options.size || 50,
   });
   return result.data || [];
+}
+
+// 云发布轮询：根据 taskSetId 查询蚁小二任务的最终状态
+// 返回 taskSetStatus 字符串，或 null（查不到 / 接口失败）
+async function getTaskSetStatus(taskSetId) {
+  if (!taskSetId) return null;
+  const yixiaoerConfig = getActiveYixiaoerConfig();
+  try {
+    const result = await getPublishRecordsApi(yixiaoerConfig, { page: 1, size: 30 });
+    const records = result?.data || [];
+    const task = records.find(r =>
+      String(r.id || '') === String(taskSetId) ||
+      String(r.taskSetId || '') === String(taskSetId)
+    );
+    return task?.taskSetStatus || null;
+  } catch (e) {
+    console.warn(`⚠️ 查询 taskSetStatus(${taskSetId}) 失败: ${e.message}`);
+    return null;
+  }
 }
 
 function extractTaskMeta(responseData) {
@@ -1476,6 +1527,7 @@ module.exports = {
   getAccountList,
   validateAccount,
   getPublishRecords,
+  getTaskSetStatus,
   getAccountAliasIndex,
   collectAccountAliases,
   resetRuntimeState,
