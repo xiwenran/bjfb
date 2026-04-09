@@ -141,6 +141,7 @@ function getRuntimePaths() {
     tempDir: path.join(dataDir, 'tmp'),
     logsDir: path.join(dataDir, 'logs'),
     ledgerPath: path.join(dataDir, 'publish-ledger.json'),
+    historyPath: path.join(dataDir, 'publish-history.json'),
     legacyConfigPath: LEGACY_CONFIG_PATH,
     legacyLedgerPath: LEGACY_LEDGER_PATH,
     legacyNamedConfigPaths: LEGACY_APP_DIRECTORY_NAMES.map((name) => path.join(configBaseDir, name, 'config.json')),
@@ -283,6 +284,24 @@ function saveLedger(data) {
   writeJsonFile(paths.ledgerPath, data || {});
 }
 
+function readHistory() {
+  const { paths } = initializeAppStorage();
+  return readJsonFile(paths.historyPath, {}) || {};
+}
+
+function saveHistory(data) {
+  const paths = getRuntimePaths();
+  ensureRuntimeDirs(paths);
+  // 原子写：先写 .tmp 再 rename，避免进程被强杀时损坏血统账本
+  const tmp = `${paths.historyPath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data || {}, null, 2), 'utf-8');
+  fs.renameSync(tmp, paths.historyPath);
+}
+
+function getHistoryPath() {
+  return getRuntimePaths().historyPath;
+}
+
 function getRecordTempDir(recordId) {
   const paths = getRuntimePaths();
   const safeRecordId = String(recordId || 'unknown').replace(/[\\/:*?"<>|]/g, '_');
@@ -308,6 +327,9 @@ module.exports = {
   saveConfig,
   readLedger,
   saveLedger,
+  readHistory,
+  saveHistory,
+  getHistoryPath,
   getRecordTempDir,
   isFeishuConfigured,
   isYixiaoerConfigured,

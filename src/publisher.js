@@ -3,7 +3,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
-const { loadConfig, readLedger, saveLedger } = require('./config-store.js');
+const { loadConfig, readLedger, saveLedger, readHistory, saveHistory, getHistoryPath } = require('./config-store.js');
 const { mapWithConcurrency } = require('./async-utils.js');
 const {
   normalizePublishedEntry,
@@ -13,6 +13,8 @@ const {
 } = require('./publish-guard.js');
 const DEFAULT_API_BASE_URL = 'https://www.yixiaoer.cn/api';
 const DEFAULT_PENDING_STATUS_GUARD_MS = 2 * 60 * 1000;
+// 链路 C1 防御：发布前/发布失败后查询蚁小二 /taskSets 的"最近窗口"（小时）
+const C1_DEDUP_WINDOW_HOURS = 12;
 const PLATFORM_RULES = {
   DouYin: { code: 'DouYin', name: '抖音', supportedTypes: ['video', 'imageText', 'article'] },
   XiaoHongShu: { code: 'XiaoHongShu', name: '小红书', supportedTypes: ['video', 'imageText'] },
@@ -749,8 +751,6 @@ const publishedCache = new Map(); // key: "recordId:platform" → ledger entry
 const publishHistoryCache = new Map();
 
 function loadPublishedLedger() {
-  if (!fs.existsSync(LEDGER_PATH)) return;
-  let data;
   try {
     const data = readLedger();
     for (const key of Object.keys(data || {})) {
@@ -759,7 +759,7 @@ function loadPublishedLedger() {
     }
   } catch (e) {
     // 防重失效是不可接受的——宁可启动失败也不要静默继续
-    const msg = `🚨 读取发布账本失败 (${LEDGER_PATH}): ${e.message}。防重账本不可用，拒绝启动。`;
+    const msg = `🚨 读取发布账本失败: ${e.message}。防重账本不可用，拒绝启动。`;
     console.error(msg);
     throw new Error(msg);
   }
@@ -772,16 +772,18 @@ function savePublishedLedger() {
   } catch (e) {
     console.warn(`⚠️ 保存发布账本失败: ${e.message}`);
   }
-  let data;
+}
+
+function loadPublishHistory() {
   try {
-    data = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf-8'));
+    const data = readHistory();
+    for (const recordId of Object.keys(data || {})) {
+      publishHistoryCache.set(recordId, data[recordId] || {});
+    }
   } catch (e) {
-    const msg = `🚨 读取血统账本失败 (${HISTORY_PATH}): ${e.message}。跨账号防护不可用，拒绝启动。`;
+    const msg = `🚨 读取血统账本失败: ${e.message}。跨账号防护不可用，拒绝启动。`;
     console.error(msg);
     throw new Error(msg);
-  }
-  for (const recordId of Object.keys(data || {})) {
-    publishHistoryCache.set(recordId, data[recordId] || {});
   }
 }
 
@@ -806,7 +808,7 @@ function findCrossRecordByContentHash(currentRecordId, platform, contentHash) {
 
 function savePublishHistory() {
   const data = Object.fromEntries(publishHistoryCache.entries());
-  atomicWriteJson(HISTORY_PATH, data);
+  saveHistory(data);
 }
 
 function getPublishKey(recordId, platform) {
