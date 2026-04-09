@@ -319,15 +319,43 @@ class FeishuClient {
       .map(item => item.att);
 
     const paths = [];
+    // 用 Set 跟踪本批次内已使用的目标文件名，避免同名互相覆盖。
+    // 历史教训（2026-04-09 Codex 审计）：原本 fs.renameSync 会直接覆盖目标文件，
+    // 同一条记录里两张图都叫 "1.png" 时，第二张会把第一张本地文件覆盖掉，
+    // 上传时 paths 数组里两个元素指向同一份内容 → 笔记里少一张图。
+    // 此外 scheduler 早期让 attachments 与 videoCover 共用 tmpDir，封面与附件
+    // 同名也会互相污染，scheduler 已改为子目录隔离，这里再加一道兜底。
+    const usedNames = new Set();
     for (const att of sorted) {
       const filePath = await this.downloadAttachment(att.file_token, destDir);
       // 用原始文件名重命名（basename 防止路径穿越）
       const ext = path.extname(att.name) || '.png';
-      const safeName = path.basename(att.name.includes('.') ? att.name : `${att.name}${ext}`);
-      const newPath = path.join(destDir, safeName);
+      const rawName = path.basename(att.name.includes('.') ? att.name : `${att.name}${ext}`);
+      const dotIdx = rawName.lastIndexOf('.');
+      const stem = dotIdx > 0 ? rawName.slice(0, dotIdx) : rawName;
+      const tail = dotIdx > 0 ? rawName.slice(dotIdx) : '';
+
+      // 同名去重：先看 usedNames，再看磁盘上是否已存在；都不冲突再用，
+      // 否则在 stem 末尾追加 _2 / _3 ...。
+      let candidate = rawName;
+      let n = 2;
+      while (
+        usedNames.has(candidate) ||
+        fs.existsSync(path.join(destDir, candidate))
+      ) {
+        candidate = `${stem}_${n}${tail}`;
+        n += 1;
+      }
+      usedNames.add(candidate);
+
+      const newPath = path.join(destDir, candidate);
       fs.renameSync(filePath, newPath);
       paths.push(newPath);
-      console.log(`  📥 下载: ${att.name}`);
+      if (candidate !== rawName) {
+        console.log(`  📥 下载: ${att.name} → ${candidate}（同名去重）`);
+      } else {
+        console.log(`  📥 下载: ${att.name}`);
+      }
     }
     return paths;
   }

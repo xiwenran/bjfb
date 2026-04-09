@@ -281,7 +281,15 @@ function readLedger() {
 function saveLedger(data) {
   const paths = getRuntimePaths();
   ensureRuntimeDirs(paths);
-  writeJsonFile(paths.ledgerPath, data || {});
+  // 原子写：先写 .tmp 再 rename，与 saveHistory 对称。
+  // 历史教训（2026-04-09 Codex 审计）：原本 saveLedger 是直接 writeFileSync，
+  // saveHistory 是 tmp+rename，两者写顺序为 history 先 / ledger 后。
+  // 进程在两次写之间被强杀（或 ledger 写到一半被杀），会出现：
+  //   - 血统账本说"已发"，本地 ledger 没拦截 → 下一轮重发风险
+  //   - ledger 文件残缺 JSON → 下次启动 loadPublishedLedger() fail-closed，整个服务起不来
+  const tmp = `${paths.ledgerPath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data || {}, null, 2), 'utf-8');
+  fs.renameSync(tmp, paths.ledgerPath);
 }
 
 function readHistory() {

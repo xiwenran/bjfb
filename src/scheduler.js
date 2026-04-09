@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 const FeishuClient = require('./feishu.js');
 const publisher = require('./publisher.js');
 const { mapWithConcurrency } = require('./async-utils.js');
@@ -347,7 +348,13 @@ class Scheduler {
           recordId: record.recordId,
           detail: `正在下载《${record.title}》的视频封面`,
         });
-        const coverPaths = await this.feishu.downloadAllAttachments(record.videoCover, tmpDir);
+        // 物理隔离：cover 走独立子目录，避免封面文件名与主附件同名时互相覆盖。
+        // 历史教训（2026-04-09 Codex 审计）：原本 cover 和 attachments 共用 tmpDir，
+        // 一旦封面叫 "封面.png" 而主附件里也有同名图，后下载的会覆盖先下载的，
+        // 上传时 videoPath / imagePaths 会指向被污染过的文件。
+        const coverDir = path.join(tmpDir, 'cover');
+        if (!fs.existsSync(coverDir)) fs.mkdirSync(coverDir, { recursive: true });
+        const coverPaths = await this.feishu.downloadAllAttachments(record.videoCover, coverDir);
         record.coverPath = coverPaths[0];
       }
 

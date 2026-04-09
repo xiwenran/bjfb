@@ -241,7 +241,9 @@ this.logs = [];                  // 最多 200 条
 | 账号列表 | `/v2/platform/accounts` | `/platform-accounts` |
 | 任务列表/C1查重/轮询 | `/v2/taskSets` | `/taskSets` |
 | 分类/话题 | `/platform-accounts/:id/categories` | `/platform-accounts/:id/topics` |
-| 上传 URL | 参数双写 `fileKey`+`fileName`, `size`+`fileSize` | — |
+| 上传 URL | **只发** `fileName`+`fileSize`（fileKey 由服务端生成） | — |
+
+> ⚠️ 上传 URL 接口禁止从客户端传 `fileKey`。2026-04-09 出过事故：客户端把 fileName 当 fileKey 传过去，蚁小二用它做 OSS 全局 key，5 条不同记录里同名图片互相覆盖，最终发出的 5 条笔记内容全是最后一次上传的那篇。修复方案：`getUploadUrlApi` 只发 `fileName/fileSize`；`uploadFileToOss` 给客户端文件名再加 `crypto.randomBytes(6)` namespace 兜底。
 
 ### scheduleNext 模式
 
@@ -310,6 +312,8 @@ npm run git:sync -- "提交信息"  # add + commit + push
 | 2026-04 | index.html | `renderRecordList` 分组判断同上，空状态记录也显示在待发布区 | 改为白名单：只有 `待发布/发布中/发布失败/已发布(跨账号已拒绝)` 才归入待发布 |
 | 2026-04-09 | publisher.js:218 | **重大事故**：`getUploadUrlApi` 主动传 `fileKey: fileName`，让蚁小二把客户端文件名当 OSS 全局 key，5 条不同记录里的同名图片（"1.png"/"封面.png"）互相覆盖，最终发出去的笔记内容**全部是最后一次上传的那篇**。本地账本仍是 5 个不同 contentHash（因为飞书 file_token 不同），所以红线没拦住——根因是上传链路被污染。 | 1) `getUploadUrlApi` 回滚到只发 `fileName/fileSize`，由服务端生成唯一 key；2) `uploadFileToOss` 给客户端文件名加 `crypto.randomBytes(6)` 随机 namespace 前缀作兜底，即便服务端 bug 也不会跨记录覆盖 |
 | 2026-04 | feishu.js | 附件排序只提取前缀整数，`1(2).png`/`1.2.png` 内部顺序靠飞书上传顺序兜底 | 新增括号子序号和小数点子序号解析，`1(1)<1(2)`、`1.1<1.2` 均可靠排序 |
+| 2026-04-09 | config-store.js:281 | `saveLedger` 是直接 `writeFileSync`，与 `saveHistory` 的 tmp+rename 不对称。scheduler 的写入顺序是 history 先 / ledger 后，进程在两次写之间被强杀会出现"血统说已发、ledger 没拦截"的不一致；ledger 写到一半被杀还会留下残缺 JSON，下次启动 `loadPublishedLedger` fail-closed 整个服务起不来 | 改为原子写：先写 `.tmp` 再 `rename`，与 `saveHistory` 对称 |
+| 2026-04-09 | feishu.js:284 / scheduler.js:350 | `downloadAllAttachments` 用 `fs.renameSync` 写入飞书原始文件名，POSIX 上同名会静默覆盖；同一条记录里两张同名图会塌成一份，scheduler 让 attachments 与 videoCover 共用同一 `tmpDir` 也会跨集合污染（封面 vs 主附件同名时） | 1) 在 `downloadAllAttachments` 内部用 `usedNames` Set + `existsSync` 双重检测，遇到同名自动追加 `_2/_3...` 后缀；2) scheduler 把 cover 下载到 `tmpDir/cover/` 子目录，与主附件目录物理隔离 |
 
 ---
 
@@ -319,3 +323,4 @@ npm run git:sync -- "提交信息"  # add + commit + push
 - [ ] 音乐库状态 `musicLibraryState` 多个异步函数共享，极端情况可能竞态
 - [ ] `refreshRecords()` 等 Promise 调用方未 await，失败时 UI 静默不同步（低优先级）
 - [ ] reconcileCloudPublishing 的 accountId 字段为 null（从飞书记录无法还原），影响跨账号检查精度（低优先级，contentHash 已兜底）
+- [ ] **c1Suspect 漏发风险**（2026-04-09 Codex 审计发现）：`publisher.js:1473` 网络异常+二次确认接口也挂时，返回 `success:true, c1Suspect:true`，scheduler 会把它写成"已发布"。如果原始 POST 实际上没到蚁小二，这条会被静默漏发且永不重试。**当年的设计权衡**是宁可漏发也不双发。修复方案：新增飞书状态 `待核验`，c1Suspect 路径只写"待核验"，调度器单独跑核验循环反复查 `/v2/taskSets`，命中改"已发布"，多次未命中改回"待发布"。涉及飞书字段配置变更和 scheduler 状态机分支，单独开 PR。
