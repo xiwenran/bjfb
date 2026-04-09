@@ -286,29 +286,34 @@ class FeishuClient {
 
     // 仅对”前缀就是数字”的文件名按数字排序，其余保持飞书原顺序，
     // 避免”封面 (3).png”或”课程封面_11.png”被误排到最前面。
-    // 支持 macOS 重名命名风格：1(1).png < 1(2).png < 1(3).png
+    // 支持两种子序号风格（等价）：
+    //   小数点：0.1 < 1 < 1.1 < 1.2 < 2 < 11 < 12
+    //   括号：  1(1) < 1(2)（macOS 重名风格）
+    const parseSortKey = (name) => {
+      // 小数点风格：”1.2.png” → [1, 2]；”0.1.png” → [0, 1]
+      const dec = name.match(/^(\d+)\.(\d+)/);
+      if (dec) return [Number(dec[1]), Number(dec[2])];
+      // 括号风格：”1(2).png” → [1, 2]；”1.png” → [1, -1]
+      const paren = name.match(/^(\d+)(?:\((\d+)\))?/);
+      if (paren) return [Number(paren[1]), paren[2] != null ? Number(paren[2]) : -1];
+      return null;
+    };
+
     const sorted = [...attachments]
       .map((att, index) => ({ att, index }))
       .sort((left, right) => {
         const leftName = path.basename(String(left.att.name || ''));
         const rightName = path.basename(String(right.att.name || ''));
-        // 匹配 “数字” 或 “数字(子序号)”，如 “2.png”、”2(3).png”
-        const leftMatch = leftName.match(/^(\d+)(?:\((\d+)\))?/);
-        const rightMatch = rightName.match(/^(\d+)(?:\((\d+)\))?/);
-        const leftPrimary = leftMatch ? Number(leftMatch[1]) : null;
-        const rightPrimary = rightMatch ? Number(rightMatch[1]) : null;
+        const leftKey = parseSortKey(leftName);
+        const rightKey = parseSortKey(rightName);
 
-        if (leftPrimary !== null && rightPrimary !== null) {
-          const cmp = leftPrimary - rightPrimary;
+        if (leftKey && rightKey) {
+          const cmp = leftKey[0] - rightKey[0];
           if (cmp !== 0) return cmp;
-          // 同主序号：按括号内子序号排，无括号的排最前
-          const leftSub = leftMatch[2] != null ? Number(leftMatch[2]) : -1;
-          const rightSub = rightMatch[2] != null ? Number(rightMatch[2]) : -1;
-          return leftSub - rightSub || left.index - right.index;
+          return leftKey[1] - rightKey[1] || left.index - right.index;
         }
-
-        if (leftPrimary !== null) return -1;
-        if (rightPrimary !== null) return 1;
+        if (leftKey) return -1;
+        if (rightKey) return 1;
         return left.index - right.index;
       })
       .map(item => item.att);
