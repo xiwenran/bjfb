@@ -20,6 +20,7 @@ const {
   isYixiaoerConfigured,
 } = require('./config-store.js');
 
+const APP_VERSION = require('../package.json').version;
 const storage = initializeAppStorage();
 const runtimePaths = storage.paths;
 const storageState = storage.state;
@@ -358,6 +359,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, {
       ...scheduler.getStatus(),
       configState: getConfigState(),
+      version: APP_VERSION,
     });
   }
 

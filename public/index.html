@@ -1286,6 +1286,7 @@
         <span>数据</span>
       </button>
     </div>
+    <div style="margin-top:auto;padding:12px 8px 4px;text-align:center;font-size:10px;color:rgba(255,255,255,0.2);user-select:none;" id="appVersionLabel"></div>
   </aside>
 
   <main class="workspace-main">
@@ -2337,6 +2338,10 @@ async function refreshStatus() {
     lastStatusSignature = signature;
     latestStatusData = status;
     latestPendingCount = formatCount(pendingCountValue);
+    if (status.version) {
+      const vEl = document.getElementById('appVersionLabel');
+      if (vEl) vEl.textContent = `v${status.version}`;
+    }
     const el = document.getElementById('serviceStatus');
     const toolbarStatusEl = document.getElementById('toolbarServiceStatus');
     if (status.running) {
@@ -2402,12 +2407,22 @@ function renderRecordList(records) {
     ? records.filter(r => (r.title || '').toLowerCase().includes(recordSearchQuery))
     : records;
 
+  // 有账号且状态明确需要处理的才算待发布；空状态（未设置）不纳入
+  const ACTIVE_STATUSES = new Set(['待发布', '发布中', '发布失败', '已发布(跨账号已拒绝)']);
   for (const record of filteredRecords) {
-    const xhsDone = record.xiaohongshuStatus === '已发布' || !record.xiaohongshuAccount;
-    const dyDone = record.douyinStatus === '已发布' || !record.douyinAccount;
+    const xhsActive = record.xiaohongshuAccount && ACTIVE_STATUSES.has(record.xiaohongshuStatus);
+    const dyActive = record.douyinAccount && ACTIVE_STATUSES.has(record.douyinStatus);
+    const xhsDone = !record.xiaohongshuAccount || record.xiaohongshuStatus === '已发布';
+    const dyDone = !record.douyinAccount || record.douyinStatus === '已发布';
 
-    if (xhsDone && dyDone) completedRecords.push(record);
-    else pendingRecords.push(record);
+    if (!xhsActive && !dyActive) {
+      // 没有任何平台处于"需要处理"状态（含状态为空的记录）→ 折叠到已发布区
+      completedRecords.push(record);
+    } else if (xhsDone && dyDone) {
+      completedRecords.push(record);
+    } else {
+      pendingRecords.push(record);
+    }
   }
 
   pendingRecords.sort((a, b) => {
