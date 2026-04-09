@@ -284,10 +284,11 @@ npm run git:sync -- "提交信息"  # add + commit + push
 
 ### 已确认的设计方向
 - **配色**：暖灰背景 `#f2f1ef`，绿色调右栏 `#f3f8f5`，深色顶栏 `#1d1d1f`
-- **导航**：无文字标签，只有 emoji 图标（🏠📤⚙️📊），激活时绿色背景
+- **导航顺序**：顶部组 🏠总览 → 📤发布 → 📊数据；底部组（`margin-top:auto`）⚙️设置；最底部版本号
 - **卡片**：`box-shadow` 提供层次感，hover 有 `translateY(-1px) scale(1.005)`
 - **选中记录**：左侧绿色 border `border-left: 3px solid var(--accent)`
 - **工具栏**：2-column grid，左边标题，右边 pills + 按钮，不能改成竖排
+- **版本号**：左侧栏最底部，从 `/api/status` 返回的 `version` 字段读取，`id="appVersionLabel"`
 
 ### 明确拒绝的设计
 - ❌ 工具栏 `flex-direction: column` 竖排（用户说"割裂突兀"）
@@ -306,6 +307,8 @@ npm run git:sync -- "提交信息"  # add + commit + push
 | 2026-04 | publisher.js | 打包后崩溃：`LEDGER_PATH is not defined` + `loadPublishHistory` 函数体被意外合并进 `savePublishedLedger` | 迁移到 config-store.js 的 `readLedger/readHistory/saveHistory` |
 | 2026-04 | scheduler.js | cherry-pick 后 R6 修复（markPlatformStatus→appendHistory→markAsPublished 链）被丢失，云发布永远不落账本 | 手动补回完整链路 |
 | 2026-04 | server.js | `isPendingRecord` 用 `!== '已发布'`，平台状态为空也被算入待发布计数 | 改为 `=== '待发布'`，与调度器 `isPlatformPending` 保持一致 |
+| 2026-04 | index.html | `renderRecordList` 分组判断同上，空状态记录也显示在待发布区 | 改为白名单：只有 `待发布/发布中/发布失败/已发布(跨账号已拒绝)` 才归入待发布 |
+| 2026-04 | feishu.js | 附件排序只提取前缀整数，`1(2).png`/`1.2.png` 内部顺序靠飞书上传顺序兜底 | 新增括号子序号和小数点子序号解析，`1(1)<1(2)`、`1.1<1.2` 均可靠排序 |
 
 ---
 
