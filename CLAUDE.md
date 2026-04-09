@@ -308,6 +308,7 @@ npm run git:sync -- "提交信息"  # add + commit + push
 | 2026-04 | scheduler.js | cherry-pick 后 R6 修复（markPlatformStatus→appendHistory→markAsPublished 链）被丢失，云发布永远不落账本 | 手动补回完整链路 |
 | 2026-04 | server.js | `isPendingRecord` 用 `!== '已发布'`，平台状态为空也被算入待发布计数 | 改为 `=== '待发布'`，与调度器 `isPlatformPending` 保持一致 |
 | 2026-04 | index.html | `renderRecordList` 分组判断同上，空状态记录也显示在待发布区 | 改为白名单：只有 `待发布/发布中/发布失败/已发布(跨账号已拒绝)` 才归入待发布 |
+| 2026-04-09 | publisher.js:218 | **重大事故**：`getUploadUrlApi` 主动传 `fileKey: fileName`，让蚁小二把客户端文件名当 OSS 全局 key，5 条不同记录里的同名图片（"1.png"/"封面.png"）互相覆盖，最终发出去的笔记内容**全部是最后一次上传的那篇**。本地账本仍是 5 个不同 contentHash（因为飞书 file_token 不同），所以红线没拦住——根因是上传链路被污染。 | 1) `getUploadUrlApi` 回滚到只发 `fileName/fileSize`，由服务端生成唯一 key；2) `uploadFileToOss` 给客户端文件名加 `crypto.randomBytes(6)` 随机 namespace 前缀作兜底，即便服务端 bug 也不会跨记录覆盖 |
 | 2026-04 | feishu.js | 附件排序只提取前缀整数，`1(2).png`/`1.2.png` 内部顺序靠飞书上传顺序兜底 | 新增括号子序号和小数点子序号解析，`1(1)<1(2)`、`1.1<1.2` 均可靠排序 |
 
 ---

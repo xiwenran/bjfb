@@ -216,11 +216,12 @@ async function getPublishRecordsApi(config, params = {}) {
 }
 
 async function getUploadUrlApi(config, fileName, fileSize, contentType) {
-  // 同时发送新旧参数名，服务端选其一；兼容新版（fileKey/size）和旧版（fileName/fileSize）
+  // 只发 fileName/fileSize，由服务端生成唯一 fileKey 返回。
+  // 历史教训（2026-04-09）：曾把 fileKey: fileName 一起发过去，蚁小二服务端把客户端传来的
+  // 文件名当作 OSS 全局 key，多条记录里同名图片（"1.png"/"封面.png"）互相覆盖，
+  // 最终发出去的 5 条笔记内容全是最后一次上传的图。该字段禁止从客户端覆盖。
   const result = await requestApi(config, 'GET', '/storages/cloud-publish/upload-url', {
-    fileKey: fileName,
     fileName,
-    size: fileSize,
     fileSize,
     contentType,
   });
@@ -416,8 +417,16 @@ function buildContentPublishForm(platformName, publishType, params) {
 }
 
 async function uploadFileToOss(config, filePath) {
-  const fileName = path.basename(filePath);
+  const baseName = path.basename(filePath);
   const fileSize = fs.statSync(filePath).size;
+
+  // 兜底防御（2026-04-09 事故）：即便服务端也以客户端传入的文件名为 key，
+  // 给每次上传加一段随机 namespace，确保跨记录、跨账号的同名文件不会互相覆盖。
+  // 1/2^48 的碰撞概率对单次发布会话已经足够安全。
+  const ext = path.extname(baseName);
+  const nameOnly = baseName.slice(0, baseName.length - ext.length);
+  const ns = crypto.randomBytes(6).toString('hex');
+  const fileName = `${ns}_${nameOnly}${ext}`;
 
   let contentType = 'application/octet-stream';
   if (fileName.endsWith('.mp4')) contentType = 'video/mp4';
