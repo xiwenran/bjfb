@@ -8,7 +8,8 @@ const {
   buildDesiredAccountNamesFromRecords,
   autoMapAccountMappings,
 } = require('./account-mapping.js');
-const { getRecordTempDir, isFeishuConfigured, saveConfig } = require('./config-store.js');
+const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache } = require('./config-store.js');
+const { generateContent } = require('./ai-writer.js');
 const DEFAULT_RECENT_RECORD_GUARD_MS = 2 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
@@ -159,6 +160,55 @@ class Scheduler {
     if (!record.title) return false;
     if (!Array.isArray(record.attachments) || record.attachments.length === 0) return false;
     return true;
+  }
+
+  async runAiWriting(records) {
+    const AI_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let cache;
+    try {
+      cache = readAiWritingCache();
+    } catch (e) {
+      cache = {};
+    }
+
+    const candidates = records.filter(r => {
+      if (!r.topic) return false;
+      // 只处理最近 24 小时内修改过的记录
+      if (r.modifiedTime && r.modifiedTime < now - AI_WINDOW_MS) return false;
+      // 笔记主题与上次生成时相同则跳过
+      const cached = cache[r.recordId];
+      if (cached && cached.topic === r.topic) return false;
+      return true;
+    });
+
+    if (candidates.length === 0) return;
+
+    this.log('info', `✍️ AI 写作：发现 ${candidates.length} 条待生成记录`);
+    const aiConfig = this.config.aiWriting;
+
+    for (const record of candidates) {
+      try {
+        const result = await generateContent(aiConfig, record);
+        const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
+        await this.feishu.updateRecord(record.recordId, {
+          '标题': result.title,
+          '正文': result.description,
+          '标签': tagsStr,
+        });
+        cache[record.recordId] = { topic: record.topic, generatedAt: new Date().toISOString() };
+        this.log('info', `✅ AI 写作完成：《${result.title}》`);
+      } catch (e) {
+        this.log('warn', `⚠️ AI 写作失败（${record.recordId}）：${e.message}`);
+        // 不更新缓存，下次扫描重试
+      }
+    }
+
+    try {
+      saveAiWritingCache(cache);
+    } catch (e) {
+      this.log('warn', `⚠️ AI 写作缓存保存失败：${e.message}`);
+    }
   }
 
   shouldUseYixiaoer(record) {
@@ -777,6 +827,11 @@ class Scheduler {
     try {
       const records = await this.feishu.getUnpublishedRecords();
       const parsed = records.map(r => this.feishu.parseRecord(r));
+
+      if (this.config.aiWriting?.enabled) {
+        await this.runAiWriting(parsed);
+      }
+
       const now = new Date();
       let scheduledCount = 0;
       let dueNow = [];

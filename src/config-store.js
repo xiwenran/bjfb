@@ -54,6 +54,13 @@ const DEFAULT_CONFIG = {
     xiaohongshu: {},
     douyin: {},
   },
+  aiWriting: {
+    enabled: false,
+    provider: 'openai',
+    apiBaseUrl: '',
+    apiKey: '',
+    model: 'gpt-4o-mini',
+  },
 };
 
 function cloneDefaultConfig() {
@@ -142,6 +149,7 @@ function getRuntimePaths() {
     logsDir: path.join(dataDir, 'logs'),
     ledgerPath: path.join(dataDir, 'publish-ledger.json'),
     historyPath: path.join(dataDir, 'publish-history.json'),
+    aiWritingCachePath: path.join(dataDir, 'ai-writing-cache.json'),
     legacyConfigPath: LEGACY_CONFIG_PATH,
     legacyLedgerPath: LEGACY_LEDGER_PATH,
     legacyNamedConfigPaths: LEGACY_APP_DIRECTORY_NAMES.map((name) => path.join(configBaseDir, name, 'config.json')),
@@ -310,6 +318,19 @@ function getHistoryPath() {
   return getRuntimePaths().historyPath;
 }
 
+function readAiWritingCache() {
+  const paths = getRuntimePaths();
+  return readJsonFile(paths.aiWritingCachePath, {}) || {};
+}
+
+function saveAiWritingCache(data) {
+  const paths = getRuntimePaths();
+  ensureRuntimeDirs(paths);
+  const tmp = `${paths.aiWritingCachePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data || {}, null, 2), 'utf-8');
+  fs.renameSync(tmp, paths.aiWritingCachePath);
+}
+
 function getRecordTempDir(recordId) {
   const paths = getRuntimePaths();
   const safeRecordId = String(recordId || 'unknown').replace(/[\\/:*?"<>|]/g, '_');
@@ -342,4 +363,6 @@ module.exports = {
   isFeishuConfigured,
   isYixiaoerConfigured,
   normalizeConfig,
+  readAiWritingCache,
+  saveAiWritingCache,
 };

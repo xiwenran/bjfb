@@ -19,6 +19,7 @@ const {
   isFeishuConfigured,
   isYixiaoerConfigured,
 } = require('./config-store.js');
+const { generateContent, testConnection } = require('./ai-writer.js');
 
 const APP_VERSION = require('../package.json').version;
 const storage = initializeAppStorage();
@@ -901,6 +902,74 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, { success: false, error: e.message }, 500);
       }
     }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  // ── AI 写作配置 ──────────────────────────────────────────────────────────
+  if (pathname === '/api/config/ai-writing' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const data = JSON.parse(body || '{}');
+        config.aiWriting = config.aiWriting || {};
+        if (data.enabled !== undefined) config.aiWriting.enabled = Boolean(data.enabled);
+        if (data.provider) config.aiWriting.provider = String(data.provider);
+        if (data.apiBaseUrl !== undefined) config.aiWriting.apiBaseUrl = String(data.apiBaseUrl || '');
+        if (data.apiKey && data.apiKey !== '******') config.aiWriting.apiKey = String(data.apiKey);
+        if (data.model) config.aiWriting.model = String(data.model);
+        saveConfig();
+        return sendJson(res, { success: true, message: 'AI 写作配置已保存' });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, 500));
+    return;
+  }
+
+  // ── AI 写作：测试连接 ─────────────────────────────────────────────────────
+  if (pathname === '/api/ai-writing/test' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const aiConfig = {
+          provider: data.provider || config.aiWriting?.provider || 'openai',
+          apiBaseUrl: data.apiBaseUrl || config.aiWriting?.apiBaseUrl || '',
+          apiKey: (data.apiKey && data.apiKey !== '******') ? data.apiKey : config.aiWriting?.apiKey || '',
+          model: data.model || config.aiWriting?.model || 'gpt-4o-mini',
+        };
+        const result = await testConnection(aiConfig);
+        return sendJson(res, { success: true, message: '连接成功', data: result });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, 500));
+    return;
+  }
+
+  // ── AI 写作：手动为单条记录生成内容 ──────────────────────────────────────
+  if (pathname === '/api/ai-writing/generate' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { recordId } = JSON.parse(body || '{}');
+        if (!recordId) return sendJson(res, { success: false, error: '缺少 recordId' }, 400);
+        ensureFeishuConfigReady();
+        const records = await feishu.getUnpublishedRecords();
+        const raw = records.find(r => r.record_id === recordId);
+        if (!raw) return sendJson(res, { success: false, error: '找不到该记录' }, 404);
+        const record = feishu.parseRecord(raw);
+        if (!record.topic) return sendJson(res, { success: false, error: '该记录"笔记主题"为空，无法生成' }, 400);
+        if (!config.aiWriting?.apiKey) return sendJson(res, { success: false, error: 'AI 写作未配置 API Key' }, 400);
+        const result = await generateContent(config.aiWriting, record);
+        const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
+        await feishu.updateRecord(recordId, {
+          '标题': result.title,
+          '正文': result.description,
+          '标签': tagsStr,
+        });
+        return sendJson(res, { success: true, message: 'AI 内容已生成并回写飞书', data: result });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, 500));
     return;
   }
 

@@ -1395,6 +1395,10 @@
                 <span class="subnav-btn-title">默认音乐</span>
                 <span class="subnav-btn-meta">管理抖音默认配乐</span>
               </button>
+              <button class="subnav-btn" data-setup-pane="ai-writing" onclick="switchSetupPane('ai-writing')">
+                <span class="subnav-btn-title">AI 写作</span>
+                <span class="subnav-btn-meta">自动生成标题正文标签</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1544,6 +1548,64 @@
             </div>
           </div>
         </div>
+      <div class="setup-pane" id="setup-pane-ai-writing">
+        <div class="workspace-card">
+          <h3>AI 写作</h3>
+          <p style="color:var(--ink-3);font-size:13px;margin:8px 0 16px;">检测飞书"笔记主题"字段变化，自动生成标题、正文、标签并回写表格。</p>
+
+          <div class="config-form">
+            <div class="config-grid" style="grid-template-columns:1fr;gap:12px;">
+
+              <div class="config-field" style="display:flex;align-items:center;gap:10px;">
+                <label class="config-label" style="margin:0;white-space:nowrap;">启用 AI 写作</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input type="checkbox" id="aiWritingEnabled" onchange="onAiProviderChange()" style="width:16px;height:16px;cursor:pointer;">
+                  <span style="font-size:13px;color:var(--ink-2);">开启后每次扫描时自动检测并生成</span>
+                </label>
+              </div>
+
+              <div class="config-field">
+                <label class="config-label">AI 服务商</label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                    <input type="radio" name="aiProvider" value="openai" onchange="onAiProviderChange()"> OpenAI 兼容（推荐）
+                  </label>
+                  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                    <input type="radio" name="aiProvider" value="anthropic" onchange="onAiProviderChange()"> Anthropic Claude 官方
+                  </label>
+                  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                    <input type="radio" name="aiProvider" value="gemini" onchange="onAiProviderChange()"> Google Gemini 官方
+                  </label>
+                </div>
+                <div style="font-size:12px;color:var(--ink-3);margin-top:4px;">使用中转站请选"OpenAI 兼容"并填入中转站地址</div>
+              </div>
+
+              <div class="config-field" id="aiBaseUrlField">
+                <label class="config-label">API Base URL</label>
+                <input class="config-input" id="aiApiBaseUrl" type="text" placeholder="https://api.openai.com/v1">
+              </div>
+
+              <div class="config-field">
+                <label class="config-label">API Key</label>
+                <input class="config-input" id="aiApiKey" type="password" placeholder="sk-...">
+              </div>
+
+              <div class="config-field">
+                <label class="config-label">模型名称</label>
+                <input class="config-input" id="aiModel" type="text" placeholder="gpt-4o-mini">
+                <div style="font-size:12px;color:var(--ink-3);margin-top:4px;">OpenAI: gpt-4o-mini / gpt-4o &nbsp;|&nbsp; Claude: claude-3-5-haiku-20241022 &nbsp;|&nbsp; Gemini: gemini-2.0-flash</div>
+              </div>
+
+            </div>
+
+            <div class="settings-actions" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-sm btn-primary" onclick="saveAiWritingConfig()">保存配置</button>
+              <button class="btn btn-sm btn-secondary" onclick="testAiConnection()" id="aiTestBtn">测试连接</button>
+            </div>
+            <div id="aiWritingStatus" style="margin-top:10px;font-size:13px;color:var(--ink-2);"></div>
+          </div>
+        </div>
+      </div>
       </div>
     </div>
   </aside>
@@ -1711,6 +1773,14 @@ const SETUP_META = {
     previewEyebrow: '配乐状态',
     previewTitle: '默认配乐状态',
     previewDescription: '当前默认音乐名称、可用状态和最近更新信息展示在这里。'
+  },
+  'ai-writing': {
+    eyebrow: '设置 / AI 写作',
+    title: 'AI 写作',
+    description: '配置 AI 接口，检测飞书"笔记主题"字段变化后自动生成标题、正文和标签。',
+    previewEyebrow: 'AI 配置',
+    previewTitle: 'AI 写作状态',
+    previewDescription: '显示 AI 写作启用状态、服务商配置和最近生成记录。'
   }
 };
 
@@ -1783,6 +1853,8 @@ function ensureSetupPaneLoaded(pane) {
     loadCurrentMusic();
   } else if (pane === 'schedule') {
     refreshStatus();
+  } else if (pane === 'ai-writing') {
+    loadAiWritingConfig();
   }
 }
 
@@ -2139,6 +2211,22 @@ function renderPublishPreview() {
     ], '当前记录还没有配置目标账号'),
     buildPreviewListBlock('发布备注', record.note ? [escapeHtml(record.note)] : [], '当前没有异常或备注信息'),
     publishBtnHtml,
+    latestStatusData?.config?.aiWriting?.apiKey
+      ? `<div class="preview-block" style="padding-top:0;">
+          <button id="aiGenBtn-${escapeHtml(record.recordId)}"
+            onclick="triggerAiGenerate('${escapeJsSingleQuotedString(record.recordId)}')"
+            style="width:100%; padding:8px 0; border:1px solid var(--accent); border-radius:12px;
+              background:#fff; color:var(--accent); font-size:13px; font-weight:500;
+              cursor:pointer; transition: background .15s;"
+            onmouseover="this.style.background='var(--accent-soft)'"
+            onmouseout="this.style.background='#fff'">
+            ✍️ AI 生成标题/正文/标签
+          </button>
+          <div style="font-size:11px; color:#aeaeb2; margin-top:4px; text-align:center;">
+            依据飞书"笔记主题"字段生成内容并回写
+          </div>
+        </div>`
+      : '',
   ].join('');
 }
 
@@ -2984,6 +3072,109 @@ async function saveFeishuConfig() {
     statusEl.className = 'config-status error';
     statusEl.textContent = `保存失败：${e.message}`;
     addLog('error', `保存飞书接入配置失败: ${e.message}`);
+  }
+}
+
+// ── AI 写作 ──────────────────────────────────────────────
+let aiWritingConfigLoaded = false;
+
+function onAiProviderChange() {
+  const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
+  const baseUrlField = document.getElementById('aiBaseUrlField');
+  if (baseUrlField) baseUrlField.style.display = provider === 'openai' ? '' : 'none';
+  // 切换 provider 时更新模型占位符
+  const modelInput = document.getElementById('aiModel');
+  if (modelInput && !modelInput.value) {
+    const defaults = { openai: 'gpt-4o-mini', anthropic: 'claude-3-5-haiku-20241022', gemini: 'gemini-2.0-flash' };
+    modelInput.placeholder = defaults[provider] || 'gpt-4o-mini';
+  }
+}
+
+async function loadAiWritingConfig(force = false) {
+  if (aiWritingConfigLoaded && !force) return;
+  try {
+    const resp = await fetchApi('/api/config');
+    const ai = resp.aiWriting || {};
+    document.getElementById('aiWritingEnabled').checked = !!ai.enabled;
+    const provider = ai.provider || 'openai';
+    const radio = document.querySelector(`input[name="aiProvider"][value="${provider}"]`);
+    if (radio) radio.checked = true;
+    document.getElementById('aiApiBaseUrl').value = ai.apiBaseUrl || '';
+    document.getElementById('aiApiKey').value = ai.apiKey ? '******' : '';
+    document.getElementById('aiModel').value = ai.model || '';
+    onAiProviderChange();
+    aiWritingConfigLoaded = true;
+  } catch (e) {
+    document.getElementById('aiWritingStatus').textContent = `读取配置失败：${e.message}`;
+  }
+}
+
+async function saveAiWritingConfig() {
+  const statusEl = document.getElementById('aiWritingStatus');
+  statusEl.textContent = '正在保存...';
+  try {
+    const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
+    const payload = {
+      enabled: document.getElementById('aiWritingEnabled').checked,
+      provider,
+      apiBaseUrl: document.getElementById('aiApiBaseUrl').value.trim(),
+      apiKey: document.getElementById('aiApiKey').value.trim(),
+      model: document.getElementById('aiModel').value.trim(),
+    };
+    const resp = await fetchApi('/api/config/ai-writing', 'POST', payload);
+    if (!resp.success) throw new Error(resp.error || '保存失败');
+    statusEl.style.color = 'var(--accent)';
+    statusEl.textContent = '✅ 配置已保存';
+    document.getElementById('aiApiKey').value = '******';
+    aiWritingConfigLoaded = false;
+    addLog('success', 'AI 写作配置已保存');
+  } catch (e) {
+    statusEl.style.color = '#e53e3e';
+    statusEl.textContent = `保存失败：${e.message}`;
+  }
+}
+
+async function testAiConnection() {
+  const statusEl = document.getElementById('aiWritingStatus');
+  const btn = document.getElementById('aiTestBtn');
+  btn.disabled = true;
+  statusEl.style.color = 'var(--ink-2)';
+  statusEl.textContent = '正在测试连接...';
+  try {
+    const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
+    const apiKey = document.getElementById('aiApiKey').value.trim();
+    const payload = {
+      provider,
+      apiBaseUrl: document.getElementById('aiApiBaseUrl').value.trim(),
+      apiKey: apiKey !== '******' ? apiKey : undefined,
+      model: document.getElementById('aiModel').value.trim(),
+    };
+    const resp = await fetchApi('/api/ai-writing/test', 'POST', payload);
+    if (!resp.success) throw new Error(resp.error || '连接失败');
+    statusEl.style.color = 'var(--accent)';
+    statusEl.textContent = `✅ 连接成功${resp.data?.model ? '（模型：' + resp.data.model + '）' : ''}`;
+  } catch (e) {
+    statusEl.style.color = '#e53e3e';
+    statusEl.textContent = `❌ 连接失败：${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function triggerAiGenerate(recordId) {
+  if (!recordId) return;
+  const btn = document.getElementById(`aiGenBtn-${recordId}`);
+  if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+  try {
+    const resp = await fetchApi('/api/ai-writing/generate', 'POST', { recordId });
+    if (!resp.success) throw new Error(resp.error || '生成失败');
+    addLog('success', `AI 已生成《${resp.data?.title || recordId}》的内容`);
+    await refreshRecords(true);
+  } catch (e) {
+    addLog('error', `AI 生成失败：${e.message}`);
+    alert(`AI 生成失败：${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'AI 生成'; }
   }
 }
 

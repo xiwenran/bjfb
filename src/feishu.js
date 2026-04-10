@@ -493,6 +493,9 @@ class FeishuClient {
       xiaohongshuStatus: getSelect(f['小红书发布状态'], '小红书发布状态'),
       douyinStatus: getSelect(f['抖音发布状态'], '抖音发布状态'),
       note: getText(f['备注']),
+      topic: getText(f['笔记主题']),
+      createdTime: record.created_time || 0,
+      modifiedTime: record.modified_time || 0,
     };
   }
 }
