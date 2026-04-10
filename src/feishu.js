@@ -461,6 +461,12 @@ class FeishuClient {
 
     const tags = getTagValues(f['标签']);
 
+    // 调试：打印公式字段原始格式（仅在标题为空时输出，避免日志过多）
+    const rawTitle = f['标题'];
+    if (!getText(rawTitle)) {
+      console.log(`[DEBUG parseRecord] 标题字段原始值 (recordId=${record.record_id}):`, JSON.stringify(rawTitle));
+    }
+
     // 解析发布时间
     let publishTime = null;
     if (f['发布时间']) {
