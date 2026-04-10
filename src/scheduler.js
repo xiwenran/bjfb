@@ -155,6 +155,12 @@ class Scheduler {
     return this.recordHasPendingPlatform(record);
   }
 
+  recordHasContent(record) {
+    if (!record.title) return false;
+    if (!Array.isArray(record.attachments) || record.attachments.length === 0) return false;
+    return true;
+  }
+
   shouldUseYixiaoer(record) {
     const xhsNeedsYixiaoer = record.xiaohongshuAccount
       && this.isPlatformPending(record.xiaohongshuStatus)
@@ -777,6 +783,10 @@ class Scheduler {
 
       for (const record of parsed) {
         if (!this.recordHasPendingPlatform(record)) continue;
+        if (!this.recordHasContent(record)) {
+          this.log('warn', `⚠️ 跳过《${record.title || record.recordId}》：标题或素材为空`);
+          continue;
+        }
         if (!record.publishTime) continue;
 
         const publishTime = new Date(record.publishTime);
