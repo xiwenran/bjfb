@@ -530,7 +530,11 @@ const server = http.createServer(async (req, res) => {
           xiaohongshu: await feishu.getSingleSelectFieldOptionNames('小红书账号'),
           douyin: await feishu.getSingleSelectFieldOptionNames('抖音账号'),
         };
+        console.log('[账号映射] 飞书字段选项(小红书):', desiredNames.xiaohongshu);
+        console.log('[账号映射] 蚁小二账号列表:', accounts.map(a => `${a.platformAccountName}(${a.platformName})`));
+        console.log('[账号映射] 当前映射:', JSON.stringify(config.accountMapping));
         const autoMapResult = autoMapAccountMappings(config, desiredNames, accounts, publisher.collectAccountAliases);
+        if (autoMapResult.added.length) console.log('[账号映射] 新增映射:', autoMapResult.added);
         configChanged = configChanged || autoMapResult.changed;
       }
 

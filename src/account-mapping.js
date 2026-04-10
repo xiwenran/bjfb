@@ -144,9 +144,25 @@ function autoMapAccountMappings(config, desiredNamesByPlatform = {}, accounts = 
   config.accountMapping.xiaohongshu = config.accountMapping.xiaohongshu || {};
   config.accountMapping.douyin = config.accountMapping.douyin || {};
 
+  // 先收集当前有效的账号 ID 集合，清除指向已失效账号的陈旧映射
+  const validIdsByPlatform = { xiaohongshu: new Set(), douyin: new Set() };
+  for (const account of accounts) {
+    const platformKey = resolvePlatformKeyFromAccount(account);
+    if (platformKey && account.id) validIdsByPlatform[platformKey].add(account.id);
+  }
+  let changed = false;
+  for (const platformKey of ['xiaohongshu', 'douyin']) {
+    const mapping = config.accountMapping[platformKey];
+    for (const [accountName, accountId] of Object.entries(mapping)) {
+      if (accountId && !validIdsByPlatform[platformKey].has(accountId)) {
+        delete mapping[accountName];
+        changed = true;
+      }
+    }
+  }
+
   const aliasIndex = buildAliasIndex(accounts, collectAccountAliases);
   const added = [];
-  let changed = false;
 
   for (const platformKey of ['xiaohongshu', 'douyin']) {
     const mapping = config.accountMapping[platformKey];
