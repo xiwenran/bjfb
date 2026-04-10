@@ -175,7 +175,8 @@ class Scheduler {
     const candidates = records.filter(r => {
       if (!r.topic) return false;
       // 只处理最近 24 小时内修改过的记录
-      if (r.modifiedTime && r.modifiedTime < now - AI_WINDOW_MS) return false;
+      if (r.modifiedTime === null) return false; // 飞书未返回修改时间，跳过
+      if (r.modifiedTime > 0 && r.modifiedTime < now - AI_WINDOW_MS) return false;
       // 笔记主题与上次生成时相同则跳过
       const cached = cache[r.recordId];
       if (cached && cached.topic === r.topic) return false;
@@ -196,6 +197,9 @@ class Scheduler {
           '正文': result.description,
           '标签': tagsStr,
         });
+        // 就地更新内存对象，使本轮 recordHasContent 检查能看到新生成的标题
+        record.title = result.title;
+        record.description = result.description;
         cache[record.recordId] = { topic: record.topic, generatedAt: new Date().toISOString() };
         this.log('info', `✅ AI 写作完成：《${result.title}》`);
       } catch (e) {

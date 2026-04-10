@@ -18,6 +18,8 @@ const {
   getRuntimePaths,
   isFeishuConfigured,
   isYixiaoerConfigured,
+  readAiWritingCache,
+  saveAiWritingCache,
 } = require('./config-store.js');
 const { generateContent, testConnection } = require('./ai-writer.js');
 
@@ -965,6 +967,12 @@ const server = http.createServer(async (req, res) => {
           '正文': result.description,
           '标签': tagsStr,
         });
+        // 更新缓存，防止下轮自动扫描重复覆盖
+        try {
+          const cache = readAiWritingCache();
+          cache[recordId] = { topic: record.topic, generatedAt: new Date().toISOString() };
+          saveAiWritingCache(cache);
+        } catch (_) { /* 缓存失败不影响主流程 */ }
         return sendJson(res, { success: true, message: 'AI 内容已生成并回写飞书', data: result });
       } catch (e) {
         return sendJson(res, { success: false, error: e.message }, 500);
