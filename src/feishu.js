@@ -362,10 +362,28 @@ class FeishuClient {
 
   parseRecord(record) {
     const f = record.fields;
+    // 从飞书字段值中提取纯文本。
+    // 支持格式：string、number、富文本数组 [{text:...}]、
+    // 以及公式/AI字段有时以 {value:...} 包装的格式。
     const getText = (field) => {
       if (!field) return '';
       if (typeof field === 'string') return field;
-      if (Array.isArray(field)) return field.map(item => item.text || item).join('');
+      if (typeof field === 'number') return String(field);
+      // 公式字段 / AI 字段引用：有时以 {value: "str"} 或 {value: [{text:...}]} 包装
+      if (!Array.isArray(field) && typeof field === 'object' && field.value !== undefined) {
+        const v = field.value;
+        if (typeof v === 'string') return v;
+        if (typeof v === 'number') return String(v);
+        if (Array.isArray(v)) return v.map(item => {
+          if (typeof item === 'string') return item;
+          return (item && typeof item === 'object') ? (item.text || '') : '';
+        }).join('');
+        return '';
+      }
+      if (Array.isArray(field)) return field.map(item => {
+        if (typeof item === 'string') return item;
+        return (item && typeof item === 'object') ? (item.text || '') : '';
+      }).join('');
       if (field.text) return field.text;
       return '';
     };
@@ -382,14 +400,29 @@ class FeishuClient {
       return '';
     };
 
+    const splitTags = (str) => str
+      .split(/[#\n,，]+/)
+      .map(tag => tag.trim().replace(/^#+/, ''))
+      .filter(Boolean);
+
     const getTagValues = (field) => {
       if (!field) return [];
 
-      if (typeof field === 'string') {
-        return field
-          .split(/[#\n,，\s]+/)
-          .map(tag => tag.trim())
-          .filter(Boolean);
+      if (typeof field === 'string') return splitTags(field);
+
+      // 公式/AI 字段以 {value: ...} 包装：先展开再按文本处理
+      if (!Array.isArray(field) && typeof field === 'object' && field.value !== undefined) {
+        const v = field.value;
+        if (typeof v === 'string') return splitTags(v);
+        if (Array.isArray(v)) {
+          const joined = v.map(item => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object') return item.text || item.name || '';
+            return '';
+          }).join('\n');
+          return splitTags(joined);
+        }
+        return [];
       }
 
       if (Array.isArray(field)) {
@@ -404,14 +437,23 @@ class FeishuClient {
             if (typeof item.title === 'string') return item.title;
             return '';
           })
-          .map(tag => tag.trim())
-          .filter(Boolean)
-          .map(tag => tag.replace(/^#+/, ''));
+          .map(tag => tag.trim().replace(/^#+/, ''))
+          .filter(Boolean);
       }
 
       if (typeof field === 'object') {
-        const candidate = field.text || field.name || field.value || field.label || field.title;
-        return candidate ? [String(candidate).replace(/^#+/, '').trim()].filter(Boolean) : [];
+        // field.value 是数组（多选选项）→ 不能直接 String(...)
+        if (Array.isArray(field.value)) {
+          return field.value.map(item => {
+            if (typeof item === 'string') return item.replace(/^#+/, '').trim();
+            if (item && typeof item === 'object') return (item.text || item.name || '').replace(/^#+/, '').trim();
+            return '';
+          }).filter(Boolean);
+        }
+        const candidate = field.text || field.name
+          || (typeof field.value === 'string' ? field.value : null)
+          || field.label || field.title;
+        return candidate ? splitTags(String(candidate)) : [];
       }
 
       return [];
