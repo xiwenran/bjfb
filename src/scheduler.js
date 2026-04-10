@@ -833,7 +833,12 @@ class Scheduler {
       const parsed = records.map(r => this.feishu.parseRecord(r));
 
       if (this.config.aiWriting?.enabled) {
-        await this.runAiWriting(parsed);
+        try {
+          await this.runAiWriting(parsed);
+        } catch (e) {
+          // AI 写作异常不中断发布流程
+          this.log('warn', `⚠️ AI 写作扫描异常，跳过本轮生成：${e.message}`);
+        }
       }
 
       const now = new Date();
