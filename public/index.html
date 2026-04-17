@@ -3111,6 +3111,14 @@ async function loadAiWritingConfig(force = false) {
 
 async function saveAiWritingConfig() {
   const statusEl = document.getElementById('aiWritingStatus');
+  // 有 apiKey 但未勾选启用时，询问是否同时启用
+  const enabledCb = document.getElementById('aiWritingEnabled');
+  const apiKeyVal = document.getElementById('aiApiKey').value.trim();
+  if (apiKeyVal && apiKeyVal !== '******' && !enabledCb.checked) {
+    if (confirm('已填写 API Key 但未启用 AI 写作，是否同时启用？')) {
+      enabledCb.checked = true;
+    }
+  }
   statusEl.textContent = '正在保存...';
   try {
     const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
@@ -3153,6 +3161,12 @@ async function testAiConnection() {
     if (!resp.success) throw new Error(resp.error || '连接失败');
     statusEl.style.color = 'var(--accent)';
     statusEl.textContent = `✅ 连接成功${resp.data?.model ? '（模型：' + resp.data.model + '）' : ''}`;
+    // 测试成功后自动勾选启用，提示用户保存
+    const enabledCb = document.getElementById('aiWritingEnabled');
+    if (enabledCb && !enabledCb.checked) {
+      enabledCb.checked = true;
+      statusEl.textContent += '（已自动勾选启用，请点击「保存配置」生效）';
+    }
   } catch (e) {
     statusEl.style.color = '#e53e3e';
     statusEl.textContent = `❌ 连接失败：${e.message}`;

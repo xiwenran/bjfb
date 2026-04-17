@@ -839,6 +839,8 @@ class Scheduler {
           // AI 写作异常不中断发布流程
           this.log('warn', `⚠️ AI 写作扫描异常，跳过本轮生成：${e.message}`);
         }
+      } else if (this.config.aiWriting?.apiKey) {
+        this.log('info', 'ℹ️ AI 写作已配置但未启用，如需开启请到设置页勾选「启用 AI 写作」并保存');
       }
 
       const now = new Date();
