@@ -43,7 +43,7 @@ class FeishuClient {
     let hasMore = true;
 
     while (hasMore) {
-      const body = { page_size: 100 };
+      const body = { page_size: 100, automatic_fields: true };
       if (filter) body.filter = filter;
       if (pageToken) body.page_token = pageToken;
 
@@ -288,13 +288,14 @@ class FeishuClient {
     // 避免”封面 (3).png”或”课程封面_11.png”被误排到最前面。
     // 支持两种子序号风格（等价）：
     //   小数点：0.1 < 1 < 1.1 < 1.2 < 2 < 11 < 12
-    //   括号：  1(1) < 1(2)（macOS 重名风格）
+    //   括号：  1(1) < 1(2)（macOS 重名风格），允许数字与括号间有空格："0 (4).png"
     const parseSortKey = (name) => {
-      // 小数点风格：”1.2.png” → [1, 2]；”0.1.png” → [0, 1]
+      // 小数点风格："1.2.png" → [1, 2]；"0.1.png" → [0, 1]
       const dec = name.match(/^(\d+)\.(\d+)/);
       if (dec) return [Number(dec[1]), Number(dec[2])];
-      // 括号风格：”1(2).png” → [1, 2]；”1.png” → [1, -1]
-      const paren = name.match(/^(\d+)(?:\((\d+)\))?/);
+      // 括号风格："1(2).png" / "0 (4).png" → [主序号, 子序号]；"1.png" → [1, -1]
+      // 允许括号前有任意空白（macOS "副本"/下载重名默认带空格）
+      const paren = name.match(/^(\d+)\s*(?:\((\d+)\))?/);
       if (paren) return [Number(paren[1]), paren[2] != null ? Number(paren[2]) : -1];
       return null;
     };
@@ -495,7 +496,9 @@ class FeishuClient {
       note: getText(f['备注']),
       topic: getText(f['笔记主题']),
       createdTime: record.created_time || 0,
-      modifiedTime: record.modified_time || null,
+      // 飞书 records/search 返回 `last_modified_time`（需请求体 automatic_fields:true）。
+      // 旧字段名 `modified_time` 已不再返回，保留兼容兜底。
+      modifiedTime: record.last_modified_time || record.modified_time || null,
     };
   }
 }
