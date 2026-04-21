@@ -2,6 +2,45 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
+function parseAttachmentSortKey(name) {
+  const normalizedName = String(name || '')
+    .trim()
+    .replace(/（/g, '(')
+    .replace(/）/g, ')');
+
+  // 小数点风格："1.2.png" → [1, 2]；"0.1.png" → [0, 1]
+  const dec = normalizedName.match(/^(\d+)\.(\d+)/);
+  if (dec) return [Number(dec[1]), Number(dec[2])];
+
+  // 括号风格："1(2).png" / "0 (4).png" / "0（4）.png" → [主序号, 子序号]；"1.png" → [1, -1]
+  // 允许括号前有任意空白（macOS "副本"/下载重名默认带空格），也兼容全角括号。
+  const paren = normalizedName.match(/^(\d+)\s*(?:\((\d+)\))?/);
+  if (paren) return [Number(paren[1]), paren[2] != null ? Number(paren[2]) : -1];
+
+  return null;
+}
+
+function orderAttachmentsForDownload(attachments = []) {
+  return [...attachments]
+    .map((att, index) => ({ att, index }))
+    .sort((left, right) => {
+      const leftName = path.basename(String(left.att.name || ''));
+      const rightName = path.basename(String(right.att.name || ''));
+      const leftKey = parseAttachmentSortKey(leftName);
+      const rightKey = parseAttachmentSortKey(rightName);
+
+      if (leftKey && rightKey) {
+        const cmp = leftKey[0] - rightKey[0];
+        if (cmp !== 0) return cmp;
+        return leftKey[1] - rightKey[1] || left.index - right.index;
+      }
+      if (leftKey) return -1;
+      if (rightKey) return 1;
+      return left.index - right.index;
+    })
+    .map(item => item.att);
+}
+
 class FeishuClient {
   constructor(config = {}) {
     this.appId = config.appId;
@@ -288,36 +327,9 @@ class FeishuClient {
     // 避免”封面 (3).png”或”课程封面_11.png”被误排到最前面。
     // 支持两种子序号风格（等价）：
     //   小数点：0.1 < 1 < 1.1 < 1.2 < 2 < 11 < 12
-    //   括号：  1(1) < 1(2)（macOS 重名风格），允许数字与括号间有空格："0 (4).png"
-    const parseSortKey = (name) => {
-      // 小数点风格："1.2.png" → [1, 2]；"0.1.png" → [0, 1]
-      const dec = name.match(/^(\d+)\.(\d+)/);
-      if (dec) return [Number(dec[1]), Number(dec[2])];
-      // 括号风格："1(2).png" / "0 (4).png" → [主序号, 子序号]；"1.png" → [1, -1]
-      // 允许括号前有任意空白（macOS "副本"/下载重名默认带空格）
-      const paren = name.match(/^(\d+)\s*(?:\((\d+)\))?/);
-      if (paren) return [Number(paren[1]), paren[2] != null ? Number(paren[2]) : -1];
-      return null;
-    };
-
-    const sorted = [...attachments]
-      .map((att, index) => ({ att, index }))
-      .sort((left, right) => {
-        const leftName = path.basename(String(left.att.name || ''));
-        const rightName = path.basename(String(right.att.name || ''));
-        const leftKey = parseSortKey(leftName);
-        const rightKey = parseSortKey(rightName);
-
-        if (leftKey && rightKey) {
-          const cmp = leftKey[0] - rightKey[0];
-          if (cmp !== 0) return cmp;
-          return leftKey[1] - rightKey[1] || left.index - right.index;
-        }
-        if (leftKey) return -1;
-        if (rightKey) return 1;
-        return left.index - right.index;
-      })
-      .map(item => item.att);
+    //   括号：  1(1) < 1(2) / 1（1） < 1（2）（macOS/中文输入法重名风格）
+    //          允许数字与括号间有空格："0 (4).png"
+    const sorted = orderAttachmentsForDownload(attachments);
 
     const paths = [];
     // 用 Set 跟踪本批次内已使用的目标文件名，避免同名互相覆盖。
@@ -504,3 +516,5 @@ class FeishuClient {
 }
 
 module.exports = FeishuClient;
+module.exports.parseAttachmentSortKey = parseAttachmentSortKey;
+module.exports.orderAttachmentsForDownload = orderAttachmentsForDownload;
