@@ -8,16 +8,19 @@ function parseAttachmentSortKey(name) {
     .replace(/（/g, '(')
     .replace(/）/g, ')');
 
-  // 小数点风格："1.2.png" → [1, 2]；"0.1.png" → [0, 1]
-  const dec = normalizedName.match(/^(\d+)\.(\d+)/);
-  if (dec) return [Number(dec[1]), Number(dec[2])];
-
-  // 括号风格："1(2).png" / "0 (4).png" / "0（4）.png" → [主序号, 子序号]；"1.png" → [1, -1]
-  // 允许括号前有任意空白（macOS "副本"/下载重名默认带空格），也兼容全角括号。
-  const paren = normalizedName.match(/^(\d+)\s*(?:\((\d+)\))?/);
-  if (paren) return [Number(paren[1]), paren[2] != null ? Number(paren[2]) : -1];
-
-  return null;
+  // 仅当**整个文件名**是「纯数字编号 [+ 子序号] [+ 扩展名]」时才参与排序。
+  // Codex 对抗性审查（2026-04-22）：原正则只锚开头不锚结尾，会把
+  // "20260422-cover.png" / "1 封面.png" / "12abc.png" 误判为编号页排到最前。
+  // 现强制 ^...$ 整体匹配，非纯编号文件保留飞书原顺序。
+  // 支持：
+  //   "1.png" / "10" → [10, -1]
+  //   小数点子序号："1.2.png" → [1, 2]；"0.1.png" → [0, 1]
+  //   括号子序号（macOS 重名）："1(2).png" / "0 (4).png" / "0（4）.png" → [主序号, 子序号]
+  const m = normalizedName.match(/^(\d+)(?:\.(\d+)|\s*\((\d+)\))?(?:\.[^.]+)?$/);
+  if (!m) return null;
+  const main = Number(m[1]);
+  const sub = m[2] != null ? Number(m[2]) : (m[3] != null ? Number(m[3]) : -1);
+  return [main, sub];
 }
 
 function orderAttachmentsForDownload(attachments = []) {

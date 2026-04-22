@@ -172,11 +172,18 @@ class Scheduler {
       cache = {};
     }
 
+    // 健康检查：有主题但全部缺 modifiedTime → 飞书 API 可能未返回 last_modified_time
+    // （automatic_fields 在该租户/表失效，或字段语义变更）。大声报警，避免静默失败。
+    const recordsWithTopic = records.filter(r => r.topic);
+    if (recordsWithTopic.length > 0 && recordsWithTopic.every(r => !r.modifiedTime)) {
+      this.log('warn', `⚠️ AI 写作健康检查：${recordsWithTopic.length} 条带主题记录全部缺 modifiedTime，可能飞书未返回 last_modified_time。本轮回落用 createdTime 判定时间窗口`);
+    }
+
     const candidates = records.filter(r => {
       if (!r.topic) return false;
-      // 只处理最近 24 小时内修改过的记录
-      if (r.modifiedTime === null) return false; // 飞书未返回修改时间，跳过
-      if (r.modifiedTime > 0 && r.modifiedTime < now - AI_WINDOW_MS) return false;
+      // 时间窗口判定：modifiedTime 优先，缺失时 fallback 到 createdTime（防 last_modified_time 缺失导致全静默）
+      const ts = r.modifiedTime || r.createdTime || 0;
+      if (ts > 0 && ts < now - AI_WINDOW_MS) return false;
       // 笔记主题与上次生成时相同则跳过
       const cached = cache[r.recordId];
       if (cached && cached.topic === r.topic) return false;
