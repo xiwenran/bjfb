@@ -575,6 +575,7 @@ class FeishuClient {
   }
 
   async findRecordByFingerprint(fingerprint) {
+    // 使用 contains 而非 is，支持「双平台导入」场景下同一字段存储多个指纹（换行分隔）
     const resp = await this.requestWithRetry(token =>
       axios.post(
         `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
@@ -582,7 +583,7 @@ class FeishuClient {
           filter: {
             conjunction: 'and',
             conditions: [
-              { field_name: '导入指纹', operator: 'is', value: [fingerprint] }
+              { field_name: '导入指纹', operator: 'contains', value: [fingerprint] }
             ],
           },
           page_size: 1,

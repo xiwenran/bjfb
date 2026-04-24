@@ -538,32 +538,39 @@ const server = http.createServer(async (req, res) => {
         // 取文件夹名（noteKey 最后一段）
         const noteFolder = noteKey.split('/').pop() || recordFolderPath.split('/').pop() || '';
 
-        // Step 2: 指纹计算（始终计算，供写入 导入指纹 字段使用）
-        let primaryFingerprint = '';
+        // Step 2: 指纹计算（始终计算，供查重和写入 导入指纹 字段使用）
+        // 【Fix 问题2】双平台导入时分别计算两个指纹，存储时合并为换行分隔，
+        // 查重用 contains 操作符（见 feishu.findRecordByFingerprint），
+        // 保证"双平台首次导入 → 单平台再次导入"也能命中查重。
+        const imgNamesSorted = images.map(i => i.name).sort().join(',');
+        const imgSizesSorted = images.slice().sort((a, b) => a.name.localeCompare(b.name)).map(i => i.size).join(',');
+
+        let xhsFingerprint = '';
         let douyinFingerprint = '';
         if (xiaohongshuAccount) {
-          const raw = [topic, noteFolder, 'xiaohongshu', xiaohongshuAccount,
-            images.map(i => i.name).sort().join(','),
-            images.slice().sort((a, b) => a.name.localeCompare(b.name)).map(i => i.size).join(',')
-          ].join('|');
-          primaryFingerprint = crypto.createHash('sha256').update(raw).digest('hex');
+          xhsFingerprint = crypto.createHash('sha256')
+            .update([topic, noteFolder, 'xiaohongshu', xiaohongshuAccount, imgNamesSorted, imgSizesSorted].join('|'))
+            .digest('hex');
         }
         if (douyinAccount) {
-          const raw = [topic, noteFolder, 'douyin', douyinAccount,
-            images.map(i => i.name).sort().join(','),
-            images.slice().sort((a, b) => a.name.localeCompare(b.name)).map(i => i.size).join(',')
-          ].join('|');
-          douyinFingerprint = crypto.createHash('sha256').update(raw).digest('hex');
-          if (!primaryFingerprint) primaryFingerprint = douyinFingerprint;
+          douyinFingerprint = crypto.createHash('sha256')
+            .update([topic, noteFolder, 'douyin', douyinAccount, imgNamesSorted, imgSizesSorted].join('|'))
+            .digest('hex');
         }
+        // storedFingerprint：两个平台都有时换行合并，只有一个时单独存
+        const primaryFingerprint = xhsFingerprint || douyinFingerprint;
+        const storedFingerprint = (xhsFingerprint && douyinFingerprint)
+          ? `${xhsFingerprint}\n${douyinFingerprint}`
+          : primaryFingerprint;
 
         // 非覆盖模式：查重，命中则跳过并返回旧记录发布状态
         if (!isOverwrite) {
           let fingerprintExists = false;
           let existingRecordId = null;
 
-          if (primaryFingerprint && xiaohongshuAccount) {
-            const existingId = await feishu.findRecordByFingerprint(primaryFingerprint);
+          // 逐个指纹查重（feishu.findRecordByFingerprint 用 contains，双平台合并字段也能命中）
+          if (xhsFingerprint) {
+            const existingId = await feishu.findRecordByFingerprint(xhsFingerprint);
             if (existingId) { fingerprintExists = true; existingRecordId = existingId; }
           }
           if (!fingerprintExists && douyinFingerprint) {
@@ -581,6 +588,23 @@ const server = http.createServer(async (req, res) => {
             } catch (_) {}
             results.push({ noteKey, status: 'skipped', reason: 'fingerprint_exists', recordId: existingRecordId, existingStatus });
             if (!dryRun) pushImportProgress(noteKey, 'skipped');
+            continue;
+          }
+        }
+
+        // 【Fix 问题3】覆盖模式：服务端校验 overwriteId 对应的记录存在，
+        // 防止前端传错 ID 导致意外覆盖无关记录
+        if (isOverwrite) {
+          try {
+            const targetRec = await feishu.getRecordById(overwriteId);
+            if (!targetRec) {
+              results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: `recordId ${overwriteId} 不存在` });
+              if (!dryRun) pushImportProgress(noteKey, 'failed');
+              continue;
+            }
+          } catch (verifyErr) {
+            results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: verifyErr.message });
+            if (!dryRun) pushImportProgress(noteKey, 'failed');
             continue;
           }
         }
@@ -639,7 +663,7 @@ const server = http.createServer(async (req, res) => {
         const fields = {
           '笔记主题': topic,
           '内容类型': '图文',
-          '导入指纹': primaryFingerprint,
+          '导入指纹': storedFingerprint,   // 双平台时存双指纹（换行分隔）
         };
         if (aiTitle) fields['标题'] = aiTitle;
         if (aiDescription) fields['正文'] = aiDescription;
@@ -650,23 +674,31 @@ const server = http.createServer(async (req, res) => {
           const ts = new Date(publishTime).getTime();
           if (!isNaN(ts)) fields['发布时间'] = ts;
         }
-        // 小红书
-        if (xiaohongshuAccount) {
-          fields['小红书账号'] = xiaohongshuAccount;
-          fields['小红书发布状态'] = '待发布';
-          fields['小红书发布渠道'] = xiaohongshuChannel || '蚁小二';
-        }
-        // 抖音
-        if (douyinAccount) {
-          fields['抖音账号'] = douyinAccount;
-          fields['抖音发布状态'] = '待发布';
+
+        // 【Fix 问题1】平台字段组装：
+        // 普通建单：只写本次有值的平台字段（飞书侧其余字段为空）
+        // 覆盖模式：所有平台字段都显式写入，无账号的平台置空，防止旧字段残留
+        if (isOverwrite) {
+          // 显式重置所有平台字段，避免旧账号/状态继续进入调度链路
+          fields['小红书账号'] = xiaohongshuAccount || '';
+          fields['小红书发布状态'] = xiaohongshuAccount ? '待发布' : '';
+          fields['小红书发布渠道'] = xiaohongshuAccount ? (xiaohongshuChannel || '蚁小二') : '';
+          fields['抖音账号'] = douyinAccount || '';
+          fields['抖音发布状态'] = douyinAccount ? '待发布' : '';
+        } else {
+          if (xiaohongshuAccount) {
+            fields['小红书账号'] = xiaohongshuAccount;
+            fields['小红书发布状态'] = '待发布';
+            fields['小红书发布渠道'] = xiaohongshuChannel || '蚁小二';
+          }
+          if (douyinAccount) {
+            fields['抖音账号'] = douyinAccount;
+            fields['抖音发布状态'] = '待发布';
+          }
         }
 
         try {
           if (isOverwrite) {
-            // 覆盖模式：更新旧记录，并重置发布状态为待发布
-            if (xiaohongshuAccount) fields['小红书发布状态'] = '待发布';
-            if (douyinAccount) fields['抖音发布状态'] = '待发布';
             await feishu.updateRecord(overwriteId, fields);
             results.push({ noteKey, status: 'success', recordId: overwriteId, overwritten: true });
           } else {
