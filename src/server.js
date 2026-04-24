@@ -434,39 +434,59 @@ const server = http.createServer(async (req, res) => {
 
         const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
         const videoExtensions = new Set(['.mp4', '.mov', '.avi', '.mkv']);
+
+        // 从一个目录收集图片（包含直接的和子文件夹里的，extraDepth 控制再向下几层）
+        function collectImagesFromDir(dirPath, extraDepth) {
+          const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(e => !e.name.startsWith('.'))
+            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+          const images = [];
+          let hasVideo = false;
+          for (const entry of entries) {
+            const p = path.join(dirPath, entry.name);
+            if (entry.isFile()) {
+              const ext = path.extname(entry.name).toLowerCase();
+              if (imageExtensions.has(ext)) {
+                images.push({ name: entry.name, path: p, size: fs.statSync(p).size });
+              } else if (videoExtensions.has(ext)) {
+                hasVideo = true;
+              }
+            } else if (entry.isDirectory() && extraDepth > 0) {
+              const sub = collectImagesFromDir(p, extraDepth - 1);
+              images.push(...sub.images);
+              if (sub.hasVideo) hasVideo = true;
+            }
+          }
+          return { images, hasVideo };
+        }
+
         const topics = fs.readdirSync(folderPath, { withFileTypes: true })
           .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
           .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 
         const result = topics.map(topicEntry => {
           const topicPath = path.join(folderPath, topicEntry.name);
-          const noteFolders = fs.readdirSync(topicPath, { withFileTypes: true })
-            .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
+          const topicChildren = fs.readdirSync(topicPath, { withFileTypes: true })
+            .filter(e => !e.name.startsWith('.'))
             .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 
-          return {
-            topic: topicEntry.name,
-            notes: noteFolders.map(noteEntry => {
-              const noteFolderPath = path.join(topicPath, noteEntry.name);
-              const children = fs.readdirSync(noteFolderPath, { withFileTypes: true })
-                .filter(entry => !entry.name.startsWith('.'))
-                .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-              const images = children
-                .filter(entry => entry.isFile() && imageExtensions.has(path.extname(entry.name).toLowerCase()))
-                .map(entry => {
-                  const imagePath = path.join(noteFolderPath, entry.name);
-                  return {
-                    name: entry.name,
-                    path: imagePath,
-                    size: fs.statSync(imagePath).size,
-                  };
-                });
-              const hasVideo = children.some(entry => entry.isFile() && videoExtensions.has(path.extname(entry.name).toLowerCase()));
-              const warnings = [];
-              if (hasVideo) {
-                warnings.push('包含视频文件（v2.0 不支持，已跳过）');
-              }
+          const noteFolders = topicChildren.filter(e => e.isDirectory());
+          const directImages = topicChildren
+            .filter(e => e.isFile() && imageExtensions.has(path.extname(e.name).toLowerCase()))
+            .map(e => {
+              const p = path.join(topicPath, e.name);
+              return { name: e.name, path: p, size: fs.statSync(p).size };
+            });
 
+          let notes;
+
+          if (noteFolders.length > 0) {
+            // 有子文件夹 → 每个子文件夹是一篇笔记
+            // 笔记内图片可能直接在里面，也可能在再下一层子文件夹（extraDepth=1 兼容两种情况）
+            notes = noteFolders.map(noteEntry => {
+              const noteFolderPath = path.join(topicPath, noteEntry.name);
+              const { images, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
+              const warnings = hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [];
               return {
                 noteKey: `${topicEntry.name}/${noteEntry.name}`,
                 folderName: noteEntry.name,
@@ -477,8 +497,23 @@ const server = http.createServer(async (req, res) => {
                 hasVideo,
                 warnings,
               };
-            })
-          };
+            });
+          } else {
+            // 没有子文件夹 → 主题文件夹本身当作一篇笔记，图片直接在里面
+            const hasVideo = topicChildren.some(e => e.isFile() && videoExtensions.has(path.extname(e.name).toLowerCase()));
+            notes = directImages.length > 0 ? [{
+              noteKey: `${topicEntry.name}/${topicEntry.name}`,
+              folderName: topicEntry.name,
+              folderPath: topicPath,
+              images: directImages,
+              imageCount: directImages.length,
+              firstImagePath: directImages[0]?.path || '',
+              hasVideo,
+              warnings: hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [],
+            }] : [];
+          }
+
+          return { topic: topicEntry.name, notes };
         });
 
         return sendJson(res, result);
@@ -498,6 +533,8 @@ const server = http.createServer(async (req, res) => {
       const results = [];
       const total = records.length;
       let current = 0;
+      // 同主题 AI 结果缓存：topic → {title, description, tags}
+      const topicAiCache = new Map();
 
       // SSE 进度推送辅助函数（仅 dryRun=false 时使用）
       const pushImportProgress = (noteKey, status) => {
@@ -610,6 +647,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Step 3: AI 内容生成（B-2）
+        // 同一主题只调用一次 AI，后续笔记直接复用（节省 API 开销）
         let aiTitle = title;
         let aiDescription = description;
         let aiTags = Array.isArray(tags) ? tags : [];
@@ -618,16 +656,26 @@ const server = http.createServer(async (req, res) => {
           const aiConfig = config.aiWriting;
           if (aiConfig && aiConfig.enabled && aiConfig.apiKey) {
             try {
-              const aiRecord = {
-                topic,
-                attachments: images.map(i => ({ name: i.name })),
-                xiaohongshuAccount,
-                douyinAccount,
-              };
-              const aiResult = await generateContent(aiConfig, aiRecord);
-              aiTitle = aiResult.title || '';
-              aiDescription = aiResult.description || '';
-              aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
+              if (topicAiCache.has(topic)) {
+                // 同主题已生成过，直接复用
+                const cached = topicAiCache.get(topic);
+                aiTitle = cached.title;
+                aiDescription = cached.description;
+                aiTags = cached.tags;
+              } else {
+                const aiRecord = {
+                  topic,
+                  attachments: images.map(i => ({ name: i.name })),
+                  xiaohongshuAccount,
+                  douyinAccount,
+                  imagePaths: images.map(i => i.path), // 传实际路径供 AI 视觉识别
+                };
+                const aiResult = await generateContent(aiConfig, aiRecord);
+                aiTitle = aiResult.title || '';
+                aiDescription = aiResult.description || '';
+                aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
+                topicAiCache.set(topic, { title: aiTitle, description: aiDescription, tags: aiTags });
+              }
             } catch (aiErr) {
               results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message });
               if (!dryRun) pushImportProgress(noteKey, 'failed');

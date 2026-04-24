@@ -1,4 +1,6 @@
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // ─────────────────────────────────────────────
 // System Prompt（硬编码，与用户确认的版本一致）
@@ -7,7 +9,12 @@ const SYSTEM_PROMPT = `你是一个帮教师撰写小红书/抖音平台发布�
 
 **任务**
 读取素材字段和笔记主题，一次性生成标题、正文、标签三项内容。
-如果素材字段为空或无实质内容，不生成任何输出，直接返回空白。
+如果笔记主题为空，不生成任何输出，直接返回空白。
+
+**关于图片素材**
+如果消息中附带了图片，这些图片是教师课件（PPT）的部分截图，不代表完整课程内容。
+请参考图片中可见的文字、图示、教学要点来辅助理解课程内容，结合笔记主题一起生成文案。
+不需要逐张描述图片内容，也不要说"根据您提供的图片"——直接以教师分享视角写出来即可。
 
 ---
 
@@ -137,11 +144,6 @@ const SYSTEM_PROMPT = `你是一个帮教师撰写小红书/抖音平台发布�
 
 function buildUserMessage(record) {
   const topic = record.topic || '';
-  const attachmentNames = (record.attachments || [])
-    .map(a => a.name || a.file_name || a.filename || '')
-    .filter(Boolean)
-    .join('、');
-
   const xhsAccount = record.xiaohongshuAccount || '';
   const dyAccount = record.douyinAccount || '';
 
@@ -158,9 +160,25 @@ function buildUserMessage(record) {
 
   return [
     `笔记主题：${topic}`,
-    `素材附件：${attachmentNames || '（暂无附件文件名）'}`,
     platformHint,
   ].join('\n');
+}
+
+// 读取本地图片为 base64，最多取前 IMAGE_MAX_COUNT 张
+const IMAGE_MAX_COUNT = 8;
+function loadImages(imagePaths) {
+  if (!imagePaths || imagePaths.length === 0) return [];
+  return imagePaths
+    .slice(0, IMAGE_MAX_COUNT)
+    .filter(p => p && fs.existsSync(p))
+    .map(p => {
+      const ext = path.extname(p).toLowerCase();
+      const mimeType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+        : ext === '.gif' ? 'image/gif'
+        : ext === '.webp' ? 'image/webp'
+        : 'image/png';
+      return { mimeType, data: fs.readFileSync(p).toString('base64') };
+    });
 }
 
 function parseAiResponse(text) {
@@ -179,15 +197,25 @@ function parseAiResponse(text) {
 // Provider 调用实现
 // ─────────────────────────────────────────────
 
-async function callOpenAI(aiConfig, userMessage) {
+async function callOpenAI(aiConfig, userMessage, images) {
   const baseUrl = (aiConfig.apiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, '');
+  // 有图片时构建多模态 content 数组
+  const userContent = images && images.length > 0
+    ? [
+        { type: 'text', text: userMessage },
+        ...images.map(img => ({
+          type: 'image_url',
+          image_url: { url: `data:${img.mimeType};base64,${img.data}`, detail: 'low' },
+        })),
+      ]
+    : userMessage;
   const resp = await axios.post(
     `${baseUrl}/chat/completions`,
     {
       model: aiConfig.model || 'gpt-4o-mini',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
+        { role: 'user', content: userContent },
       ],
       temperature: 0.7,
     },
@@ -196,20 +224,29 @@ async function callOpenAI(aiConfig, userMessage) {
         Authorization: `Bearer ${aiConfig.apiKey}`,
         'Content-Type': 'application/json',
       },
-      timeout: 60000,
+      timeout: 120000,
     }
   );
   return resp.data.choices[0].message.content;
 }
 
-async function callAnthropic(aiConfig, userMessage) {
+async function callAnthropic(aiConfig, userMessage, images) {
+  const userContent = images && images.length > 0
+    ? [
+        ...images.map(img => ({
+          type: 'image',
+          source: { type: 'base64', media_type: img.mimeType, data: img.data },
+        })),
+        { type: 'text', text: userMessage },
+      ]
+    : userMessage;
   const resp = await axios.post(
     'https://api.anthropic.com/v1/messages',
     {
       model: aiConfig.model || 'claude-3-5-haiku-20241022',
       max_tokens: 2048,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+      messages: [{ role: 'user', content: userContent }],
     },
     {
       headers: {
@@ -217,25 +254,31 @@ async function callAnthropic(aiConfig, userMessage) {
         'anthropic-version': '2023-06-01',
         'Content-Type': 'application/json',
       },
-      timeout: 60000,
+      timeout: 120000,
     }
   );
   return resp.data.content[0].text;
 }
 
-async function callGemini(aiConfig, userMessage) {
+async function callGemini(aiConfig, userMessage, images) {
   const model = aiConfig.model || 'gemini-2.0-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${aiConfig.apiKey}`;
+  const parts = [
+    { text: userMessage },
+    ...(images || []).map(img => ({
+      inlineData: { mimeType: img.mimeType, data: img.data },
+    })),
+  ];
   const resp = await axios.post(
     url,
     {
       system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{ parts: [{ text: userMessage }] }],
+      contents: [{ parts }],
       generationConfig: { temperature: 0.7 },
     },
     {
       headers: { 'Content-Type': 'application/json' },
-      timeout: 60000,
+      timeout: 120000,
     }
   );
   return resp.data.candidates[0].content.parts[0].text;
@@ -254,15 +297,17 @@ async function generateContent(aiConfig, record) {
   }
 
   const userMessage = buildUserMessage(record);
+  // 读取本地图片（record.imagePaths 由导入流程传入，飞书自动扫描流程为空）
+  const images = loadImages(record.imagePaths || []);
   let rawText;
 
   const provider = aiConfig.provider || 'openai';
   if (provider === 'anthropic') {
-    rawText = await callAnthropic(aiConfig, userMessage);
+    rawText = await callAnthropic(aiConfig, userMessage, images);
   } else if (provider === 'gemini') {
-    rawText = await callGemini(aiConfig, userMessage);
+    rawText = await callGemini(aiConfig, userMessage, images);
   } else {
-    rawText = await callOpenAI(aiConfig, userMessage);
+    rawText = await callOpenAI(aiConfig, userMessage, images);
   }
 
   return parseAiResponse(rawText);
