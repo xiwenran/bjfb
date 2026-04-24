@@ -1,0 +1,54 @@
+{
+  "feishu": {
+    "appId": "your_feishu_app_id",
+    "appSecret": "your_feishu_app_secret",
+    "wikiUrl": "https://your.feishu.cn/wiki/your-page",
+    "appToken": "your_bitable_app_token",
+    "tableId": "your_table_id"
+  },
+  "yixiaoer": {
+    "username": "your_phone_or_account",
+    "password": "your_password",
+    "teamId": "your_team_id",
+    "apiKey": "your_official_api_key",
+    "clientId": "your_local_client_id"
+  },
+  "bitbrowser": {
+    "apiBaseUrl": "http://127.0.0.1:54345",
+    "publishUrl": "https://creator.xiaohongshu.com/publish/publish",
+    "xiaohongshu": {
+      "小红书账号示例": {
+        "browserId": "your_bitbrowser_profile_id"
+      }
+    }
+  },
+  "accountMapping": {
+    "xiaohongshu": {
+      "小红书账号示例": "your_xiaohongshu_platform_account_id"
+    },
+    "douyin": {
+      "抖音账号示例": "your_douyin_platform_account_id"
+    }
+  },
+  "schedule": {
+    "periods": [
+      {
+        "startTime": "06:00",
+        "endTime": "08:00",
+        "intervalMinutes": 30
+      }
+    ]
+  },
+  "rules": {
+    "douyinMaxTags": 5,
+    "titleMaxLength": 50,
+    "descMaxLength": 2000,
+    "imagesSortByFilename": true,
+    "failOnInvalidAccount": true,
+    "failOnInvalidAccountAction": "markFailedInFeishu"
+  },
+  "defaultMusic": {
+    "id": "your_default_music_id",
+    "text": "your_default_music_name"
+  }
+}

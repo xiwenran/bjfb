@@ -1,0 +1,4641 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知发</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+    background: #f2f2f7;
+    color: #1d1d1f;
+    -webkit-font-smoothing: antialiased;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ===== Header ===== */
+  .app-header {
+    background: #1d1d1f;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 24px;
+    height: 58px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    z-index: 100;
+  }
+  .header-brand h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #f5f5f7;
+    letter-spacing: -0.2px;
+  }
+  .header-brand p {
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
+    margin-top: 1px;
+  }
+  .header-center {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex: 1;
+    justify-content: center;
+  }
+  .header-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .header-stat-label {
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  /* JS sets class="value running" or "value stopped" on serviceStatus */
+  .header-stat .value {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.75);
+    margin-top: 0;
+    letter-spacing: -0.1px;
+  }
+  .header-stat .value.running { color: #30d158; }
+  .header-stat .value.stopped { color: #ff453a; }
+  .header-stat .meta-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.75);
+  }
+  .header-stat-divider {
+    width: 1px;
+    height: 24px;
+    background: rgba(255,255,255,0.1);
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  /* ===== App Body ===== */
+  .app-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    width: 196px;
+    flex-shrink: 0;
+    background: #ebebeb;
+    border-right: 1px solid rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 14px 10px 20px;
+  }
+  .sidebar-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #8e8e93;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0 8px;
+    margin-bottom: 4px;
+    margin-top: 14px;
+  }
+  .sidebar-section-label:first-child { margin-top: 0; }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #3a3a3c;
+    text-align: left;
+    width: 100%;
+    font-weight: 500;
+    transition: background 0.12s;
+    letter-spacing: -0.1px;
+  }
+  .nav-item:hover { background: rgba(0,0,0,0.06); }
+  .nav-item.active {
+    background: #0071e3;
+    color: #fff;
+  }
+  .nav-icon { font-size: 15px; width: 20px; text-align: center; flex-shrink: 0; }
+
+  /* ===== Main Content ===== */
+  .main-content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 20px 24px;
+  }
+
+  /* ===== Tab Panels ===== */
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  /* keep backward compat with old toggle logic */
+  .settings-collapsed { display: none; }
+
+  /* ===== Progress Card ===== */
+  .progress-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    border: 1px solid rgba(0,122,255,0.1);
+    background: #fff;
+    border-radius: 14px;
+    padding: 16px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .progress-main { flex: 1; min-width: 260px; }
+  .progress-top { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .progress-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(0,0,0,0.05);
+    color: #8e8e93;
+  }
+  .progress-badge.active { background: rgba(0,122,255,0.1); color: #0071e3; }
+  .progress-badge.success { background: rgba(52,199,89,0.12); color: #248a3d; }
+  .progress-badge.failed { background: rgba(255,59,48,0.1); color: #d70015; }
+  .progress-title { font-size: 14px; font-weight: 600; color: #1d1d1f; letter-spacing: -0.1px; }
+  .progress-detail { font-size: 13px; color: #3a3a3c; line-height: 1.6; }
+  .progress-meta {
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: #8e8e93;
+  }
+
+  /* ===== Panel ===== */
+  .panel {
+    background: #fff;
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    border: 1px solid rgba(0,0,0,0.05);
+    margin-bottom: 14px;
+  }
+  .panel h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #1d1d1f;
+    letter-spacing: -0.2px;
+  }
+  .panel-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .panel-hint {
+    font-size: 12px;
+    color: #8e8e93;
+  }
+
+  /* ===== Buttons ===== */
+  .btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: opacity 0.12s, transform 0.1s;
+    letter-spacing: -0.1px;
+    white-space: nowrap;
+  }
+  .btn:hover { opacity: 0.82; }
+  .btn:active { transform: scale(0.97); opacity: 1; }
+  .btn-primary { background: #0071e3; color: #fff; }
+  .btn-success { background: #34c759; color: #fff; }
+  .btn-danger { background: #ff3b30; color: #fff; }
+  .btn-secondary { background: rgba(0,0,0,0.07); color: #1d1d1f; }
+  .btn-secondary:hover { background: rgba(0,0,0,0.12); opacity: 1; }
+  .btn-sm { padding: 6px 13px; font-size: 12px; border-radius: 999px; font-weight: 600; }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+
+  /* ===== Record Toolbar ===== */
+  .record-toolbar {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .record-summary { font-size: 12px; color: #8e8e93; }
+
+  /* ===== Record Items ===== */
+  .record-list { display: flex; flex-direction: column; gap: 10px; }
+  .record-item {
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 12px;
+    padding: 14px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    background: #fff;
+  }
+  .record-item:hover { border-color: rgba(0,113,227,0.25); box-shadow: 0 0 0 3px rgba(0,113,227,0.05); }
+  .record-item .title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #1d1d1f; }
+  .record-item .meta { font-size: 12px; color: #8e8e93; display: flex; gap: 12px; flex-wrap: wrap; }
+  .record-item .meta span { display: flex; align-items: center; gap: 3px; }
+  .record-item .platform-status { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+  /* ===== Tags ===== */
+  .tag { background: rgba(0,113,227,0.08); color: #0071e3; padding: 2px 8px; border-radius: 5px; font-size: 11px; font-weight: 500; }
+  .tag.xhs { background: rgba(255,59,48,0.08); color: #d70015; }
+  .tag.dy { background: rgba(255,149,0,0.1); color: #c67000; }
+  .tag.published { background: rgba(52,199,89,0.1); color: #248a3d; }
+  .tag.failed { background: rgba(255,59,48,0.1); color: #d70015; }
+  .tag.pending { background: rgba(0,0,0,0.05); color: #8e8e93; }
+  .tag-preview-row { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .tag-preview-label {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(0,113,227,0.1); color: #0071e3; font-weight: 600;
+  }
+  .note-text { font-size: 11px; color: #aeaeb2; }
+
+  /* ===== Record Sections ===== */
+  .record-section { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .record-section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+  }
+  .record-section-title { font-size: 15px; font-weight: 700; color: #3a3a3c; }
+  .record-toggle {
+    border: none; background: rgba(0,113,227,0.08); color: #0071e3;
+    border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+    transition: background 0.12s;
+  }
+  .record-toggle:hover { background: rgba(0,113,227,0.14); }
+  .account-group { margin-top: 4px; }
+  .account-group-head {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; color: #6e6e73;
+    padding: 8px 10px; margin-bottom: 2px;
+    cursor: pointer; border-radius: 10px;
+    transition: background 0.12s;
+    user-select: none;
+  }
+  .account-group-head:hover { background: rgba(0,0,0,0.04); }
+  .account-group-chevron { font-size: 10px; color: #aeaeb2; flex-shrink: 0; }
+  .account-group-head .account-group-count {
+    font-weight: 400; color: #aeaeb2; font-size: 11px; margin-left: auto;
+  }
+
+  /* ===== Accounts ===== */
+  .account-list { display: flex; flex-direction: column; gap: 8px; }
+  .account-item {
+    border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; padding: 14px 16px;
+    display: flex; justify-content: space-between; gap: 16px; align-items: center; background: #fff;
+  }
+  .account-main { display: flex; flex-direction: column; gap: 3px; }
+  .account-title { font-size: 14px; font-weight: 600; color: #1d1d1f; }
+  .account-meta { font-size: 12px; color: #aeaeb2; }
+  .account-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .badge-ok, .badge-bad, .badge-map, .badge-unmap {
+    font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600;
+  }
+  .badge-ok { background: rgba(52,199,89,0.12); color: #248a3d; }
+  .badge-bad { background: rgba(255,59,48,0.1); color: #d70015; }
+  .badge-map { background: rgba(0,113,227,0.1); color: #0071e3; }
+  .badge-unmap { background: rgba(0,0,0,0.05); color: #8e8e93; }
+
+  /* ===== Mapping ===== */
+  .mapping-panel-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .mapping-row {
+    border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; padding: 14px 16px;
+    display: flex; flex-direction: column; gap: 10px; background: #fff;
+  }
+  .mapping-row-top {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .mapping-row-top .account-title { flex-shrink: 0; }
+  .mapping-row-top .account-badges { justify-content: flex-start; margin-left: auto; }
+  .mapping-input {
+    width: 100%; padding: 9px 12px; border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 8px; font-size: 13px; background: #fff; color: #1d1d1f;
+  }
+  .mapping-input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,0.12); }
+  .mapping-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+  /* ===== Feishu Config ===== */
+  .config-form {
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .config-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;
+  }
+  .config-field {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .config-field.full {
+    grid-column: 1 / -1;
+  }
+  .config-label {
+    font-size: 13px; font-weight: 600; color: #3a3a3c;
+  }
+  .config-input, .config-textarea {
+    width: 100%; padding: 10px 12px; border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 10px; background: #fff; color: #1d1d1f; font-size: 13px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .config-input:focus, .config-textarea:focus {
+    outline: none; border-color: #0071e3; box-shadow: 0 0 0 4px rgba(0,113,227,0.12);
+  }
+  .config-textarea {
+    min-height: 88px; resize: vertical; line-height: 1.55;
+  }
+  .config-help {
+    font-size: 12px; color: #8e8e93; line-height: 1.6;
+  }
+  .config-status {
+    padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+    background: #f2f2f7; color: #6e6e73; border: 1px solid rgba(0,0,0,0.05);
+  }
+  .config-status.success {
+    background: rgba(52,199,89,0.08); color: #248a3d; border-color: rgba(52,199,89,0.16);
+  }
+  .config-status.error {
+    background: rgba(255,59,48,0.08); color: #d70015; border-color: rgba(255,59,48,0.14);
+  }
+  .config-note-list {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .config-note {
+    font-size: 12px; color: #6e6e73;
+  }
+
+  /* ===== Schedule Settings ===== */
+  .period-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+  .period-row {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 12px 14px; background: #f2f2f7; border-radius: 10px; border: 1px solid rgba(0,0,0,0.05);
+  }
+  .period-row label { font-size: 13px; color: #3a3a3c; white-space: nowrap; }
+  .period-row input, .period-row select {
+    padding: 6px 10px; border: 1px solid rgba(0,0,0,0.12); border-radius: 7px;
+    font-size: 13px; width: 90px; background: #fff; color: #1d1d1f;
+  }
+  .period-row input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,0.14); }
+  .period-num {
+    width: 22px; height: 22px; border-radius: 50%; background: #0071e3; color: white;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0;
+  }
+  .btn-remove { background: none; border: none; color: #ff3b30; cursor: pointer; font-size: 18px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+  .btn-remove:hover { background: rgba(255,59,48,0.1); }
+  .settings-actions { display: flex; gap: 10px; align-items: center; }
+  .settings-hint { font-size: 11px; color: #aeaeb2; margin-left: 8px; }
+
+  /* ===== Music ===== */
+  .music-shell {
+    border: 1px solid rgba(0,0,0,0.06); border-radius: 14px; background: #f9f9fb; padding: 18px;
+  }
+  .current-music {
+    padding: 14px 18px; background: #f2f2f7; border-radius: 12px; margin-bottom: 14px;
+    border: 1px solid rgba(0,0,0,0.05); display: flex; align-items: center; gap: 12px;
+  }
+  .music-status { font-size: 14px; color: #8e8e93; font-weight: 500; }
+  .music-status.selected { color: #248a3d; font-weight: 600; }
+  .music-search-row { display: grid; grid-template-columns: minmax(0,1fr) 120px 120px; gap: 12px; margin-bottom: 14px; }
+  .music-search-input {
+    width: 100%; padding: 12px 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px;
+    font-size: 15px; background: #fff; color: #1d1d1f; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .music-search-input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 4px rgba(0,113,227,0.12); }
+  .music-results { max-height: 360px; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; background: white; display: block; }
+  .music-item { padding: 14px 18px; border-bottom: 1px solid rgba(0,0,0,0.04); cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 12px; transition: background 0.12s; }
+  .music-item:last-child { border-bottom: none; }
+  .music-item:hover { background: #f5f5f7; }
+  .music-name { font-size: 15px; font-weight: 500; color: #1d1d1f; }
+  .music-select { color: #0071e3; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .music-empty { padding: 24px 18px; text-align: center; color: #aeaeb2; font-size: 14px; }
+  .music-tools { display: flex; gap: 8px; margin-top: 12px; }
+  .music-link-btn { background: transparent; border: 1px solid rgba(0,0,0,0.1); color: #3a3a3c; border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 13px; font-weight: 500; transition: border-color 0.12s, color 0.12s; }
+  .music-link-btn:hover { border-color: #0071e3; color: #0071e3; }
+  .music-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+  .music-sub { font-size: 12px; color: #aeaeb2; }
+  .music-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .music-preview { border: none; background: transparent; color: #8e8e93; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .music-preview.playing { color: #248a3d; }
+  .music-duration { color: #aeaeb2; font-size: 12px; min-width: 40px; text-align: right; }
+  .music-status-hint { margin-top: 6px; font-size: 13px; color: #8e8e93; line-height: 1.5; }
+  .music-status-hint.warning { color: #c67000; }
+  .music-status-hint.success { color: #248a3d; }
+
+  /* ===== Music Modal ===== */
+  .music-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.38);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    display: none; align-items: center; justify-content: center; padding: 24px; z-index: 999;
+  }
+  .music-modal.open { display: flex; }
+  .music-modal-card {
+    width: min(940px, 100%); max-height: 88vh; background: #fff; border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.18); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .music-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px 14px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+  .music-modal-head h3 { font-size: 19px; font-weight: 600; letter-spacing: -0.3px; color: #1d1d1f; }
+  .music-modal-close { width: 30px; height: 30px; border-radius: 50%; border: none; background: rgba(0,0,0,0.06); color: #6e6e73; cursor: pointer; font-size: 17px; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
+  .music-modal-close:hover { background: rgba(0,0,0,0.12); }
+  .music-modal-body { padding: 18px 26px 26px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+  .music-modal-search { display: grid; grid-template-columns: minmax(0,1fr) 96px; gap: 12px; }
+  .music-tabs { display: flex; gap: 24px; overflow-x: auto; padding-bottom: 0; border-bottom: 1px solid rgba(0,0,0,0.06); }
+  .music-tab { border: none; background: transparent; color: #aeaeb2; font-size: 14px; font-weight: 600; padding: 4px 0 12px; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; transition: color 0.12s; }
+  .music-tab.active { color: #0071e3; border-bottom-color: #0071e3; }
+  .music-library-list { min-height: 220px; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 14px; background: #fdfdfe; }
+  .music-library-item { display: flex; align-items: center; gap: 14px; padding: 13px 18px; border-bottom: 1px solid rgba(0,0,0,0.04); transition: background 0.12s; }
+  .music-library-item:hover { background: #f5f5f7; }
+  .music-library-item:last-child { border-bottom: none; }
+  .music-play-btn { width: 36px; height: 36px; border-radius: 50%; border: none; background: #e5e5ea; color: #1d1d1f; cursor: pointer; font-size: 13px; flex-shrink: 0; transition: background 0.12s; }
+  .music-play-btn.playing { background: #0071e3; color: #fff; }
+  .music-use-btn { border: none; background: #0071e3; color: white; border-radius: 9px; padding: 8px 15px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity 0.12s; }
+  .music-use-btn:hover { opacity: 0.82; }
+  .music-load-more { margin: 10px auto 0; display: block; }
+
+  /* ===== Log Panel ===== */
+  .log-panel {
+    background: #161618; border-radius: 12px; padding: 16px; color: #e5e5ea;
+    font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace; font-size: 12px;
+    max-height: calc(100vh - 220px); overflow-y: auto;
+  }
+  .log-panel .log-entry { padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .log-panel .log-time { color: rgba(255,255,255,0.28); }
+  .log-panel .log-success { color: #30d158; }
+  .log-panel .log-error { color: #ff453a; }
+  .log-panel .log-info { color: #64d2ff; }
+
+  /* ===== Empty ===== */
+  .empty { text-align: center; color: #aeaeb2; padding: 40px; font-size: 14px; }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 768px) {
+    body { height: auto; overflow: visible; }
+    .app-body { flex-direction: column; overflow: visible; }
+    .sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; padding: 8px; border-right: none; border-bottom: 1px solid rgba(0,0,0,0.07); }
+    .sidebar-section-label { display: none; }
+    .main-content { overflow-y: visible; height: auto; }
+    .app-header { flex-wrap: wrap; height: auto; padding: 12px 16px; gap: 10px; }
+    .header-center { order: 3; flex: 0 0 100%; justify-content: flex-start; }
+    .music-search-row { grid-template-columns: 1fr; }
+    .music-modal { padding: 10px; }
+    .music-modal-head, .music-modal-body { padding-left: 16px; padding-right: 16px; }
+    .music-modal-search { grid-template-columns: 1fr; }
+    .music-library-item { align-items: flex-start; }
+    .music-actions { flex-wrap: wrap; justify-content: flex-end; }
+    .account-item { flex-direction: column; align-items: flex-start; }
+    .account-badges { justify-content: flex-start; }
+    .mapping-row { grid-template-columns: 1fr; }
+  }
+
+  :root {
+    --app-bg: #f2f1ef;
+    --app-bg-accent: #eef7f1;
+    --panel: #ffffff;
+    --panel-strong: #ffffff;
+    --panel-soft: #f7f9fb;
+    --line: #e5e9e4;
+    --line-strong: #d3dbd2;
+    --ink: #1f2329;
+    --muted: #68727d;
+    --accent: #07c160;
+    --accent-deep: #06ad56;
+    --accent-soft: #e4f5ea;
+    --warning-soft: #fff5df;
+    --shadow-soft: 0 14px 40px rgba(15, 23, 42, 0.07);
+    --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
+  }
+
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(7, 193, 96, 0.08), transparent 24%),
+      linear-gradient(180deg, #f6f7f8 0%, #eef1f3 100%);
+    color: var(--ink);
+    overflow: hidden;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 108px minmax(420px, 500px) minmax(620px, 1fr);
+    gap: 14px;
+    height: 100vh;
+    padding: 14px;
+  }
+
+  .primary-rail,
+  .workspace-main,
+  .workspace-preview {
+    min-height: 0;
+  }
+
+  .primary-rail {
+    background: var(--panel-strong);
+    border: 1px solid var(--line);
+    border-radius: 28px;
+    box-shadow: var(--shadow-soft);
+    padding: 24px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+
+  .brand-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    text-align: center;
+  }
+
+  .brand-mark {
+    width: 64px;
+    height: 64px;
+    border-radius: 20px;
+    display: grid;
+    place-items: center;
+    font-size: 30px;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(180deg, #08c762 0%, #06ad56 100%);
+    box-shadow: 0 12px 24px rgba(7, 193, 96, 0.22);
+  }
+
+  .brand-copy h1 {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--ink);
+    letter-spacing: -0.03em;
+  }
+
+  .brand-copy p {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .rail-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .rail-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #95a1ad;
+    padding: 0 6px;
+  }
+
+  .primary-nav-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 24px;
+    padding: 14px 10px 16px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    min-height: 94px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform .18s ease, background .18s ease, color .18s ease, border-color .18s ease;
+  }
+
+  .primary-nav-btn:hover {
+    background: #f8faf9;
+    border-color: #dce6df;
+    color: var(--ink);
+    transform: translateY(-1px);
+  }
+
+  .primary-nav-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    border-color: #a8ddb8;
+  }
+
+  .primary-nav-btn.active .primary-nav-icon {
+    background: rgba(7, 193, 96, 0.12);
+    border-color: #a8ddb8;
+  }
+
+  .primary-nav-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 16px;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    background: #f7f9fb;
+    border: 1px solid var(--line);
+  }
+
+  .workspace-main,
+  .workspace-preview {
+    border-radius: 32px;
+    background: var(--panel-strong);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .workspace-main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .workspace-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--line);
+    background: #ffffff;
+  }
+
+  .workspace-head-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .workspace-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-deep);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .workspace-eyebrow::before {
+    content: '';
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 6px rgba(7, 193, 96, 0.12);
+  }
+
+  .workspace-head-copy h2 {
+    font-size: 26px;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .workspace-head-copy p {
+    margin-top: 6px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+
+  .workspace-head-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  .toolbar-status {
+    display: flex;
+    gap: 6px;
+  }
+
+  .status-chip {
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: #f5f4f2;
+    border: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .status-chip-label {
+    font-size: 11px;
+    color: #8a95a3;
+    font-weight: 500;
+  }
+
+  .status-chip-value {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  .status-chip-value.running { color: var(--accent-deep); }
+  .status-chip-value.stopped { color: #d94841; }
+
+  .toolbar-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .toolbar-actions .btn {
+    min-height: 34px;
+    padding: 6px 14px;
+  }
+
+  .workspace-scroll {
+    flex: 1;
+    min-height: 0;
+    padding: 20px 24px 24px;
+    overflow: auto;
+    background: #f5f4f2;
+  }
+
+  .workspace-view {
+    display: none;
+    min-height: 100%;
+    padding-top: 0;
+  }
+
+  .workspace-view.active {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .workspace-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+  }
+
+  .workspace-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 28px;
+    box-shadow: var(--shadow-card);
+    padding: 24px;
+  }
+
+  #section-overview > .workspace-stack > .workspace-card,
+  #section-setup > .workspace-stack > .workspace-card,
+  #section-data > .workspace-stack > .workspace-card {
+    flex: 1;
+  }
+
+  #setupPanePreview {
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  #setupPanePreview > .setup-pane.active {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
+
+  #setupPanePreview > .setup-pane.active > .workspace-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  #setupPanePreview .account-list,
+  #setupPanePreview .period-list {
+    flex: 1;
+    max-height: none;
+    overflow: auto;
+  }
+
+  .workspace-card h3 {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--ink);
+    letter-spacing: -0.03em;
+  }
+
+  .card-intro {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.72;
+    color: var(--muted);
+  }
+
+  .quick-entry-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .quick-entry-card {
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: #f9fbfc;
+    padding: 18px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    text-align: left;
+    cursor: pointer;
+    transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    font: inherit;
+  }
+
+  .quick-entry-card:hover {
+    transform: translateY(-1px);
+    border-color: #bce8cc;
+    background: #f7fcf8;
+  }
+
+  .quick-entry-card h4 {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+
+  .quick-entry-card p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+
+  .overview-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .overview-stat {
+    padding: 18px;
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(245, 248, 241, 0.96) 100%);
+    border: 1px solid rgba(23, 32, 23, 0.06);
+  }
+
+  .overview-stat-label {
+    display: block;
+    font-size: 12px;
+    color: rgba(23, 32, 23, 0.44);
+    margin-bottom: 8px;
+  }
+
+  .overview-stat-value {
+    display: block;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--ink);
+  }
+
+  .overview-stat-value.running { color: var(--accent-deep); }
+  .overview-stat-value.stopped { color: #d94841; }
+
+  .subnav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 0;
+  }
+
+  .subnav-btn {
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: var(--panel-strong);
+    color: var(--ink);
+    min-height: 86px;
+    padding: 16px 18px;
+    cursor: pointer;
+    transition: background .18s ease, color .18s ease, transform .18s ease, border-color .18s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    text-align: left;
+  }
+
+  .subnav-btn:hover {
+    transform: translateY(-1px);
+    border-color: #bce8cc;
+    background: #f8fcfa;
+  }
+
+  .subnav-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent-deep);
+    border-color: #bce8cc;
+  }
+
+  .subnav-btn-title {
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .subnav-btn-meta {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .subnav-btn.active .subnav-btn-meta {
+    color: #4f7f61;
+  }
+
+  .setup-pane {
+    display: none;
+  }
+
+  .setup-pane.active {
+    display: block;
+  }
+
+  .workspace-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px;
+    overflow: auto;
+    background: #f3f8f5;
+  }
+
+  .preview-hero {
+    padding: 24px 26px;
+    border-radius: 28px;
+    background:
+      radial-gradient(circle at top right, rgba(7, 193, 96, 0.13), transparent 30%),
+      linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-card);
+  }
+
+  .preview-hero h3 {
+    margin-top: 12px;
+    font-size: 34px;
+    line-height: 1.06;
+    letter-spacing: -0.04em;
+    color: var(--ink);
+    font-weight: 800;
+  }
+
+  .preview-hero p {
+    margin-top: 10px;
+    font-size: 16px;
+    line-height: 1.72;
+    color: var(--muted);
+  }
+
+  .context-preview-content {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .preview-block {
+    padding: 20px;
+    border-radius: 24px;
+    background: #ffffff;
+    border: 1px solid var(--line);
+  }
+
+  .preview-block h4 {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+
+  .preview-list,
+  .preview-meta-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .preview-list-item,
+  .preview-meta-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: var(--panel-soft);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .preview-meta-item span:first-child {
+    color: var(--muted);
+    min-width: 96px;
+  }
+
+  .preview-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .preview-helper {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+
+  .record-item {
+    cursor: pointer;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #ffffff;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+    border-left: 3px solid transparent;
+  }
+
+  .record-item:hover {
+    transform: translateY(-1px) scale(1.005);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    border-color: rgba(7, 193, 96, 0.3);
+    border-left-color: rgba(7, 193, 96, 0.3);
+  }
+
+  .record-item.selected {
+    border-color: #a8ddb8;
+    border-left-color: var(--accent);
+    box-shadow: 0 8px 24px rgba(7, 193, 96, 0.12);
+    background: #f4fbf6;
+  }
+
+  .record-toolbar,
+  .panel-toolbar,
+  .mapping-panel-toolbar,
+  .settings-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .log-panel {
+    height: min(56vh, 560px);
+    background: #0f1513;
+    border-radius: 22px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .progress-card {
+    background:
+      radial-gradient(circle at top right, rgba(7, 193, 96, 0.09), transparent 30%),
+      linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+    border-radius: 24px;
+    border: 1px solid #d9ebe1;
+    box-shadow: none;
+  }
+
+  .progress-detail,
+  .panel-hint,
+  .record-summary,
+  .settings-hint,
+  .config-note,
+  .config-status,
+  .music-status-hint {
+    color: var(--muted);
+  }
+
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-success,
+  .btn-danger {
+    border: 0;
+    border-radius: 14px;
+    font-weight: 700;
+    transition: transform .16s ease, box-shadow .16s ease, opacity .16s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+  }
+
+  .btn:hover,
+  .btn-primary:hover,
+  .btn-secondary:hover,
+  .btn-success:hover,
+  .btn-danger:hover {
+    transform: translateY(-1px);
+  }
+
+  .btn-primary,
+  .btn.btn-primary,
+  .btn-success,
+  .btn.btn-success {
+    background: linear-gradient(180deg, #08c762 0%, #06ad56 100%);
+    color: #fff;
+    box-shadow: 0 10px 18px rgba(7, 193, 96, 0.2);
+  }
+
+  .btn-secondary,
+  .btn.btn-secondary {
+    background: #f3f5f7;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    box-shadow: none;
+  }
+
+  .btn-danger,
+  .btn.btn-danger {
+    background: linear-gradient(180deg, #ff796c 0%, #ef5b4e 100%);
+    color: #fff;
+    box-shadow: 0 10px 18px rgba(239, 91, 78, 0.18);
+  }
+
+  .record-list,
+  .account-list,
+  .period-list,
+  .music-results {
+    margin-top: 16px;
+    max-height: min(50vh, 560px);
+    overflow: auto;
+    padding-right: 4px;
+  }
+
+  .music-library-list {
+    margin-top: 16px;
+  }
+
+  .data-grid {
+    display: grid;
+    gap: 16px;
+  }
+
+  @media (max-width: 1480px) {
+    .shell {
+      grid-template-columns: 100px minmax(380px, 450px) minmax(440px, 1fr);
+    }
+
+    .workspace-head-copy h2 {
+      font-size: 28px;
+    }
+
+    .preview-hero h3 {
+      font-size: 40px;
+    }
+  }
+
+  @media (max-width: 1260px) {
+    .shell {
+      grid-template-columns: 96px minmax(360px, 1fr);
+      grid-template-rows: minmax(0, 1fr) minmax(320px, 40vh);
+    }
+
+    .workspace-preview {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .workspace-head-copy {
+      min-height: auto;
+    }
+
+    .toolbar-status {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 920px) {
+    .toolbar-actions,
+    .quick-entry-grid,
+    .subnav {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Toggle switch */
+  .toggle-switch { display: inline-flex; align-items: center; flex-shrink: 0; }
+  .toggle-track {
+    display: inline-block;
+    width: 40px; height: 22px;
+    background: #d1d5db;
+    border-radius: 11px;
+    position: relative;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+  .toggle-knob {
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 16px; height: 16px;
+    background: #fff;
+    border-radius: 50%;
+    transition: left 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  input:checked + .toggle-track { background: var(--accent); }
+  input:checked + .toggle-track .toggle-knob { left: 21px; }
+
+  /* ===== 素材导入页 ===== */
+  .import-header-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--line);
+    background: #fff;
+    flex-shrink: 0;
+  }
+  .import-root-path {
+    flex: 1;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .import-topic-group {
+    margin-bottom: 8px;
+  }
+  .import-topic-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    background: var(--accent-soft);
+    border-radius: 8px 8px 0 0;
+    margin: 0 8px;
+  }
+  .import-topic-count {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .import-note-cards {
+    padding: 6px 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .import-note-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #fff;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    transition: box-shadow 0.15s;
+  }
+  .import-note-card:not(.import-note-card--disabled):hover {
+    box-shadow: var(--shadow-card);
+  }
+  .import-note-card--disabled {
+    opacity: 0.55;
+  }
+  .import-card-thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 6px;
+    object-fit: cover;
+    background: var(--accent-soft);
+    flex-shrink: 0;
+  }
+  .import-card-thumb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    background: var(--accent-soft);
+  }
+  .import-card-info { flex: 1; min-width: 0; }
+  .import-card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .import-card-meta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .import-card-warning { cursor: help; }
+  .import-stat-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .import-stat-box {
+    flex: 1;
+    background: var(--accent-soft);
+    border-radius: 10px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+  .import-stat-num {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .import-stat-label {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  /* 卡片改为竖排，支持账号选择区 */
+  .import-note-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .import-card-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 2px 0 8px;
+  }
+  .import-note-card--disabled .import-card-selects { display: none; }
+  .import-card-selects {
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .import-select-row {
+    display: flex;
+    gap: 6px;
+  }
+  .import-select-row select {
+    flex: 1;
+    font-size: 12px;
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+    min-width: 0;
+  }
+  .import-select-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 批量设置栏 */
+  .import-batch-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 8px 8px 4px;
+    background: #f9f9f7;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .import-batch-bar label { align-self: center; white-space: nowrap; }
+  .import-batch-bar select {
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .import-batch-bar button {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .import-batch-bar button:hover { background: var(--accent); color: #fff; }
+  /* 时间分配控制栏 */
+  .import-time-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--warning-soft);
+    border-bottom: 1px solid #f0d080;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .import-time-bar label { white-space: nowrap; }
+  .import-time-bar input[type="date"],
+  .import-time-bar input[type="time"],
+  .import-time-bar input[type="number"] {
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .import-time-bar input[type="number"] { width: 52px; }
+  .import-time-bar button {
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .import-time-bar button:hover { background: var(--accent-deep); }
+  /* 卡片内时间输入 */
+  .import-card-time {
+    border-top: 1px solid var(--line);
+    padding-top: 7px;
+    margin-top: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .import-card-time label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .import-card-time input {
+    flex: 1;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    min-width: 0;
+  }
+  .import-card-time input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* P3.0 预览卡 */
+  .import-preview-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .import-preview-card--error { border-color: #fca5a5; background: #fff5f5; }
+  .import-preview-card--skipped { border-color: var(--line); background: var(--panel-soft); opacity: 0.7; }
+  .import-preview-card-head {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: monospace;
+    margin-bottom: 2px;
+  }
+  .import-preview-title {
+    width: 100%;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin-top: 4px;
+    box-sizing: border-box;
+    color: var(--ink);
+    background: #fff;
+  }
+  .import-preview-title:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .import-preview-action {
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .import-preview-action.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  /* P3.2 报告条目 */
+  .import-report-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-bottom: 5px;
+    background: #fff;
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .import-report-item--fail { border-color: #fca5a5; background: #fff5f5; }
+  .import-report-info { flex: 1; min-width: 0; }
+  .import-report-key {
+    display: block;
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .import-report-sub {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="primary-rail">
+    <div class="brand-stack">
+      <div class="brand-mark">知</div>
+      <div class="brand-copy">
+        <h1>知发</h1>
+        <p>笔记多平台发布工具</p>
+      </div>
+    </div>
+
+    <div class="rail-group">
+      <button class="primary-nav-btn active" data-section="overview" onclick="switchSection('overview')">
+        <span class="primary-nav-icon">🏠</span>
+        <span>总览</span>
+      </button>
+      <button class="primary-nav-btn" data-section="publish" onclick="switchSection('publish')">
+        <span class="primary-nav-icon">📤</span>
+        <span>发布</span>
+      </button>
+      <button class="primary-nav-btn" data-section="import" onclick="switchSection('import')">
+        <span class="primary-nav-icon">📁</span>
+        <span>导入</span>
+      </button>
+      <button class="primary-nav-btn" data-section="data" onclick="switchSection('data')">
+        <span class="primary-nav-icon">📊</span>
+        <span>数据</span>
+      </button>
+    </div>
+
+    <div class="rail-group" style="margin-top:auto">
+      <button class="primary-nav-btn" data-section="setup" onclick="switchSection('setup')">
+        <span class="primary-nav-icon">⚙️</span>
+        <span>设置</span>
+      </button>
+    </div>
+    <div style="padding:4px 8px 0;text-align:center;font-size:10px;color:var(--muted);user-select:none;" id="appVersionLabel"></div>
+  </aside>
+
+  <main class="workspace-main">
+    <header class="workspace-toolbar">
+      <div class="workspace-head-copy">
+        <div class="workspace-eyebrow" id="workspaceEyebrow">总览</div>
+        <h2 id="workspaceTitle">总览</h2>
+      </div>
+      <div class="workspace-head-tools">
+        <div class="toolbar-status">
+          <div class="status-chip">
+            <span class="status-chip-label">服务</span>
+            <span class="status-chip-value" id="toolbarServiceStatus">加载中</span>
+          </div>
+          <div class="status-chip">
+            <span class="status-chip-label">待发布</span>
+            <span class="status-chip-value" id="toolbarPendingCount">-</span>
+          </div>
+          <div class="status-chip">
+            <span class="status-chip-label">下次检查</span>
+            <span class="status-chip-value" id="toolbarNextCheck">-</span>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-sm btn-secondary" onclick="refreshRecords(true)">刷新</button>
+          <button class="btn btn-sm btn-success" id="btnStart" onclick="startScheduler()">启动</button>
+          <button class="btn btn-sm btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止</button>
+          <button class="btn btn-sm btn-primary" onclick="publishNow()">立即补发</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="workspace-scroll">
+      <section class="workspace-view active" id="section-overview">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <h3>常用入口</h3>
+            <div class="card-intro">中栏只保留直接可操作的入口，运行状态、当前任务、扫描窗口和日志已经统一收进右侧预览区。</div>
+            <div class="quick-entry-grid">
+              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('feishu', { preserveSection: true });">
+                <h4>飞书接入</h4>
+                <p>补全 App ID、App Token 和 Table ID，完成多维表格接入。</p>
+              </button>
+              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('accounts', { preserveSection: true });">
+                <h4>账号授权</h4>
+                <p>查看蚁小二账号在线、实名和映射状态。</p>
+              </button>
+              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true });">
+                <h4>比特浏览器</h4>
+                <p>同步飞书账号并维护 browserId 映射关系。</p>
+              </button>
+              <button class="quick-entry-card" onclick="switchSection('data')">
+                <h4>备份与迁移</h4>
+                <p>导入导出配置或完整数据，管理本机数据位置。</p>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-view" id="section-publish">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <h3>待发布记录</h3>
+            <div class="card-intro">按账号分组展示，展开后点击记录可在右侧查看详情并一键发布。</div>
+            <div style="margin-top:12px; position:relative;">
+              <input id="recordSearchInput" type="text" placeholder="搜索记录标题…" oninput="filterRecords(this.value)"
+                style="width:100%; padding:8px 12px 8px 32px; border:1px solid rgba(0,0,0,0.1); border-radius:8px; font-size:13px; background:#f8f8fb; color:#1d1d1f; box-sizing:border-box;">
+              <span style="position:absolute; left:10px; top:50%; transform:translateY(-50%); font-size:13px; color:#aeaeb2; pointer-events:none;">🔍</span>
+            </div>
+            <div class="record-toolbar" style="margin-top:8px;">
+              <div class="record-summary" id="recordSummary"></div>
+              <button class="btn btn-sm btn-secondary" id="recordMoreBtn" onclick="showMoreRecords()" style="display:none;">显示更多</button>
+            </div>
+            <div id="recordList" class="record-list">
+              <div class="empty">点击右上角“刷新数据”加载记录</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-view" id="section-import" style="display:flex;flex-direction:column;padding:0;overflow:hidden;">
+        <!-- 顶部选择栏 -->
+        <div class="import-header-bar">
+          <button class="btn btn-sm btn-secondary" onclick="importSelectFolder()">📁 选择根目录</button>
+          <div class="import-root-path" id="importRootPathDisplay">未选择</div>
+        </div>
+        <!-- 时间自动分配栏（扫描完成后显示） -->
+        <div class="import-time-bar" id="importTimeBar" style="display:none">
+          <label>📅 自动分配：起始</label>
+          <input type="date" id="importStartDate">
+          <label>每天最多</label>
+          <input type="number" id="importMaxPerDay" value="2" min="1" max="20">
+          <label>条，时间</label>
+          <input type="time" id="importPublishTime" value="10:00">
+          <button onclick="importAutoDistributeTimes()">应用到全部</button>
+        </div>
+        <!-- 扫描结果滚动区 -->
+        <div style="flex:1;overflow-y:auto;padding:8px 0;" id="importScanResult">
+          <div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">
+            请先选择素材根目录
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-view" id="section-setup">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <div class="subnav">
+              <button class="subnav-btn active" data-setup-pane="feishu" onclick="switchSetupPane('feishu')">
+                <span class="subnav-btn-title">飞书接入</span>
+                <span class="subnav-btn-meta">连接多维表格与知识库</span>
+              </button>
+              <button class="subnav-btn" data-setup-pane="accounts" onclick="switchSetupPane('accounts')">
+                <span class="subnav-btn-title">账号授权</span>
+                <span class="subnav-btn-meta">查看蚁小二账号状态</span>
+              </button>
+              <button class="subnav-btn" data-setup-pane="bitbrowser" onclick="switchSetupPane('bitbrowser')">
+                <span class="subnav-btn-title">比特浏览器</span>
+                <span class="subnav-btn-meta">维护 browserId 映射</span>
+              </button>
+              <button class="subnav-btn" data-setup-pane="schedule" onclick="switchSetupPane('schedule')">
+                <span class="subnav-btn-title">定时任务</span>
+                <span class="subnav-btn-meta">调整扫描窗口与间隔</span>
+              </button>
+              <button class="subnav-btn" data-setup-pane="music" onclick="switchSetupPane('music')">
+                <span class="subnav-btn-title">默认音乐</span>
+                <span class="subnav-btn-meta">管理抖音默认配乐</span>
+              </button>
+              <button class="subnav-btn" data-setup-pane="ai-writing" onclick="switchSetupPane('ai-writing')">
+                <span class="subnav-btn-title">AI 写作</span>
+                <span class="subnav-btn-meta">自动生成标题正文标签</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-view" id="section-data">
+        <div class="workspace-stack">
+          <div class="workspace-card">
+            <h3>导入与导出</h3>
+            <div class="card-intro">备份迁移和本机数据目录统一收敛到这里，避免和接入配置混在一起。</div>
+            <div class="data-grid" style="margin-top:16px;">
+              <div class="workspace-card" style="padding:18px; background:#fff;">
+                <h3 style="font-size:16px;">配置备份</h3>
+                <div class="config-note" style="margin-top:8px;">只导出配置，适合在不同机器间迁移接入信息与映射规则。</div>
+                <div class="settings-actions" style="margin-top:14px;">
+                  <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
+                  <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
+                </div>
+              </div>
+              <div class="workspace-card" style="padding:18px; background:#fff;">
+                <h3 style="font-size:16px;">完整数据</h3>
+                <div class="config-note" style="margin-top:8px;">包含配置和发布账本，不包含缓存与临时文件。</div>
+                <div class="settings-actions" style="margin-top:14px;">
+                  <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
+                  <button class="btn btn-sm btn-secondary" onclick="triggerDataImport()">导入完整数据</button>
+                </div>
+              </div>
+            </div>
+            <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
+            <input id="dataImportFile" type="file" accept="application/json" style="display:none" onchange="handleDataImport(event)">
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside class="workspace-preview">
+    <div class="preview-hero">
+      <div class="workspace-eyebrow" id="contextPreviewEyebrow">预览</div>
+      <h3 id="contextPreviewTitle">知发工作台</h3>
+      <p id="contextPreviewDescription">右侧会根据当前模块显示记录详情、设置摘要、备份路径和运行上下文，不再把所有信息都堆在同一屏。</p>
+    </div>
+    <div id="contextPreviewContent" class="context-preview-content"></div>
+    <div id="setupPanePreview">
+      <div class="setup-pane active" id="setup-pane-feishu">
+        <div class="workspace-card" id="feishuPanel">
+          <h3>飞书接入配置</h3>
+          <div class="config-form" style="margin-top:16px;">
+            <div class="config-status" id="feishuConfigStatus">保存飞书应用凭证后，工具会立即用新的配置访问多维表格。</div>
+            <div class="config-grid">
+              <div class="config-field">
+                <label class="config-label" for="feishuAppId">App ID</label>
+                <input class="config-input" id="feishuAppId" placeholder="如：cli_xxx">
+              </div>
+              <div class="config-field">
+                <label class="config-label" for="feishuAppSecret">App Secret</label>
+                <input class="config-input" id="feishuAppSecret" type="password" placeholder="未修改可保留为掩码">
+              </div>
+              <div class="config-field">
+                <label class="config-label" for="feishuAppToken">App Token</label>
+                <input class="config-input" id="feishuAppToken" placeholder="多维表格 app_token">
+              </div>
+              <div class="config-field">
+                <label class="config-label" for="feishuTableId">Table ID</label>
+                <input class="config-input" id="feishuTableId" placeholder="多维表格 table_id">
+              </div>
+              <div class="config-field full">
+                <label class="config-label" for="feishuWikiUrl">飞书文档/知识库链接（可选）</label>
+                <input class="config-input" id="feishuWikiUrl" placeholder="https://...">
+              </div>
+              <div class="config-field full">
+                <label class="config-label" for="feishuConfigNotes">接入说明</label>
+                <div class="config-textarea" id="feishuConfigNotes" style="pointer-events:none; background:#f8f8fb;" tabindex="-1">1. 先在飞书开放平台创建应用并获取 App ID / App Secret。
+2. 在多维表格或对应文档里，把这个应用添加进去，确保它有读取/编辑表格权限。
+3. 把 App Token、Table ID 一并填到这里后保存。
+4. 保存后可点"刷新数据"或"立即补发"验证接入是否生效。</div>
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button class="btn btn-sm btn-secondary" onclick="loadFeishuConfig(true)">重新读取</button>
+              <button class="btn btn-sm btn-primary" onclick="saveFeishuConfig()">保存飞书配置</button>
+            </div>
+            <div class="config-note-list">
+              <div class="config-note">提示：这里能保存本地访问凭证，但"把应用添加到飞书多维表格/文档协作者"这一步仍需你在飞书里手动完成。</div>
+              <div class="config-note">如果 App Secret 一栏保持 `******`，保存时会沿用当前已存在的 Secret。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="setup-pane" id="setup-pane-accounts">
+        <div class="workspace-card" id="accountsPanel">
+          <h3>账号授权状态</h3>
+          <div class="panel-toolbar" style="margin-top:12px;">
+            <button class="btn btn-sm btn-secondary" onclick="refreshAccounts()">刷新账号状态</button>
+            <span class="panel-hint">显示蚁小二账号授权状态与是否已被当前项目映射使用。</span>
+          </div>
+          <div id="accountList" class="account-list">
+            <div class="empty">点击"刷新账号状态"加载账号信息</div>
+          </div>
+        </div>
+      </div>
+      <div class="setup-pane" id="setup-pane-bitbrowser">
+        <div class="workspace-card" id="bitbrowserPanel">
+          <h3>比特浏览器账号管理</h3>
+          <div class="mapping-panel-toolbar" style="margin-top:12px;">
+            <button class="btn btn-sm btn-secondary" onclick="syncFeishuBitbrowserFields()">同步飞书账号</button>
+            <button class="btn btn-sm btn-primary" onclick="saveBitbrowserMappings()">保存 browserId 映射</button>
+            <span class="panel-hint">会同时同步飞书里的 `小红书账号`、`小红书发布渠道` 两个单选字段选项，再刷新本地 browserId 映射。</span>
+          </div>
+          <div id="bitbrowserSummary" class="record-summary" style="margin-top:14px;">点击"同步飞书账号"加载账号列表。</div>
+          <div id="bitbrowserList" class="account-list">
+            <div class="empty">点击"同步飞书账号"加载比特浏览器映射</div>
+          </div>
+        </div>
+      </div>
+      <div class="setup-pane" id="setup-pane-schedule">
+        <div class="workspace-card" id="settingsPanel">
+          <h3>定时检查设置</h3>
+          <div class="card-intro">时间段现在承担"扫描窗口"的职责，会在窗口内发现记录并补建精准任务。</div>
+          <div class="period-list" id="periodList"></div>
+          <div class="settings-actions" style="margin-top:14px;">
+            <button class="btn btn-sm btn-secondary" onclick="addPeriod()">+ 添加时间段</button>
+            <button class="btn btn-sm btn-primary" onclick="saveSchedule()">保存设置</button>
+            <span class="settings-hint" id="scheduleHint"></span>
+          </div>
+        </div>
+        <div class="workspace-card" style="margin-top:12px;">
+          <h3>发布主机</h3>
+          <div class="card-intro">多台设备共用同一飞书表格时，只有「发布主机」会自动运行定时发布；其他设备仅用于素材导入，不参与发布，避免重复发出。</div>
+          <div style="display:flex;align-items:center;gap:14px;margin-top:16px;">
+            <label class="toggle-switch" style="cursor:pointer;">
+              <input type="checkbox" id="isMasterPublisherToggle" onchange="saveMasterPublisherSetting(this.checked)" style="position:absolute;opacity:0;width:0;height:0;">
+              <span class="toggle-track">
+                <span class="toggle-knob"></span>
+              </span>
+            </label>
+            <div>
+              <div style="font-size:14px;font-weight:500;color:var(--ink);" id="masterPublisherLabel">此设备为发布主机</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;" id="masterPublisherHint">开启后此设备将自动运行定时发布</div>
+            </div>
+          </div>
+          <div id="masterPublisherStatus" style="margin-top:10px;font-size:12px;color:var(--muted);"></div>
+        </div>
+      </div>
+      <div class="setup-pane" id="setup-pane-music">
+        <div class="workspace-card" id="musicPanel">
+          <h3>抖音默认配乐</h3>
+          <div class="music-shell" style="margin-top:16px;">
+            <div id="currentMusic" class="current-music">
+              <div>
+                <span class="music-status">未设置默认配乐</span>
+                <div class="music-status-hint" id="musicStatusHint">当前未设置默认配乐，发布时会自动回退到热门纯音乐。</div>
+              </div>
+            </div>
+            <div class="music-search">
+              <div class="music-tools" style="margin-top:0;">
+                <button class="btn btn-primary" onclick="openMusicLibrary()">选择背景音乐</button>
+                <button class="btn btn-secondary" onclick="openMusicLibrary('hot')">最近热歌</button>
+                <button class="btn btn-secondary" onclick="clearDefaultMusic()">清除设置</button>
+              </div>
+              <div id="musicResults" class="music-results" style="margin-top:12px;">
+                <div class="music-empty">点击"选择背景音乐"后，可在弹窗内搜索、试听和使用官方配乐</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="setup-pane" id="setup-pane-ai-writing">
+        <div class="workspace-card">
+          <h3>AI 写作</h3>
+          <p style="color:var(--ink-3);font-size:13px;margin:8px 0 16px;">检测飞书"笔记主题"字段变化，自动生成标题、正文、标签并回写表格。</p>
+
+          <div class="config-form">
+            <div class="config-grid" style="grid-template-columns:1fr;gap:12px;">
+
+              <div class="config-field" style="display:flex;align-items:center;gap:10px;">
+                <label class="config-label" style="margin:0;white-space:nowrap;">启用 AI 写作</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input type="checkbox" id="aiWritingEnabled" onchange="onAiProviderChange()" style="width:16px;height:16px;cursor:pointer;">
+                  <span style="font-size:13px;color:var(--ink-2);">开启后每次扫描时自动检测并生成</span>
+                </label>
+              </div>
+
+              <div class="config-field">
+                <label class="config-label">AI 服务商</label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                    <input type="radio" name="aiProvider" value="openai" onchange="onAiProviderChange()"> OpenAI 兼容（推荐）
+                  </label>
+                  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                    <input type="radio" name="aiProvider" value="anthropic" onchange="onAiProviderChange()"> Anthropic Claude 官方
+                  </label>
+                  <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
+                    <input type="radio" name="aiProvider" value="gemini" onchange="onAiProviderChange()"> Google Gemini 官方
+                  </label>
+                </div>
+                <div style="font-size:12px;color:var(--ink-3);margin-top:4px;">使用中转站请选"OpenAI 兼容"并填入中转站地址</div>
+              </div>
+
+              <div class="config-field" id="aiBaseUrlField">
+                <label class="config-label">API Base URL</label>
+                <input class="config-input" id="aiApiBaseUrl" type="text" placeholder="https://api.openai.com/v1">
+              </div>
+
+              <div class="config-field">
+                <label class="config-label">API Key</label>
+                <input class="config-input" id="aiApiKey" type="password" placeholder="sk-...">
+              </div>
+
+              <div class="config-field">
+                <label class="config-label">模型名称</label>
+                <input class="config-input" id="aiModel" type="text" placeholder="gpt-4o-mini">
+                <div style="font-size:12px;color:var(--ink-3);margin-top:4px;">OpenAI: gpt-4o-mini / gpt-4o &nbsp;|&nbsp; Claude: claude-3-5-haiku-20241022 &nbsp;|&nbsp; Gemini: gemini-2.0-flash</div>
+              </div>
+
+            </div>
+
+            <div class="settings-actions" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-sm btn-primary" onclick="saveAiWritingConfig()">保存配置</button>
+              <button class="btn btn-sm btn-secondary" onclick="testAiConnection()" id="aiTestBtn">测试连接</button>
+            </div>
+            <div id="aiWritingStatus" style="margin-top:10px;font-size:13px;color:var(--ink-2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- Music Modal -->
+<div class="music-modal" id="musicModal" onclick="closeMusicLibrary(event)">
+  <div class="music-modal-card" onclick="event.stopPropagation()">
+    <div class="music-modal-head">
+      <h3>选择音乐</h3>
+      <button class="music-modal-close" onclick="closeMusicLibrary()">×</button>
+    </div>
+    <div class="music-modal-body">
+      <div class="music-modal-search">
+        <input
+          type="text"
+          id="musicLibrarySearch"
+          class="music-search-input"
+          placeholder="搜索音乐"
+          onkeydown="if(event.key === 'Enter'){ searchMusicLibrary(); }"
+        >
+        <button class="btn btn-primary" onclick="searchMusicLibrary()">搜索</button>
+      </div>
+      <div class="music-tabs" id="musicTabs"></div>
+      <div class="music-library-list" id="musicLibraryList">
+        <div class="music-empty">正在加载音乐列表...</div>
+      </div>
+      <button class="btn btn-secondary music-load-more" id="musicLoadMore" onclick="loadMoreMusic()" style="display:none;">加载更多</button>
+    </div>
+  </div>
+</div>
+
+<audio id="musicPreviewPlayer" preload="none"></audio>
+
+<script>
+const API = '';
+const INTERVAL_OPTIONS = [
+  { value: 5, label: '5分钟' },
+  { value: 10, label: '10分钟' },
+  { value: 15, label: '15分钟' },
+  { value: 20, label: '20分钟' },
+  { value: 30, label: '30分钟' },
+  { value: 60, label: '1小时' },
+  { value: 120, label: '2小时' },
+];
+
+let periods = [
+  { startTime: '06:00', endTime: '22:00', intervalMinutes: 30 }
+];
+let musicCategories = [];
+const builtInMusicTabs = [
+  { key: 'recommend', label: '热歌推荐', keyword: '热歌' },
+  { key: 'hot', label: '热门榜', keyword: '热门' },
+  { key: 'soft', label: '轻音乐', keyword: '轻音乐' },
+  { key: 'heal', label: '治愈', keyword: '治愈' },
+  { key: 'pure', label: '纯音乐', keyword: '纯音乐' },
+  { key: 'beat', label: '卡点', keyword: '卡点' },
+];
+let musicLibraryState = {
+  mode: 'recommend',
+  keyword: '热歌',
+  categoryId: '',
+  categoryName: '',
+  nextPage: null,
+};
+let currentPreviewUrl = '';
+let eventSource = null;
+let reconnectTimer = null;
+let isRefreshingStatus = false;
+let isRefreshingRecords = false;
+let lastStatusSignature = '';
+let lastRecordsSignature = '';
+let recordListData = [];
+let recordRenderLimit = 80;
+let showCompletedRecords = false;
+let expandedAccountGroups = new Set();
+let recordSearchQuery = '';
+let logEntries = [];
+let bitbrowserMappings = [];
+let feishuConfigLoaded = false;
+let activeSection = 'overview';
+let activeSetupPane = 'feishu';
+let selectedRecordKey = '';
+let latestStatusData = null;
+let latestRuntimePaths = {};
+let latestFeishuConfig = null;
+let accountStatusData = [];
+let latestMusicValidation = null;
+let scheduledTasksData = [];
+let latestPendingCount = '-';
+const MAX_LOG_ENTRIES = 200;
+
+// 素材导入页状态
+let importRootPath = null;
+let importScanData = [];
+// key: noteKey → { xiaohongshuAccount, xiaohongshuChannel, douyinAccount, publishTime }
+let importNoteState = new Map();
+// P3.0 预览状态
+let importPreviewData = [];      // dryRun 返回的结果数组
+let importPhase = 'scan';        // 'scan' | 'previewing' | 'importing' | 'done'
+// key: noteKey → { skipped: bool, emptyBuild: bool }（P3.0 用户操作）
+let importCardDecisions = new Map();
+// P3.1 / P3.2
+let importReportData = [];       // 正式导入的结果数组
+let importProgressCurrent = 0;   // P4.1 当前进度
+let importProgressTotal = 0;
+let importProgressNoteKey = '';
+
+const SECTION_META = {
+  overview: {
+    eyebrow: '总览',
+    title: '总览',
+    description: '查看当前服务状态、待发布任务数和最近发布进展，随时了解内容发布全局。',
+    previewEyebrow: '运行概况',
+    previewTitle: '知发工作台',
+    previewDescription: '服务状态、待发布数量和最近日志一目了然，让每次发布都有据可查。'
+  },
+  publish: {
+    eyebrow: '发布',
+    title: '发布',
+    description: '按账号查看待发内容，点击展开后选中记录，右侧可一键发布单条或查看发布详情。',
+    previewEyebrow: '记录详情',
+    previewTitle: '发布记录详情',
+    previewDescription: '点击左侧任意记录，查看目标账号、发布时间和平台状态，并可立即触发发布。'
+  },
+  import: {
+    eyebrow: '素材导入',
+    title: '素材导入',
+    description: '选择本地素材文件夹，AI 自动生成标题/正文/标签，一键导入飞书并排期发布。',
+    previewEyebrow: '导入概况',
+    previewTitle: '素材导入',
+    previewDescription: '选择根目录后，右侧显示扫描统计和操作入口。'
+  },
+  setup: {
+    eyebrow: '设置',
+    title: '设置',
+    description: '管理飞书连接、账号授权和发布策略，确保内容顺利送达各平台。',
+    previewEyebrow: '配置摘要',
+    previewTitle: '配置摘要',
+    previewDescription: '选中左侧设置项后，右侧会展示对应的连接状态、账号概况或调度策略。'
+  },
+  data: {
+    eyebrow: '数据',
+    title: '数据',
+    description: '备份当前配置和数据，或在设备之间迁移发布记录与账号信息。',
+    previewEyebrow: '数据摘要',
+    previewTitle: '本机数据摘要',
+    previewDescription: '当前配置文件位置、数据目录和备份范围集中展示，方便随时迁移或恢复。'
+  }
+};
+
+const SETUP_META = {
+  feishu: {
+    eyebrow: '设置 / 飞书接入',
+    title: '飞书接入',
+    description: '连接飞书多维表格，知发将自动读取笔记内容并按计划发布到各平台。',
+    previewEyebrow: '连接状态',
+    previewTitle: '飞书连接状态',
+    previewDescription: '当前飞书接入状态、关键配置字段和本机路径集中展示，方便快速排查问题。'
+  },
+  accounts: {
+    eyebrow: '设置 / 账号授权',
+    title: '账号授权',
+    description: '查看各平台账号的授权状态，确保发布时账号在线且权限正常。',
+    previewEyebrow: '账号概况',
+    previewTitle: '账号授权状态',
+    previewDescription: '在线账号数、实名认证情况和映射覆盖率一览，让账号状态清晰可见。'
+  },
+  bitbrowser: {
+    eyebrow: '设置 / 比特浏览器',
+    title: '比特浏览器',
+    description: '将小红书账号与比特浏览器绑定，让发布任务自动选择正确的浏览器环境。',
+    previewEyebrow: '绑定概况',
+    previewTitle: '浏览器绑定情况',
+    previewDescription: '已识别账号数、browserId 配置进度和飞书记录命中情况汇总展示。'
+  },
+  schedule: {
+    eyebrow: '设置 / 定时任务',
+    title: '定时任务',
+    description: '设置自动发布时间窗口，知发会在指定时段内自动检测并执行发布任务。',
+    previewEyebrow: '调度策略',
+    previewTitle: '调度窗口概览',
+    previewDescription: '当前扫描时间段、执行间隔和下次检查时间一目了然。'
+  },
+  music: {
+    eyebrow: '设置 / 默认音乐',
+    title: '默认音乐',
+    description: '为抖音视频设置默认背景音乐，未指定时系统将自动匹配热门音乐。',
+    previewEyebrow: '配乐状态',
+    previewTitle: '默认配乐状态',
+    previewDescription: '当前默认音乐名称、可用状态和最近更新信息展示在这里。'
+  },
+  'ai-writing': {
+    eyebrow: '设置 / AI 写作',
+    title: 'AI 写作',
+    description: '配置 AI 接口，检测飞书"笔记主题"字段变化后自动生成标题、正文和标签。',
+    previewEyebrow: 'AI 配置',
+    previewTitle: 'AI 写作状态',
+    previewDescription: '显示 AI 写作启用状态、服务商配置和最近生成记录。'
+  }
+};
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/"/g, '&quot;');
+}
+
+function maskValue(value, visiblePrefix = 4, visibleSuffix = 4) {
+  const text = String(value || '').trim();
+  if (!text) return '未填写';
+  if (text.length <= visiblePrefix + visibleSuffix) {
+    return `${text.slice(0, Math.max(1, Math.min(2, text.length)))}••••`;
+  }
+  return `${text.slice(0, visiblePrefix)}••••${text.slice(-visibleSuffix)}`;
+}
+
+function getRecordKey(record) {
+  return [
+    record.recordId || '',
+    record.title || '',
+    record.publishTime || '',
+    record.xiaohongshuAccount || '',
+    record.douyinAccount || '',
+    Array.isArray(record.attachments) ? record.attachments.length : 0,
+    record.contentType || ''
+  ].join('|');
+}
+
+function formatDateTime(value, fallback = '-') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN');
+}
+
+function formatCount(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  return String(value);
+}
+
+function ensureSelectedRecord() {
+  if (!recordListData.length) {
+    selectedRecordKey = '';
+    return null;
+  }
+  const existing = recordListData.find(record => getRecordKey(record) === selectedRecordKey);
+  if (existing) return existing;
+  const preferred = recordListData.find(record => (
+    (record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布')
+    || (record.douyinAccount && record.douyinStatus === '待发布')
+  )) || recordListData[0];
+  selectedRecordKey = preferred ? getRecordKey(preferred) : '';
+  return preferred || null;
+}
+
+function selectRecord(recordKey) {
+  selectedRecordKey = recordKey;
+  renderRecordList(recordListData);
+  renderContextPreview();
+}
+
+function ensureSetupPaneLoaded(pane) {
+  if (pane === 'feishu') {
+    loadFeishuConfig();
+  } else if (pane === 'accounts') {
+    if (!accountStatusData.length) refreshAccounts();
+  } else if (pane === 'bitbrowser') {
+    if (!bitbrowserMappings.length) refreshBitbrowserMappings(false, true);
+  } else if (pane === 'music') {
+    loadCurrentMusic();
+  } else if (pane === 'schedule') {
+    refreshStatus();
+    loadMasterPublisherSetting();
+  } else if (pane === 'ai-writing') {
+    loadAiWritingConfig();
+  }
+}
+
+function updateWorkspaceCopy() {
+  const sectionMeta = SECTION_META[activeSection] || SECTION_META.overview;
+  const setupMeta = activeSection === 'setup' ? (SETUP_META[activeSetupPane] || SETUP_META.feishu) : null;
+  const meta = setupMeta || sectionMeta;
+  document.getElementById('workspaceEyebrow').textContent = meta.eyebrow;
+  document.getElementById('workspaceTitle').textContent = meta.title;
+  document.getElementById('contextPreviewEyebrow').textContent = meta.previewEyebrow;
+  document.getElementById('contextPreviewTitle').textContent = meta.previewTitle;
+  document.getElementById('contextPreviewDescription').textContent = meta.previewDescription;
+}
+
+function switchSection(section) {
+  activeSection = section;
+  document.querySelectorAll('.primary-nav-btn').forEach(item => {
+    item.classList.toggle('active', item.dataset.section === section);
+  });
+  document.querySelectorAll('.workspace-view').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `section-${section}`);
+  });
+  updateWorkspaceCopy();
+  if (section === 'publish' && !recordListData.length) {
+    refreshRecords(true);
+  }
+  if (section === 'setup') {
+    switchSetupPane(activeSetupPane, { preserveSection: true });
+    return;
+  }
+  if (section === 'data' && !feishuConfigLoaded) {
+    loadFeishuConfig();
+  }
+  if (section === 'import') {
+    importEnsureAccounts();
+    renderContextPreview();
+    return;
+  }
+  renderContextPreview();
+}
+
+function switchSetupPane(pane, options = {}) {
+  activeSetupPane = pane;
+  if (!options.preserveSection) {
+    activeSection = 'setup';
+    document.querySelectorAll('.workspace-view').forEach(panel => {
+      panel.classList.toggle('active', panel.id === 'section-setup');
+    });
+    document.querySelectorAll('.primary-nav-btn').forEach(item => {
+      item.classList.toggle('active', item.dataset.section === 'setup');
+    });
+  }
+  document.querySelectorAll('.subnav-btn').forEach(item => {
+    item.classList.toggle('active', item.dataset.setupPane === pane);
+  });
+  document.querySelectorAll('.setup-pane').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `setup-pane-${pane}`);
+  });
+  updateWorkspaceCopy();
+  ensureSetupPaneLoaded(pane);
+  renderContextPreview();
+}
+
+function switchTab(tabName) {
+  const mapping = {
+    overview: { section: 'overview' },
+    publish: { section: 'publish' },
+    records: { section: 'publish' },
+    data: { section: 'data' },
+    feishu: { section: 'setup', pane: 'feishu' },
+    accounts: { section: 'setup', pane: 'accounts' },
+    bitbrowser: { section: 'setup', pane: 'bitbrowser' },
+    schedule: { section: 'setup', pane: 'schedule' },
+    music: { section: 'setup', pane: 'music' },
+  };
+  const target = mapping[tabName] || mapping.overview;
+  switchSection(target.section);
+  if (target.pane) {
+    switchSetupPane(target.pane, { preserveSection: true });
+  }
+}
+
+async function fetchApi(path, method = 'GET', body) {
+  const opts = { method };
+  if (body) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(API + path, opts);
+  return resp.json();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeJsSingleQuotedString(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const mm = String(Math.floor(total / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+function renderPeriods() {
+  const el = document.getElementById('periodList');
+  el.innerHTML = periods.map((p, i) => {
+    const intervalOpts = INTERVAL_OPTIONS.map(opt =>
+      `<option value="${opt.value}" ${opt.value === p.intervalMinutes ? 'selected' : ''}>${opt.label}</option>`
+    ).join('');
+    return `<div class="period-row">
+      <span class="period-num">${i + 1}</span>
+      <label>开始</label>
+      <input type="time" value="${p.startTime}" onchange="periods[${i}].startTime=this.value; updateHint()">
+      <label>结束</label>
+      <input type="time" value="${p.endTime}" onchange="periods[${i}].endTime=this.value; updateHint()">
+      <label>间隔</label>
+      <select onchange="periods[${i}].intervalMinutes=parseInt(this.value); updateHint()">${intervalOpts}</select>
+      ${periods.length > 1 ? `<button class="btn-remove" onclick="removePeriod(${i})" title="删除">×</button>` : ''}
+    </div>`;
+  }).join('');
+  updateHint();
+}
+
+function addPeriod() {
+  if (periods.length >= 10) { alert('最多支持10个时间段'); return; }
+  periods.push({ startTime: '09:00', endTime: '18:00', intervalMinutes: 30 });
+  renderPeriods();
+}
+
+function removePeriod(index) {
+  periods.splice(index, 1);
+  renderPeriods();
+}
+
+function updateHint() {
+  const desc = periods.map((p, i) => `${p.startTime}-${p.endTime} 每${p.intervalMinutes}分钟`).join('；');
+  document.getElementById('scheduleHint').textContent = desc;
+}
+
+function parsePlatformNote(note) {
+  const result = { xhs: null, dy: null, failReason: '' };
+  if (!note) return result;
+  if (note.includes('小红书:已发布') || note.includes('小红书发布成功')) result.xhs = 'success';
+  if (note.includes('抖音:已发布') || note.includes('抖音发布成功')) result.dy = 'success';
+  if (note.includes('小红书已提交')) result.xhs = result.xhs || 'submitted';
+  if (note.includes('抖音已提交')) result.dy = result.dy || 'submitted';
+  const failMatch = note.match(/失败原因:\s*(.+)/);
+  if (failMatch) result.failReason = failMatch[1];
+  if (note.includes('小红书') && note.includes('失败') && result.xhs !== 'success') result.xhs = 'failed';
+  if (note.includes('抖音') && note.includes('失败') && result.dy !== 'success') result.dy = 'failed';
+  if (!result.xhs && !result.dy && note.includes('失败')) result.failReason = note;
+  return result;
+}
+
+function renderPlatformStatus(record) {
+  const { xiaohongshuAccount, douyinAccount, xiaohongshuStatus, douyinStatus, note, xiaohongshuPublishChannel } = record;
+  const parts = [];
+  if (xiaohongshuAccount) {
+    if (xiaohongshuStatus === '已发布') parts.push('<span class="tag published">小红书 ✓</span>');
+    else if (xiaohongshuStatus === '发布失败') parts.push('<span class="tag failed">小红书 ✗</span>');
+    else if (xiaohongshuStatus === '待发布') parts.push('<span class="tag pending">小红书 待发布</span>');
+    else if (xiaohongshuStatus === '发布中') parts.push('<span class="tag" style="background:#fff7ed;color:#c2410c">小红书 发布中</span>');
+    else parts.push(`<span class="tag" style="background:rgba(0,0,0,0.05);color:#6b7280">小红书 ${escapeHtml(xiaohongshuStatus || '未设置')}</span>`);
+  }
+  if (douyinAccount) {
+    if (douyinStatus === '已发布') parts.push('<span class="tag published">抖音 ✓</span>');
+    else if (douyinStatus === '发布失败') parts.push('<span class="tag failed">抖音 ✗</span>');
+    else if (douyinStatus === '待发布') parts.push('<span class="tag pending">抖音 待发布</span>');
+    else if (douyinStatus === '发布中') parts.push('<span class="tag" style="background:#fff7ed;color:#c2410c">抖音 发布中</span>');
+    else parts.push(`<span class="tag" style="background:rgba(0,0,0,0.05);color:#6b7280">抖音 ${escapeHtml(douyinStatus || '未设置')}</span>`);
+  }
+  if (record.musicSongName) {
+    parts.push(`<span class="tag" style="background:#fef3c7;color:#d97706">🎵 ${escapeHtml(record.musicSongName)}</span>`);
+  } else if (record.musicKeyword) {
+    parts.push(`<span class="tag" style="background:#f0f9ff;color:#0284c7">🎵 ${escapeHtml(record.musicKeyword)}</span>`);
+  }
+  if (note && note.includes('失败')) parts.push(`<span class="note-text">${escapeHtml(note)}</span>`);
+  return parts.join(' ');
+}
+
+function renderTagPreview(record) {
+  const sections = [];
+  const xhsTags = (record.previewTags && record.previewTags.xiaohongshu) || [];
+  const dyTags = (record.previewTags && record.previewTags.douyin) || [];
+  if (xhsTags.length > 0) {
+    sections.push(`<div class="tag-preview-row"><span class="tag-preview-label">小红书计划提交标签</span>${xhsTags.map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`).join(' ')}</div>`);
+  }
+  if (dyTags.length > 0) {
+    sections.push(`<div class="tag-preview-row"><span class="tag-preview-label" style="background:#fef3c7;color:#b45309;">抖音计划提交标签</span>${dyTags.map(tag => `<span class="tag">#${escapeHtml(tag)}</span>`).join(' ')}</div>`);
+  }
+  return sections.join('');
+}
+
+function buildPreviewMetaBlock(title, rows) {
+  if (!rows || !rows.length) return '';
+  return `
+    <div class="preview-block">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="preview-meta-list">
+        ${rows.map(row => `
+          <div class="preview-meta-item">
+            <span>${escapeHtml(row.label)}</span>
+            <span>${row.valueHtml || escapeHtml(row.value ?? '-')}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function buildPreviewListBlock(title, items, emptyText = '暂无内容') {
+  return `
+    <div class="preview-block">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="preview-list">
+        ${items && items.length
+          ? items.map(item => `<div class="preview-list-item">${item}</div>`).join('')
+          : `<div class="preview-helper">${escapeHtml(emptyText)}</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function buildPreviewTagBlock(title, tags, emptyText = '暂无标签') {
+  return `
+    <div class="preview-block">
+      <h4>${escapeHtml(title)}</h4>
+      ${tags && tags.length
+        ? `<div class="preview-tags">${tags.join('')}</div>`
+        : `<div class="preview-helper">${escapeHtml(emptyText)}</div>`}
+    </div>
+  `;
+}
+
+function getScheduleSummary(limit = periods.length) {
+  return periods.slice(0, limit).map(item => `${item.startTime}-${item.endTime} / 每${item.intervalMinutes}分钟`);
+}
+
+function formatRemainingTime(ms) {
+  if (ms <= 0) return '即将发布';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (h > 0) return `${h} 小时 ${m} 分后`;
+  if (m > 0) return `${m} 分钟后`;
+  return `${totalSec} 秒后`;
+}
+
+async function refreshScheduledTasks() {
+  try {
+    const resp = await fetchApi('/api/publish/scheduled-tasks');
+    if (resp.success) {
+      scheduledTasksData = resp.data || [];
+      renderContextPreview();
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function renderOverviewPreview() {
+  const running = latestStatusData?.running;
+  const progress = latestStatusData?.currentProgress || null;
+  const periodSummary = getScheduleSummary(4);
+  const recentLogSummary = logEntries.slice(-5).reverse().map(log => (
+    `<strong>[${escapeHtml(log.time)}]</strong> ${escapeHtml(log.message)}`
+  ));
+  const taskSummary = scheduledTasksData.slice(0, 8).map(t =>
+    `${escapeHtml(t.title || t.recordId)} · ${new Date(t.publishTime).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} <span style="color:#aeaeb2">(${formatRemainingTime(t.remainingMs)})</span>`
+  );
+
+  return [
+    buildPreviewMetaBlock('运行概况', [
+      { label: '服务', value: running ? '运行中' : (latestStatusData ? '已停止' : '加载中') },
+      { label: '待发布', value: formatCount(latestPendingCount) },
+      { label: '已排队任务', value: formatCount(scheduledTasksData.length) },
+      { label: '下次检查', value: latestStatusData?.nextCheck || '-' },
+    ]),
+    buildPreviewMetaBlock('当前任务', [
+      { label: '阶段', value: progress ? getProgressLabel(progress.stage) : '空闲' },
+      { label: '标题', value: progress?.title || '当前没有正在处理的发布任务' },
+      { label: '平台', value: progress?.platform || '-' },
+      { label: '账号', value: progress?.account || '-' },
+    ]),
+    buildPreviewListBlock('即将发布', taskSummary, '当前没有排队中的定时任务'),
+    buildPreviewListBlock('扫描窗口', periodSummary.map(item => escapeHtml(item)), '还没有定时扫描窗口配置'),
+    buildPreviewListBlock('最近动态', recentLogSummary, '等待新的运行日志'),
+  ].join('');
+}
+
+function renderPublishPreview() {
+  const record = ensureSelectedRecord();
+  if (!record) {
+    return [
+      buildPreviewMetaBlock('记录状态', [
+        { label: '当前状态', value: '还没有加载到发布记录' },
+        { label: '建议动作', value: '先点击顶部“刷新数据”' },
+      ]),
+      buildPreviewListBlock('说明', ['如果飞书还未接入完成，请先到设置里的“飞书接入”补全配置。'])
+    ].join('');
+  }
+
+  const xhsDone = record.xiaohongshuStatus === '已发布' || !record.xiaohongshuAccount;
+  const dyDone = record.douyinStatus === '已发布' || !record.douyinAccount;
+  const hasFailed = record.xiaohongshuStatus === '发布失败' || record.douyinStatus === '发布失败';
+  const hasProcessing = record.xiaohongshuStatus === '发布中' || record.douyinStatus === '发布中';
+  const canPublishNow = (
+    (record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布')
+    || (record.douyinAccount && record.douyinStatus === '待发布')
+  );
+
+  const publishBtnHtml = canPublishNow
+    ? `<div class="preview-block" style="padding-top:4px;">
+        <button onclick="publishRecord('${escapeJsSingleQuotedString(record.recordId)}')" style="
+          width:100%; padding:10px 0; border:none; border-radius:12px;
+          background:var(--accent); color:#fff; font-size:14px; font-weight:600;
+          cursor:pointer; transition: opacity .15s;
+        " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">立即发布</button>
+        <div style="font-size:11px; color:#aeaeb2; margin-top:6px; text-align:center;">只会发布状态为待发布的平台 · 会取消该记录的定时任务</div>
+      </div>`
+    : (hasProcessing
+      ? `<div class="preview-block" style="padding-top:4px;">
+          <div style="padding:10px 12px; border-radius:12px; background:#fff7ed; color:#c2410c; font-size:13px; line-height:1.5;">
+            这条记录已经提交到蚁小二，正在等待平台处理，暂时不建议重复触发。
+          </div>
+        </div>`
+      : (hasFailed
+        ? `<div class="preview-block" style="padding-top:4px;">
+            <div style="padding:10px 12px; border-radius:12px; background:#fff1f2; color:#be123c; font-size:13px; line-height:1.5;">
+              当前有平台处于发布失败状态。按全局规则，只有待发布状态才能再次发布；如需重发，请先在飞书把对应平台状态改回待发布。
+            </div>
+          </div>`
+        : '')
+      )
+    ;
+
+  return [
+    buildPreviewMetaBlock('当前选中记录', [
+      { label: '标题', value: record.title || '无标题' },
+      { label: '发布时间', value: formatDateTime(record.publishTime, '立即发布') },
+      { label: '内容类型', value: record.contentType || '-' },
+      { label: '素材数量', value: Array.isArray(record.attachments) ? `${record.attachments.length} 个` : '0 个' },
+    ]),
+    buildPreviewTagBlock('目标平台与账号', [
+      ...(record.xiaohongshuAccount ? [`<span class="tag xhs">小红书 · ${escapeHtml(record.xiaohongshuAccount)}</span>`] : []),
+      ...(record.douyinAccount ? [`<span class="tag dy">抖音 · ${escapeHtml(record.douyinAccount)}</span>`] : []),
+      ...(record.xiaohongshuPublishChannel ? [`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(record.xiaohongshuPublishChannel)}</span>`] : []),
+    ], '当前记录还没有配置目标账号'),
+    buildPreviewListBlock('发布备注', record.note ? [escapeHtml(record.note)] : [], '当前没有异常或备注信息'),
+    publishBtnHtml,
+    latestStatusData?.config?.aiWriting?.apiKey
+      ? `<div class="preview-block" style="padding-top:0;">
+          <button id="aiGenBtn-${escapeHtml(record.recordId)}"
+            onclick="triggerAiGenerate('${escapeJsSingleQuotedString(record.recordId)}')"
+            style="width:100%; padding:8px 0; border:1px solid var(--accent); border-radius:12px;
+              background:#fff; color:var(--accent); font-size:13px; font-weight:500;
+              cursor:pointer; transition: background .15s;"
+            onmouseover="this.style.background='var(--accent-soft)'"
+            onmouseout="this.style.background='#fff'">
+            ✍️ AI 生成标题/正文/标签
+          </button>
+          <div style="font-size:11px; color:#aeaeb2; margin-top:4px; text-align:center;">
+            依据飞书"笔记主题"字段生成内容并回写
+          </div>
+        </div>`
+      : '',
+  ].join('');
+}
+
+function renderSetupPreview() {
+  if (activeSetupPane === 'feishu') {
+    const feishu = latestFeishuConfig || {};
+    return [
+      buildPreviewMetaBlock('飞书连接', [
+        { label: 'App ID', value: feishu.appId ? maskValue(feishu.appId, 6, 3) : '未填写' },
+        { label: 'App Token', value: feishu.appToken ? maskValue(feishu.appToken, 6, 3) : '未填写' },
+        { label: 'Table ID', value: feishu.tableId ? maskValue(feishu.tableId, 4, 4) : '未填写' },
+        { label: '知识库链接', value: feishu.wikiUrl || '未填写' },
+      ]),
+      buildPreviewMetaBlock('本机路径', [
+        { label: '配置文件', value: latestRuntimePaths.configPath || '等待读取' },
+        { label: '数据目录', value: latestRuntimePaths.dataDir || '等待读取' },
+      ]),
+      buildPreviewListBlock('说明', [
+        '保存后会立即刷新飞书客户端，并在服务运行时自动重启调度器。',
+        '页面不会回显真实 App Secret，保留 `******` 时会沿用已有密钥。'
+      ]),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'accounts') {
+    const onlineCount = accountStatusData.filter(item => item.statusText === '在线/授权正常').length;
+    const mappedCount = accountStatusData.filter(item => item.mapped).length;
+    return [
+      buildPreviewMetaBlock('账号概况', [
+        { label: '账号总数', value: formatCount(accountStatusData.length) },
+        { label: '在线正常', value: formatCount(onlineCount) },
+        { label: '已映射', value: formatCount(mappedCount) },
+        { label: '未映射', value: formatCount(Math.max(0, accountStatusData.length - mappedCount)) },
+      ]),
+      buildPreviewListBlock(
+        '最近账号',
+        accountStatusData.slice(0, 6).map(item => `${escapeHtml(item.accountName || '未命名账号')} · ${escapeHtml(item.statusText || '-')}`),
+        '点击中间的“刷新账号状态”加载授权信息'
+      ),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'bitbrowser') {
+    const configuredCount = bitbrowserMappings.filter(item => item.browserId).length;
+    const enabledCount = bitbrowserMappings.filter(item => item.bitbrowserRecords > 0).length;
+    return [
+      buildPreviewMetaBlock('映射概况', [
+        { label: '识别账号', value: formatCount(bitbrowserMappings.length) },
+        { label: '已配置 browserId', value: formatCount(configuredCount) },
+        { label: '飞书已启用', value: formatCount(enabledCount) },
+      ]),
+      buildPreviewListBlock(
+        '最近映射',
+        bitbrowserMappings.slice(0, 6).map(item => `${escapeHtml(item.accountName)} → ${escapeHtml(item.browserId || '未配置')}`),
+        '点击“同步飞书账号”后，这里会出现账号与 browserId 的对应关系'
+      ),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'schedule') {
+    return [
+      buildPreviewMetaBlock('调度摘要', [
+        { label: '时间段数', value: formatCount(periods.length) },
+        { label: '下次检查', value: latestStatusData?.nextCheck || '-' },
+        { label: '服务状态', value: latestStatusData?.running ? '运行中' : '已停止' },
+      ]),
+      buildPreviewListBlock('扫描窗口', getScheduleSummary().map(item => escapeHtml(item)), '还没有任何时间段设置'),
+      buildPreviewListBlock('使用说明', [
+        '点击“停止”后，当前正在发布的记录会收尾，未开始的定时任务会暂停。',
+        '点击“启动”后，系统会立即补扫，并继续处理还没完成的定时任务。'
+      ]),
+    ].join('');
+  }
+
+  if (activeSetupPane === 'music') {
+    return [
+      buildPreviewMetaBlock('默认音乐', [
+        { label: '当前状态', value: latestMusicValidation?.configuredMusic?.text || '未设置默认配乐' },
+        { label: '校验结果', value: latestMusicValidation?.valid ? '可用' : '未校验 / 不可用' },
+        { label: '提示', value: latestMusicValidation?.message || '未设置时会回退到热门纯音乐' },
+      ]),
+      buildPreviewListBlock('使用建议', [
+        '先在弹窗里试听，再点击“使用”保存为默认配乐。',
+        '清除默认配乐后，发布流程会自动回退到默认热门纯音乐。'
+      ]),
+    ].join('');
+  }
+
+  return buildPreviewListBlock('设置预览', [], '当前设置项暂未提供预览摘要');
+}
+
+// ===== 素材导入页相关函数 =====
+
+// 账号工具函数
+function importGetXhsAccounts() {
+  return accountStatusData.filter(a => a.platform === '小红书' && a.statusText === '在线/授权正常');
+}
+function importGetDouyinAccounts() {
+  return accountStatusData.filter(a => a.platform === '抖音' && a.statusText === '在线/授权正常');
+}
+
+// 静默加载账号（进入导入页时调用，不刷新账号设置页 UI）
+async function importEnsureAccounts() {
+  if (accountStatusData.length > 0) return;
+  try {
+    const resp = await fetch('/api/accounts/status');
+    const data = await resp.json();
+    if (data.success && Array.isArray(data.data)) {
+      accountStatusData = data.data;
+      if (importScanData.length > 0) renderImportScanResult();
+    }
+  } catch (e) { /* 静默失败，用户可去账号页手动刷新 */ }
+}
+
+async function importSelectFolder() {
+  if (!window.electronAPI) {
+    alert('此功能需要在桌面 App 环境中运行');
+    return;
+  }
+  const folderPath = await window.electronAPI.openFolder();
+  if (!folderPath) return;
+  importRootPath = folderPath;
+  const display = document.getElementById('importRootPathDisplay');
+  if (display) display.textContent = folderPath;
+  await importScanFolder(folderPath);
+}
+
+async function importScanFolder(folderPath) {
+  const scanEl = document.getElementById('importScanResult');
+  if (scanEl) scanEl.innerHTML = '<div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">扫描中…</div>';
+  renderContextPreview();
+  try {
+    const resp = await fetch('/api/import/scan-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '扫描失败');
+    importScanData = Array.isArray(data) ? data : [];
+    // 初始化每张卡片的账号状态
+    importNoteState = new Map();
+    for (const topicGroup of importScanData) {
+      for (const note of (topicGroup.notes || [])) {
+        if (note.imageCount > 0) {
+          importNoteState.set(note.noteKey, {
+            xiaohongshuAccount: '', xiaohongshuChannel: '蚁小二', douyinAccount: '', publishTime: ''
+          });
+        }
+      }
+    }
+    // 初始化自动分配默认起始日期为明天
+    const tmr = new Date(); tmr.setDate(tmr.getDate() + 1);
+    const startInput = document.getElementById('importStartDate');
+    if (startInput && !startInput.value) {
+      startInput.value = tmr.toISOString().slice(0, 10);
+    }
+    // 显示时间分配栏
+    const timeBar = document.getElementById('importTimeBar');
+    if (timeBar) timeBar.style.display = importScanData.length > 0 ? '' : 'none';
+    renderImportScanResult();
+    renderContextPreview();
+  } catch (err) {
+    if (scanEl) scanEl.innerHTML = `<div style="padding:24px;color:#e53e3e;font-size:13px;">扫描失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderImportScanResult() {
+  const scanEl = document.getElementById('importScanResult');
+  if (!scanEl) return;
+  if (!importScanData.length) {
+    scanEl.innerHTML = '<div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">未发现可导入的笔记素材</div>';
+    return;
+  }
+  const xhsAccounts = importGetXhsAccounts();
+  const dyAccounts = importGetDouyinAccounts();
+  let html = '';
+  for (const topicGroup of importScanData) {
+    const notes = topicGroup.notes || [];
+    const validNotes = notes.filter(n => n.imageCount > 0);
+    const topicKey = escapeAttr(topicGroup.topic);
+    // 批量设置栏（每个主题组顶部）
+    const batchBar = validNotes.length > 0 ? `
+      <div class="import-batch-bar">
+        <label>批量设置：</label>
+        <select id="batchXhs_${topicKey}" style="min-width:120px">
+          <option value="">小红书账号…</option>
+          ${xhsAccounts.map(a => `<option value="${escapeAttr(a.accountName)}">${escapeHtml(a.accountName)}</option>`).join('')}
+        </select>
+        <select id="batchChannel_${topicKey}" style="min-width:90px">
+          <option value="蚁小二">蚁小二</option>
+          <option value="比特浏览器">比特浏览器</option>
+        </select>
+        <select id="batchDy_${topicKey}" style="min-width:120px">
+          <option value="">抖音账号…</option>
+          ${dyAccounts.map(a => `<option value="${escapeAttr(a.accountName)}">${escapeHtml(a.accountName)}</option>`).join('')}
+        </select>
+        <button onclick="importBatchSet('${escapeAttr(topicGroup.topic)}')">应用到本组</button>
+      </div>` : '';
+    html += `<div class="import-topic-group">
+      <div class="import-topic-header">
+        <span>${escapeHtml(topicGroup.topic)}</span>
+        <span class="import-topic-count">${notes.length} 篇</span>
+      </div>
+      ${batchBar}
+      <div class="import-note-cards">
+        ${notes.map(note => renderImportNoteCard(note, xhsAccounts, dyAccounts)).join('')}
+      </div>
+    </div>`;
+  }
+  scanEl.innerHTML = html;
+}
+
+function renderImportNoteCard(note, xhsAccounts, dyAccounts) {
+  xhsAccounts = xhsAccounts || importGetXhsAccounts();
+  dyAccounts = dyAccounts || importGetDouyinAccounts();
+  const isEmpty = note.imageCount === 0;
+  const hasWarning = note.warnings && note.warnings.length > 0;
+  const thumbUrl = note.firstImagePath ? `file://${note.firstImagePath}` : '';
+  const thumbHtml = thumbUrl
+    ? `<img class="import-card-thumb" src="${thumbUrl}" alt="" onerror="this.style.display='none'">`
+    : `<div class="import-card-thumb import-card-thumb-empty">📁</div>`;
+  const warningHint = hasWarning ? `<span class="import-card-warning" title="${escapeAttr(note.warnings.join('\n'))}">⚠️</span>` : '';
+
+  const state = importNoteState.get(note.noteKey) || { xiaohongshuAccount: '', xiaohongshuChannel: '蚁小二', douyinAccount: '' };
+  const nk = escapeAttr(note.noteKey);
+  const channelVisible = state.xiaohongshuAccount ? '' : 'display:none';
+
+  const selectsHtml = isEmpty ? '' : `
+    <div class="import-card-selects">
+      <div class="import-select-row">
+        <select data-field="xiaohongshuAccount" data-note-key="${nk}" onchange="importSetNoteField(this)" style="flex:2">
+          <option value="">小红书账号</option>
+          ${xhsAccounts.map(a => `<option value="${escapeAttr(a.accountName)}" ${state.xiaohongshuAccount === a.accountName ? 'selected' : ''}>${escapeHtml(a.accountName)}</option>`).join('')}
+        </select>
+        <select data-field="xiaohongshuChannel" data-note-key="${nk}" onchange="importSetNoteField(this)" class="import-channel-sel" style="flex:1;${channelVisible}">
+          <option value="蚁小二" ${state.xiaohongshuChannel === '蚁小二' ? 'selected' : ''}>蚁小二</option>
+          <option value="比特浏览器" ${state.xiaohongshuChannel === '比特浏览器' ? 'selected' : ''}>比特浏览器</option>
+        </select>
+      </div>
+      <div class="import-select-row">
+        <select data-field="douyinAccount" data-note-key="${nk}" onchange="importSetNoteField(this)">
+          <option value="">抖音账号（蚁小二）</option>
+          ${dyAccounts.map(a => `<option value="${escapeAttr(a.accountName)}" ${state.douyinAccount === a.accountName ? 'selected' : ''}>${escapeHtml(a.accountName)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="import-card-time">
+        <label>发布时间</label>
+        <input type="text" placeholder="留空则立即处理" data-field="publishTime" data-note-key="${nk}"
+          value="${escapeAttr(state.publishTime || '')}"
+          onchange="importSetNoteField(this)"
+          style="font-family:monospace">
+      </div>
+    </div>`;
+
+  return `<div class="import-note-card ${isEmpty ? 'import-note-card--disabled' : ''}">
+    <div class="import-card-top">
+      ${thumbHtml}
+      <div class="import-card-info">
+        <div class="import-card-name">${escapeHtml(note.folderName)}</div>
+        <div class="import-card-meta">
+          ${isEmpty ? '<span style="color:#e53e3e">⚠️ 无有效图片</span>' : `📷 ${note.imageCount} 张`}
+          ${warningHint}
+        </div>
+      </div>
+    </div>
+    ${selectsHtml}
+  </div>`;
+}
+
+// 账号变更时更新状态 + 渠道下拉可见性
+function importSetNoteField(el) {
+  const noteKey = el.dataset.noteKey;
+  const field = el.dataset.field;
+  const value = el.value;
+  if (!importNoteState.has(noteKey)) {
+    importNoteState.set(noteKey, { xiaohongshuAccount: '', xiaohongshuChannel: '蚁小二', douyinAccount: '' });
+  }
+  importNoteState.get(noteKey)[field] = value;
+  // 渠道下拉随小红书账号联动
+  if (field === 'xiaohongshuAccount') {
+    const card = el.closest('.import-note-card');
+    const channelSel = card && card.querySelector('.import-channel-sel');
+    if (channelSel) channelSel.style.display = value ? '' : 'none';
+  }
+  importUpdateButtonState();
+}
+
+// 批量设置：将当前主题组的批量选择应用到账号为空的卡片
+function importBatchSet(topicName) {
+  const topicKey = topicName.replace(/['"]/g, '_');
+  const xhsEl = document.getElementById(`batchXhs_${topicKey}`);
+  const channelEl = document.getElementById(`batchChannel_${topicKey}`);
+  const dyEl = document.getElementById(`batchDy_${topicKey}`);
+  const batchXhs = xhsEl ? xhsEl.value : '';
+  const batchChannel = channelEl ? channelEl.value : '蚁小二';
+  const batchDy = dyEl ? dyEl.value : '';
+  if (!batchXhs && !batchDy) return;
+
+  // 找到本主题的所有 noteKey
+  const topicGroup = importScanData.find(t => t.topic === topicName);
+  if (!topicGroup) return;
+  let changed = false;
+  for (const note of (topicGroup.notes || [])) {
+    if (note.imageCount === 0) continue;
+    const state = importNoteState.get(note.noteKey);
+    if (!state) continue;
+    if (batchXhs && !state.xiaohongshuAccount) {
+      state.xiaohongshuAccount = batchXhs;
+      state.xiaohongshuChannel = batchChannel;
+      changed = true;
+    }
+    if (batchDy && !state.douyinAccount) {
+      state.douyinAccount = batchDy;
+      changed = true;
+    }
+  }
+  if (changed) {
+    renderImportScanResult(); // 重新渲染以同步下拉选中状态
+    importUpdateButtonState();
+  }
+}
+
+// 自动分配发布时间（纯前端计算，按主题/子文件夹字典序排列）
+function importAutoDistributeTimes() {
+  const startDateVal = document.getElementById('importStartDate')?.value;
+  const maxPerDay = parseInt(document.getElementById('importMaxPerDay')?.value || '2', 10) || 2;
+  const timeVal = document.getElementById('importPublishTime')?.value || '10:00';
+  if (!startDateVal) { alert('请先选择起始日期'); return; }
+
+  // 收集所有有效卡片（按主题字典序 → 子文件夹字典序）
+  const validNoteKeys = [];
+  for (const topicGroup of importScanData) {
+    for (const note of (topicGroup.notes || [])) {
+      if (note.imageCount > 0) validNoteKeys.push(note.noteKey);
+    }
+  }
+
+  // 计算每张卡片的发布时间
+  let dayOffset = 0;
+  let countOnDay = 0;
+  const [hh, mm] = timeVal.split(':').map(Number);
+
+  for (const noteKey of validNoteKeys) {
+    if (countOnDay >= maxPerDay) {
+      dayOffset++;
+      countOnDay = 0;
+    }
+    const d = new Date(`${startDateVal}T${timeVal}:00`);
+    d.setDate(d.getDate() + dayOffset);
+    const yyyy = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hStr = String(hh).padStart(2, '0');
+    const mStr = String(mm).padStart(2, '0');
+    const timeStr = `${yyyy}-${mo}-${dd} ${hStr}:${mStr}`;
+
+    const state = importNoteState.get(noteKey);
+    if (state) state.publishTime = timeStr;
+    countOnDay++;
+  }
+
+  // 重新渲染卡片（让 input 显示新值）
+  renderImportScanResult();
+}
+
+// 检查是否有至少一张卡片设置了账号，控制"主题撰写并预览"按钮
+function importUpdateButtonState() {
+  const btn = document.getElementById('btnImportPreview');
+  if (!btn) return;
+  let hasAccount = false;
+  for (const [, state] of importNoteState) {
+    if (state.xiaohongshuAccount || state.douyinAccount) { hasAccount = true; break; }
+  }
+  btn.disabled = !hasAccount;
+}
+
+function renderImportPreview() {
+  // 完成阶段：显示导入报告
+  if (importPhase === 'done') {
+    return renderImportReport();
+  }
+  // 预览/导入阶段：显示 AI 生成内容预览卡
+  if (importPhase === 'previewing' || importPhase === 'importing') {
+    return renderImportPreviewCards();
+  }
+  if (!importRootPath) {
+    return `<div style="padding:28px 20px">
+      <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:12px">目录结构说明</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.8">
+        <p style="margin:0 0 8px">选择一个根目录，结构如下：</p>
+        <pre style="background:var(--accent-soft);padding:12px;border-radius:8px;font-size:11px;margin:0 0 10px;line-height:1.7;white-space:pre-wrap">根目录/
+  主题A/        ← 第一级：笔记主题
+    1/          ← 第二级：一篇笔记
+      1.jpg
+      2.jpg
+    2/
+      cover.jpg</pre>
+        <p style="margin:0">每个二级文件夹 = 一篇笔记，图片按文件名排序，第一张为封面。</p>
+      </div>
+    </div>`;
+  }
+  let totalTopics = importScanData.length;
+  let validNotes = 0, totalImages = 0;
+  for (const t of importScanData) {
+    for (const n of (t.notes || [])) {
+      if (n.imageCount > 0) validNotes++;
+      totalImages += n.imageCount || 0;
+    }
+  }
+  // 统计已配账号卡片数
+  let accountedCards = 0;
+  for (const [, state] of importNoteState) {
+    if (state.xiaohongshuAccount || state.douyinAccount) accountedCards++;
+  }
+  return `<div style="padding:24px 20px">
+    <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:16px">扫描结果</div>
+    <div class="import-stat-row">
+      <div class="import-stat-box"><div class="import-stat-num">${totalTopics}</div><div class="import-stat-label">个主题</div></div>
+      <div class="import-stat-box"><div class="import-stat-num">${validNotes}</div><div class="import-stat-label">篇笔记</div></div>
+      <div class="import-stat-box"><div class="import-stat-num">${totalImages}</div><div class="import-stat-label">张图片</div></div>
+    </div>
+    ${accountedCards > 0 ? `<div style="font-size:12px;color:var(--accent);margin-bottom:12px;text-align:center;">已配置账号 ${accountedCards}/${validNotes} 篇</div>` : ''}
+    <button class="btn btn-primary" style="width:100%;padding:11px;font-size:14px;" ${accountedCards > 0 ? '' : 'disabled'} id="btnImportPreview" onclick="importStartPreview()">
+      主题撰写并预览
+    </button>
+    <p style="font-size:12px;color:var(--muted);margin-top:10px;text-align:center;">在左侧为每篇笔记选择发布账号，然后点此按钮</p>
+  </div>`;
+}
+
+// ===== P3.0 AI 预览 =====
+
+// 组装要发给 create-records 的 records 列表（从 importScanData + importNoteState）
+function importBuildRecordList() {
+  const records = [];
+  for (const topicGroup of importScanData) {
+    for (const note of (topicGroup.notes || [])) {
+      if (note.imageCount === 0) continue;
+      const state = importNoteState.get(note.noteKey) || {};
+      if (!state.xiaohongshuAccount && !state.douyinAccount) continue; // 没配账号跳过
+      records.push({
+        topic: topicGroup.topic,
+        noteKey: note.noteKey,
+        folderPath: note.folderPath,
+        images: note.images,
+        xiaohongshuAccount: state.xiaohongshuAccount || '',
+        douyinAccount: state.douyinAccount || '',
+        xiaohongshuChannel: state.xiaohongshuChannel || '蚁小二',
+        publishTime: state.publishTime || '',
+        title: '', description: '', tags: [],
+      });
+    }
+  }
+  return records;
+}
+
+// 点击"主题撰写并预览"
+async function importStartPreview() {
+  const btn = document.getElementById('btnImportPreview');
+  if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+
+  const records = importBuildRecordList();
+  if (!records.length) {
+    alert('请先为至少一篇笔记选择发布账号');
+    if (btn) { btn.disabled = false; btn.textContent = '主题撰写并预览'; }
+    return;
+  }
+
+  importPhase = 'previewing';
+  importPreviewData = [];
+  importCardDecisions = new Map();
+  renderContextPreview(); // 右栏切换为预览骨架
+
+  try {
+    const resp = await fetch('/api/import/create-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: true, records }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '请求失败');
+    importPreviewData = data.results || [];
+    // 初始化每张卡片的决策状态
+    for (const r of importPreviewData) {
+      importCardDecisions.set(r.noteKey, { skipped: false, emptyBuild: false });
+    }
+  } catch (err) {
+    importPhase = 'scan';
+    alert('预览失败：' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = '主题撰写并预览'; }
+    renderContextPreview();
+    return;
+  }
+  renderContextPreview();
+}
+
+// 渲染预览卡片列表（显示在右栏）
+function renderImportPreviewCards() {
+  const isImporting = importPhase === 'importing';
+  if (!importPreviewData.length && importPhase === 'previewing') {
+    return '<div style="padding:40px 20px;text-align:center;color:var(--muted);font-size:13px;">生成中，请稍候…</div>';
+  }
+
+  let cardsHtml = '';
+  for (const item of importPreviewData) {
+    const dec = importCardDecisions.get(item.noteKey) || {};
+    if (item.status === 'failed' || item.status === 'ai_error') {
+      // AI 失败卡片
+      cardsHtml += `
+        <div class="import-preview-card import-preview-card--error" data-note-key="${escapeAttr(item.noteKey)}">
+          <div class="import-preview-card-head">${escapeHtml(item.noteKey)}</div>
+          <div style="font-size:12px;color:#e53e3e;margin:6px 0;">⚠️ ${escapeHtml(item.message || item.reason || '生成失败')}</div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="import-preview-action ${dec.skipped ? 'active' : ''}"
+              onclick="importSetCardDecision('${escapeAttr(item.noteKey)}', 'skipped', ${!dec.skipped})">
+              ${dec.skipped ? '✓ 已跳过' : '跳过此条'}
+            </button>
+            <button class="import-preview-action ${dec.emptyBuild && !dec.skipped ? 'active' : ''}"
+              onclick="importSetCardDecision('${escapeAttr(item.noteKey)}', 'emptyBuild', ${!dec.emptyBuild})">
+              ${dec.emptyBuild && !dec.skipped ? '✓ 空建' : '空建（手动填写）'}
+            </button>
+          </div>
+        </div>`;
+    } else if (item.status === 'skipped') {
+      cardsHtml += `
+        <div class="import-preview-card import-preview-card--skipped">
+          <div class="import-preview-card-head">${escapeHtml(item.noteKey)}</div>
+          <div style="font-size:12px;color:var(--muted);">⏭ 已存在相同记录，将跳过</div>
+        </div>`;
+    } else {
+      // 正常预览卡（preview / pending）
+      const title = item.title || '';
+      const desc = item.description || '';
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      cardsHtml += `
+        <div class="import-preview-card" data-note-key="${escapeAttr(item.noteKey)}">
+          <div class="import-preview-card-head">${escapeHtml(item.noteKey)}</div>
+          <div style="margin-top:8px;">
+            <label style="font-size:11px;color:var(--muted);">标题</label>
+            <input class="import-preview-title" data-note-key="${escapeAttr(item.noteKey)}"
+              value="${escapeAttr(title)}"
+              placeholder="（AI 未生成，可手动输入）"
+              oninput="importUpdatePreviewItem(this)">
+          </div>
+          ${desc ? `<div style="margin-top:8px;">
+            <details>
+              <summary style="font-size:11px;color:var(--muted);cursor:pointer;">正文（点击展开）</summary>
+              <textarea class="import-preview-desc" data-note-key="${escapeAttr(item.noteKey)}"
+                oninput="importUpdatePreviewItem(this)"
+                style="width:100%;margin-top:6px;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:6px;resize:vertical;min-height:80px;box-sizing:border-box;">${escapeHtml(desc)}</textarea>
+            </details>
+          </div>` : ''}
+          ${tags.length ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;">
+            ${tags.map(t => `<span style="font-size:11px;background:var(--accent-soft);color:var(--accent);padding:2px 8px;border-radius:12px;">${escapeHtml(t)}</span>`).join('')}
+          </div>` : ''}
+        </div>`;
+    }
+  }
+
+  const confirmDisabled = isImporting ? 'disabled' : '';
+  const confirmText = isImporting ? '导入中…' : '确认导入';
+
+  // P4.1 进度显示
+  const progressHtml = isImporting ? `
+    <div id="importProgressBar" style="margin-top:10px;padding:10px 14px;background:var(--accent-soft);border-radius:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:13px;font-weight:600;color:var(--accent);">正在导入第 ${importProgressCurrent} / ${importProgressTotal} 条</span>
+      </div>
+      <div style="background:#d1fae5;border-radius:4px;height:4px;overflow:hidden;">
+        <div style="background:var(--accent);height:100%;width:${importProgressTotal > 0 ? Math.round(importProgressCurrent / importProgressTotal * 100) : 0}%;transition:width 0.3s;"></div>
+      </div>
+      ${importProgressNoteKey ? `<div style="font-size:11px;color:var(--muted);margin-top:5px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(importProgressNoteKey)}</div>` : ''}
+    </div>` : '';
+
+  return `
+    <div style="display:flex;flex-direction:column;height:100%;">
+      <div style="padding:16px 20px 8px;border-bottom:1px solid var(--line);flex-shrink:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--ink);">AI 内容预览</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">可直接编辑标题，正文展开后也可修改。确认后写入飞书。</div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:12px 16px;">
+        ${cardsHtml}
+      </div>
+      <div style="padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0;">
+        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;" id="btnConfirmImport"
+          onclick="importConfirm()" ${confirmDisabled}>
+          ${confirmText}
+        </button>
+        ${progressHtml}
+        ${!isImporting ? `<button class="btn btn-secondary" style="width:100%;padding:8px;font-size:13px;margin-top:8px;"
+          onclick="importResetToScan()">返回修改</button>` : ''}
+      </div>
+    </div>`;
+}
+
+// 用户在预览卡中编辑标题/正文，更新 importPreviewData
+function importUpdatePreviewItem(el) {
+  const noteKey = el.dataset.noteKey;
+  const item = importPreviewData.find(r => r.noteKey === noteKey);
+  if (!item) return;
+  if (el.classList.contains('import-preview-title')) item.title = el.value;
+  if (el.classList.contains('import-preview-desc')) item.description = el.value;
+}
+
+// 用户点击"跳过"或"空建"
+function importSetCardDecision(noteKey, field, value) {
+  const dec = importCardDecisions.get(noteKey) || {};
+  if (field === 'skipped') { dec.skipped = value; if (value) dec.emptyBuild = false; }
+  if (field === 'emptyBuild') { dec.emptyBuild = value; if (value) dec.skipped = false; }
+  importCardDecisions.set(noteKey, dec);
+  renderContextPreview();
+}
+
+// 返回扫描结果页
+function importResetToScan() {
+  importPhase = 'scan';
+  importPreviewData = [];
+  importCardDecisions = new Map();
+  renderContextPreview();
+}
+
+// ===== P3.1 确认导入 =====
+
+async function importConfirm() {
+  // 组装请求：预览卡数据 + 用户决策
+  const records = [];
+  for (const item of importPreviewData) {
+    const dec = importCardDecisions.get(item.noteKey) || {};
+    // 跳过：不发送这条
+    if (dec.skipped) continue;
+    // 已存在指纹的记录也跳过
+    if (item.status === 'skipped') continue;
+
+    // 找到原始记录信息（账号、时间、图片路径等）
+    const origRecord = importBuildRecordList().find(r => r.noteKey === item.noteKey);
+    if (!origRecord) continue;
+
+    if (dec.emptyBuild) {
+      // 空建：传空内容，后端不调 AI
+      records.push({ ...origRecord, title: ' ', description: '', tags: [] });
+    } else {
+      // 正常导入：传用户编辑后的内容（title 非空则后端跳过 AI）
+      records.push({
+        ...origRecord,
+        title: item.title || '',
+        description: item.description || '',
+        tags: Array.isArray(item.tags) ? item.tags : [],
+      });
+    }
+  }
+
+  if (!records.length) {
+    alert('没有需要导入的记录（全部被跳过）');
+    return;
+  }
+
+  // 切换到导入中状态
+  importPhase = 'importing';
+  importProgressCurrent = 0;
+  importProgressTotal = records.length;
+  importProgressNoteKey = '';
+  importReportData = [];
+  renderContextPreview();
+
+  try {
+    const resp = await fetch('/api/import/create-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, records }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '导入失败');
+    importReportData = data.results || [];
+  } catch (err) {
+    importPhase = 'previewing'; // 失败后回到预览状态
+    renderContextPreview();
+    alert('导入失败：' + err.message);
+    return;
+  }
+
+  // 导入完成 → 进入报告阶段
+  importPhase = 'done';
+  renderContextPreview();
+}
+
+// ===== P4.1 实时进度更新（SSE 回调）=====
+
+function importProgressUpdate(data) {
+  if (importPhase !== 'importing') return;
+  importProgressCurrent = data.current || importProgressCurrent;
+  importProgressTotal = data.total || importProgressTotal;
+  importProgressNoteKey = data.noteKey || '';
+  // 局部更新进度条，避免整个右栏重渲（会丢失输入框焦点等状态）
+  const progressEl = document.getElementById('importProgressBar');
+  if (progressEl) {
+    const pct = importProgressTotal > 0 ? Math.round(importProgressCurrent / importProgressTotal * 100) : 0;
+    progressEl.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span style="font-size:13px;font-weight:600;color:var(--accent);">正在导入第 ${importProgressCurrent} / ${importProgressTotal} 条</span>
+        <span style="font-size:12px;color:var(--accent);">${pct}%</span>
+      </div>
+      <div style="background:#d1fae5;border-radius:4px;height:4px;overflow:hidden;">
+        <div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s;"></div>
+      </div>
+      ${importProgressNoteKey ? `<div style="font-size:11px;color:var(--muted);margin-top:5px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(importProgressNoteKey)}</div>` : ''}`;
+  } else {
+    // 进度条元素不存在（首次或页面刚渲染），完整重渲
+    renderContextPreview();
+  }
+}
+
+// ===== P3.2 导入报告 =====
+
+function renderImportReport() {
+  const results = importReportData;
+  const success = results.filter(r => r.status === 'success').length;
+  const skipped = results.filter(r => r.status === 'skipped').length;
+  const failed = results.filter(r => r.status === 'failed').length;
+
+  const itemsHtml = results.map(r => {
+    if (r.status === 'success') {
+      const shortId = r.recordId ? r.recordId.slice(-8) : '-';
+      const badge = r.overwritten ? '<span style="margin-left:6px;font-size:10px;color:#888;background:#f0f0f0;padding:1px 5px;border-radius:4px;">已覆盖</span>' : '';
+      return `<div class="import-report-item">
+        <span style="color:var(--accent);">✅</span>
+        <div class="import-report-info">
+          <span class="import-report-key">${escapeHtml(r.noteKey)}${badge}</span>
+          <span class="import-report-sub">recordId: …${escapeHtml(shortId)}</span>
+        </div>
+      </div>`;
+    }
+    if (r.status === 'skipped') {
+      const canOverwrite = r.reason === 'fingerprint_exists' && r.recordId;
+      const overwriteBtn = canOverwrite
+        ? `<button class="btn btn-sm btn-secondary" style="flex-shrink:0;font-size:11px;padding:3px 8px;"
+            onclick="importOverwriteRecord(${JSON.stringify(r.noteKey)}, ${JSON.stringify(r.recordId)}, ${JSON.stringify(r.existingStatus || '')})">覆盖旧记录</button>`
+        : '';
+      return `<div class="import-report-item" id="report-item-${encodeURIComponent(r.noteKey)}">
+        <span style="color:var(--muted);">⏭</span>
+        <div class="import-report-info">
+          <span class="import-report-key">${escapeHtml(r.noteKey)}</span>
+          <span class="import-report-sub">已存在相同记录${r.existingStatus ? '（' + escapeHtml(r.existingStatus) + '）' : ''}</span>
+        </div>
+        ${overwriteBtn}
+      </div>`;
+    }
+    // failed
+    const reason = r.reason || 'unknown';
+    const msg = r.message || '';
+    return `<details class="import-report-item import-report-item--fail">
+      <summary style="list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <span style="color:#e53e3e;">❌</span>
+        <div class="import-report-info">
+          <span class="import-report-key">${escapeHtml(r.noteKey)}</span>
+          <span class="import-report-sub">${escapeHtml(reason)} · 点击展开</span>
+        </div>
+      </summary>
+      <div style="padding:8px 12px 4px 28px;font-size:11px;color:#e53e3e;word-break:break-all;">${escapeHtml(msg)}</div>
+    </details>`;
+  }).join('');
+
+  return `
+    <div style="display:flex;flex-direction:column;height:100%;">
+      <div style="padding:16px 20px 12px;border-bottom:1px solid var(--line);flex-shrink:0;">
+        <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:10px;">导入报告</div>
+        <div style="display:flex;gap:10px;">
+          <div style="flex:1;text-align:center;padding:10px;background:var(--accent-soft);border-radius:8px;">
+            <div style="font-size:20px;font-weight:700;color:var(--accent);">${success}</div>
+            <div style="font-size:11px;color:var(--muted);">成功</div>
+          </div>
+          <div style="flex:1;text-align:center;padding:10px;background:#f5f5f5;border-radius:8px;">
+            <div style="font-size:20px;font-weight:700;color:var(--muted);">${skipped}</div>
+            <div style="font-size:11px;color:var(--muted);">跳过</div>
+          </div>
+          <div style="flex:1;text-align:center;padding:10px;background:${failed > 0 ? '#fff5f5' : '#f5f5f5'};border-radius:8px;">
+            <div style="font-size:20px;font-weight:700;color:${failed > 0 ? '#e53e3e' : 'var(--muted)'};">${failed}</div>
+            <div style="font-size:11px;color:var(--muted);">失败</div>
+          </div>
+        </div>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:10px 16px;">
+        ${itemsHtml || '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">无记录</div>'}
+      </div>
+      <div style="padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0;">
+        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;"
+          onclick="importResetFull()">关闭报告，继续导入</button>
+      </div>
+    </div>`;
+}
+
+// ===== P4.2-A 覆盖旧记录 =====
+
+async function importOverwriteRecord(noteKey, overwriteId, existingStatus) {
+  // 构建确认提示
+  let msg = `确定要覆盖这条已存在的记录吗？\n\n笔记：${noteKey}`;
+  if (existingStatus === '已发布' || existingStatus === '发布中') {
+    msg += `\n\n⚠️ 警告：该记录当前状态为「${existingStatus}」，覆盖后将重置为「待发布」，可能导致重复发布！`;
+  }
+  if (!confirm(msg)) return;
+
+  // 从当前导入数据中找到该笔记的完整记录信息
+  const allRecords = importBuildRecordList();
+  const baseRecord = allRecords.find(r => r.noteKey === noteKey);
+  if (!baseRecord) {
+    alert('找不到该笔记的数据，请重新导入');
+    return;
+  }
+
+  // 找到预览数据中该笔记的 AI 生成内容（用户可能已编辑过）
+  const previewItem = importPreviewData.find(p => p.noteKey === noteKey);
+  const record = {
+    ...baseRecord,
+    title: previewItem?.title || baseRecord.title || '',
+    description: previewItem?.description || baseRecord.description || '',
+    tags: previewItem?.tags || baseRecord.tags || [],
+    overwrite: true,
+    overwriteId,
+  };
+
+  // 调用 API
+  try {
+    const resp = await fetch('/api/import/create-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, records: [record] }),
+    });
+    const data = await resp.json();
+    const result = (data.results || [])[0];
+    if (result && result.status === 'success') {
+      // 更新报告数据并重新渲染右栏
+      const idx = importReportData.findIndex(r => r.noteKey === noteKey);
+      if (idx >= 0) {
+        importReportData[idx] = { noteKey, status: 'success', recordId: overwriteId, overwritten: true };
+      }
+      renderContextPreview();
+    } else {
+      const errMsg = result?.message || result?.reason || JSON.stringify(result);
+      alert('覆盖失败：' + errMsg);
+    }
+  } catch (err) {
+    alert('请求失败：' + err.message);
+  }
+}
+
+// 完全重置导入页状态（关闭报告后可开始新一轮）
+function importResetFull() {
+  importPhase = 'scan';
+  importRootPath = null;
+  importScanData = [];
+  importNoteState = new Map();
+  importPreviewData = [];
+  importCardDecisions = new Map();
+  importReportData = [];
+  importProgressCurrent = 0;
+  importProgressTotal = 0;
+  importProgressNoteKey = '';
+  // 重置 UI
+  const display = document.getElementById('importRootPathDisplay');
+  if (display) display.textContent = '未选择';
+  const scanEl = document.getElementById('importScanResult');
+  if (scanEl) scanEl.innerHTML = '<div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">请先选择素材根目录</div>';
+  const timeBar = document.getElementById('importTimeBar');
+  if (timeBar) timeBar.style.display = 'none';
+  renderContextPreview();
+}
+
+// ===== P3.0 AI 预览结束 =====
+
+// ===== 素材导入页相关函数结束 =====
+
+function renderDataPreview() {
+  return [
+    buildPreviewMetaBlock('路径信息', [
+      { label: '配置文件', value: latestRuntimePaths.configPath || '等待读取' },
+      { label: '数据目录', value: latestRuntimePaths.dataDir || '等待读取' },
+      { label: '缓存目录', value: latestRuntimePaths.cacheDir || '等待读取' },
+      { label: '发布账本', value: latestRuntimePaths.ledgerPath || '等待读取' },
+    ]),
+    buildPreviewListBlock('导入导出说明', [
+      '配置备份只包含接入信息与映射规则，适合快速迁移到另一台电脑。',
+      '完整数据会额外包含发布账本，不会包含缓存和临时文件。',
+      '备份文件里可能含有真实密钥，只建议保存到可信位置。'
+    ]),
+  ].join('');
+}
+
+function renderContextPreview() {
+  const contentEl = document.getElementById('contextPreviewContent');
+  const setupPaneEl = document.getElementById('setupPanePreview');
+  const heroEl = document.querySelector('.preview-hero');
+  if (!contentEl) return;
+
+  if (activeSection === 'setup') {
+    heroEl.style.display = 'none';
+    contentEl.style.display = 'none';
+    setupPaneEl.style.display = 'flex';
+    return;
+  }
+  heroEl.style.display = '';
+  contentEl.style.display = '';
+  setupPaneEl.style.display = 'none';
+
+  let html = '';
+  if (activeSection === 'overview') {
+    html = renderOverviewPreview();
+  } else if (activeSection === 'publish') {
+    html = renderPublishPreview();
+  } else if (activeSection === 'data') {
+    html = renderDataPreview();
+  } else if (activeSection === 'import') {
+    html = renderImportPreview();
+  }
+  contentEl.innerHTML = html;
+}
+
+function getProgressLabel(stage) {
+  const labels = {
+    idle: '空闲', checking: '检查飞书中', preparing: '准备发布中',
+    downloading: '下载素材中', 'downloading-cover': '下载封面中',
+    publishing: '提交发布中', submitting: '上传发布中',
+    submitted: '已提交待处理', stopping: '停止中',
+    completed: '发布完成', 'partial-failed': '部分失败', failed: '处理失败',
+  };
+  return labels[stage] || '处理中';
+}
+
+function renderProgress(progress) {
+  const data = progress || {};
+  const badge = document.getElementById('progressBadge');
+  const title = document.getElementById('progressTitle');
+  const detail = document.getElementById('progressDetail');
+  const platform = document.getElementById('progressPlatform');
+  const account = document.getElementById('progressAccount');
+  const updatedAt = document.getElementById('progressUpdatedAt');
+  const stage = data.stage || 'idle';
+
+  if (badge) {
+    badge.textContent = getProgressLabel(stage);
+    badge.className = 'progress-badge';
+    if (data.active) badge.classList.add('active');
+    if (stage === 'completed') badge.classList.add('success');
+    if (stage === 'failed' || stage === 'partial-failed') badge.classList.add('failed');
+  }
+
+  if (title) title.textContent = data.title ? `《${data.title}》` : '当前没有正在处理的发布任务';
+  if (detail) detail.textContent = data.detail || '等待任务';
+  if (platform) platform.textContent = `平台: ${data.platform || '-'}`;
+  if (account) account.textContent = `账号: ${data.account || '-'}`;
+  if (updatedAt) updatedAt.textContent = `更新时间: ${data.updatedAt || '-'}`;
+  if (latestStatusData) {
+    latestStatusData.currentProgress = data;
+  }
+  renderContextPreview();
+}
+
+function buildStatusSignature(status) {
+  return JSON.stringify({
+    running: !!status.running,
+    nextCheck: status.nextCheck || '',
+    schedule: status.schedule || null,
+    currentProgress: status.currentProgress || null,
+    recentLogs: status.recentLogs || [],
+  });
+}
+
+async function refreshStatus() {
+  if (isRefreshingStatus) return;
+  isRefreshingStatus = true;
+  try {
+    const [status, pendingResp] = await Promise.all([
+      fetchApi('/api/status'),
+      fetchApi('/api/pending-count').catch(() => null),
+    ]);
+    refreshScheduledTasks();
+    const pendingCountValue = pendingResp && pendingResp.success ? pendingResp.count : latestPendingCount;
+    const signature = JSON.stringify({
+      status: buildStatusSignature(status),
+      pendingCount: pendingCountValue,
+    });
+    if (signature === lastStatusSignature) return;
+    lastStatusSignature = signature;
+    latestStatusData = status;
+    latestPendingCount = formatCount(pendingCountValue);
+    if (status.version) {
+      const vEl = document.getElementById('appVersionLabel');
+      if (vEl) vEl.textContent = `v${status.version}`;
+    }
+    const el = document.getElementById('serviceStatus');
+    const toolbarStatusEl = document.getElementById('toolbarServiceStatus');
+    if (status.running) {
+      if (el) {
+        el.textContent = '运行中';
+        el.className = 'overview-stat-value running';
+      }
+      toolbarStatusEl.textContent = '运行中';
+      toolbarStatusEl.className = 'status-chip-value running';
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStop').disabled = false;
+    } else {
+      if (el) {
+        el.textContent = '已停止';
+        el.className = 'overview-stat-value stopped';
+      }
+      toolbarStatusEl.textContent = '已停止';
+      toolbarStatusEl.className = 'status-chip-value stopped';
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+    }
+    const nextCheckEl = document.getElementById('nextCheck');
+    if (nextCheckEl) nextCheckEl.textContent = status.nextCheck || '-';
+    document.getElementById('toolbarNextCheck').textContent = status.nextCheck || '-';
+    if (pendingResp && pendingResp.success) {
+      const countText = formatCount(pendingResp.count);
+      const pendingCountEl = document.getElementById('pendingCount');
+      if (pendingCountEl) pendingCountEl.textContent = countText;
+      document.getElementById('toolbarPendingCount').textContent = countText;
+    }
+
+    if (status.schedule && status.schedule.periods) {
+      periods = JSON.parse(JSON.stringify(status.schedule.periods));
+      renderPeriods();
+    }
+    if (status.recentLogs && status.recentLogs.length > 0) {
+      renderLogs(status.recentLogs);
+    }
+    renderProgress(status.currentProgress);
+  } catch (e) {
+    const serviceStatusEl = document.getElementById('serviceStatus');
+    if (serviceStatusEl) {
+      serviceStatusEl.textContent = '连接失败';
+      serviceStatusEl.className = 'overview-stat-value stopped';
+    }
+    document.getElementById('toolbarServiceStatus').textContent = '连接失败';
+    document.getElementById('toolbarServiceStatus').className = 'status-chip-value stopped';
+  } finally {
+    renderContextPreview();
+    isRefreshingStatus = false;
+  }
+}
+
+function renderRecordList(records) {
+  const el = document.getElementById('recordList');
+  const summaryEl = document.getElementById('recordSummary');
+  const moreBtn = document.getElementById('recordMoreBtn');
+  const pendingRecords = [];
+  const completedRecords = [];
+  const blockedRecords = [];
+
+  const filteredRecords = recordSearchQuery
+    ? records.filter(r => (r.title || '').toLowerCase().includes(recordSearchQuery))
+    : records;
+
+  // 有账号且状态明确需要处理的才算待发布；空状态（未设置）不纳入
+  const ACTIVE_STATUSES = new Set(['待发布', '发布中', '发布失败', '已发布(跨账号已拒绝)']);
+  for (const record of filteredRecords) {
+    const xhsActive = record.xiaohongshuAccount && ACTIVE_STATUSES.has(record.xiaohongshuStatus);
+    const dyActive = record.douyinAccount && ACTIVE_STATUSES.has(record.douyinStatus);
+    const xhsDone = !record.xiaohongshuAccount || record.xiaohongshuStatus === '已发布';
+    const dyDone = !record.douyinAccount || record.douyinStatus === '已发布';
+
+    if (!xhsActive && !dyActive) {
+      // 没有任何平台处于"需要处理"状态（含状态为空的记录）→ 折叠到已发布区
+      completedRecords.push(record);
+    } else if (xhsDone && dyDone) {
+      completedRecords.push(record);
+    } else {
+      pendingRecords.push(record);
+    }
+  }
+
+  pendingRecords.sort((a, b) => {
+    const aTime = a.publishTime ? new Date(a.publishTime).getTime() : 0;
+    const bTime = b.publishTime ? new Date(b.publishTime).getTime() : 0;
+    return aTime - bTime;
+  });
+  completedRecords.sort((a, b) => {
+    const aTime = a.publishTime ? new Date(a.publishTime).getTime() : 0;
+    const bTime = b.publishTime ? new Date(b.publishTime).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  latestPendingCount = formatCount(pendingRecords.length);
+  const pendingCountEl = document.getElementById('pendingCount');
+  if (pendingCountEl) pendingCountEl.textContent = latestPendingCount;
+  document.getElementById('toolbarPendingCount').textContent = latestPendingCount;
+  if (records.length === 0) {
+    el.innerHTML = '<div class="empty">没有记录</div>';
+    summaryEl.textContent = '当前没有可展示的记录。';
+    moreBtn.style.display = 'none';
+    selectedRecordKey = '';
+    renderContextPreview();
+    return;
+  }
+
+  if (filteredRecords.length === 0) {
+    el.innerHTML = `<div class="empty">没有匹配"${escapeHtml(recordSearchQuery)}"的记录</div>`;
+    summaryEl.textContent = `搜索无结果，共 ${records.length} 条记录。`;
+    moreBtn.style.display = 'none';
+    renderContextPreview();
+    return;
+  }
+
+  const orderedRecords = [...pendingRecords, ...completedRecords];
+  const selectedRecord = ensureSelectedRecord();
+  const visiblePending = pendingRecords.slice(0, recordRenderLimit);
+  const visibleCompleted = showCompletedRecords ? completedRecords.slice(0, recordRenderLimit) : [];
+  const visibleCount = visiblePending.length + visibleCompleted.length;
+  summaryEl.textContent = recordSearchQuery
+    ? `搜索"${recordSearchQuery}"：待发布 ${pendingRecords.length} 条，已发布 ${completedRecords.length} 条。`
+    : `待发布 ${pendingRecords.length} 条，已发布 ${completedRecords.length} 条${showCompletedRecords ? '' : '（折叠）'}。共 ${orderedRecords.length} 条。`;
+  moreBtn.style.display = (
+    visiblePending.length < pendingRecords.length
+    || (showCompletedRecords && visibleCompleted.length < completedRecords.length)
+  ) ? 'inline-flex' : 'none';
+
+  const renderCard = (r) => {
+    const recordKey = getRecordKey(r);
+    const selected = selectedRecord && getRecordKey(selectedRecord) === recordKey;
+    const platformStatusHtml = renderPlatformStatus(r);
+    const timeStr = r.publishTime ? new Date(r.publishTime).toLocaleString('zh-CN') : '立即发布';
+    return `<div class="record-item ${selected ? 'selected' : ''}" data-record-key="${escapeAttr(recordKey)}" onclick="selectRecord('${escapeJsSingleQuotedString(recordKey)}')">
+      <div class="title">${escapeHtml(r.title || '无标题')}</div>
+      <div class="meta"><span>⏰ ${escapeHtml(timeStr)}</span></div>
+      <div class="platform-status">${platformStatusHtml}</div>
+    </div>`;
+  };
+
+  const groupByAccount = (list) => {
+    const groups = new Map();
+    for (const r of list) {
+      const parts = [];
+      if (r.xiaohongshuAccount) parts.push('小红书: ' + r.xiaohongshuAccount);
+      if (r.douyinAccount) parts.push('抖音: ' + r.douyinAccount);
+      const key = parts.join(' · ') || '未配置账号';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    return groups;
+  };
+
+  const renderGroupedCards = (list, sectionKey) => {
+    const groups = groupByAccount(list);
+    if (groups.size <= 1) return list.map(renderCard).join('');
+    let html = '';
+    for (const [accountLabel, records] of groups) {
+      const groupKey = sectionKey + ':' + accountLabel;
+      const isExpanded = expandedAccountGroups.has(groupKey);
+      html += `<div class="account-group">
+        <div class="account-group-head" onclick="toggleAccountGroup('${escapeJsSingleQuotedString(groupKey)}')">
+          <span class="account-group-chevron">${isExpanded ? '▼' : '▶'}</span>
+          <span>${escapeHtml(accountLabel)}</span>
+          <span class="account-group-count">${records.length} 条</span>
+        </div>
+        ${isExpanded ? records.map(renderCard).join('') : ''}
+      </div>`;
+    }
+    return html;
+  };
+
+  el.innerHTML = `
+    <div class="record-section">
+      <div class="record-section-head">
+        <div class="record-section-title">待发布 (${pendingRecords.length})</div>
+      </div>
+      ${visiblePending.length ? renderGroupedCards(visiblePending, 'pending') : '<div class="empty">当前没有待发布记录</div>'}
+    </div>
+    <div class="record-section">
+      <div class="record-section-head">
+        <div class="record-section-title">已发布 (${completedRecords.length})</div>
+        <button class="record-toggle" onclick="toggleCompletedRecords()">${showCompletedRecords ? '收起已发布' : '展开已发布'}</button>
+      </div>
+      ${showCompletedRecords
+        ? (visibleCompleted.length ? renderGroupedCards(visibleCompleted, 'completed') : '<div class="empty">当前没有已发布记录</div>')
+        : '<div class="empty" style="padding:18px 0;">已发布记录默认折叠，点击右侧按钮展开</div>'}
+    </div>
+  `;
+  renderContextPreview();
+}
+
+function showMoreRecords() {
+  recordRenderLimit += 80;
+  renderRecordList(recordListData);
+}
+
+function toggleCompletedRecords() {
+  showCompletedRecords = !showCompletedRecords;
+  renderRecordList(recordListData);
+}
+
+function filterRecords(query) {
+  recordSearchQuery = (query || '').trim().toLowerCase();
+  renderRecordList(recordListData);
+}
+
+function toggleAccountGroup(key) {
+  if (expandedAccountGroups.has(key)) {
+    expandedAccountGroups.delete(key);
+  } else {
+    expandedAccountGroups.add(key);
+  }
+  renderRecordList(recordListData);
+}
+
+async function refreshRecords(force = false) {
+  if (isRefreshingRecords) return;
+  isRefreshingRecords = true;
+  const el = document.getElementById('recordList');
+  const summaryEl = document.getElementById('recordSummary');
+  const moreBtn = document.getElementById('recordMoreBtn');
+  if (!recordListData.length || force) {
+    el.innerHTML = '<div class="empty">加载中...</div>';
+  }
+  try {
+    const resp = await fetchApi('/api/all-records');
+    if (!resp.success) throw new Error(resp.error);
+    const records = resp.data || [];
+    const signature = JSON.stringify(records);
+    if (!force && signature === lastRecordsSignature) return;
+    lastRecordsSignature = signature;
+    recordListData = records;
+    if (force) recordRenderLimit = 80;
+    renderRecordList(records);
+  } catch (e) {
+    selectedRecordKey = '';
+    if (String(e.message || '').includes('飞书接入')) {
+      el.innerHTML = '<div class="empty">请先到“设置 / 飞书接入”完成配置，然后再刷新记录。</div>';
+      summaryEl.textContent = '程序已在当前系统用户目录生成空白配置模板，完成飞书接入后即可开始加载记录。';
+      moreBtn.style.display = 'none';
+      const pendingCountEl = document.getElementById('pendingCount');
+      if (pendingCountEl) pendingCountEl.textContent = '-';
+      document.getElementById('toolbarPendingCount').textContent = '-';
+    } else {
+      el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${e.message}</div>`;
+    }
+  } finally {
+    renderContextPreview();
+    isRefreshingRecords = false;
+  }
+}
+
+async function startScheduler() {
+  const resp = await fetchApi('/api/scheduler/start', 'POST');
+  if (resp.success) addLog('info', resp.message || '定时服务已启动');
+  else addLog('error', `启动失败: ${resp.error || '未知错误'}`);
+  refreshStatus();
+}
+
+async function stopScheduler() {
+  const resp = await fetchApi('/api/scheduler/stop', 'POST');
+  if (resp.success) addLog('info', resp.message || '定时服务已停止');
+  else addLog('error', `停止失败: ${resp.error || '未知错误'}`);
+  refreshStatus();
+}
+
+let publishNowInFlight = false;
+async function publishNow() {
+  addLog('info', '正在补发已到时间的笔记...');
+  renderProgress({ active: true, stage: 'checking', title: '', detail: '正在检查并补发已到时间的笔记', updatedAt: new Date().toLocaleString('zh-CN') });
+  try {
+    const result = await fetchApi('/api/publish/now', 'POST', {});
+    if (result.success) {
+      if (result.inProgress) {
+        addLog('info', `当前已有任务在执行，已追加 ${result.queued ?? 0} 条到队列`);
+      } else {
+        const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
+        addLog('success', `已到时间笔记补发完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+      }
+    } else {
+      addLog('error', `发布失败: ${result.error}`);
+    }
+  } catch (e) {
+    addLog('error', `请求失败: ${e.message}`);
+    renderProgress({ active: false, stage: 'failed', title: '', detail: `手动发布失败: ${e.message}`, updatedAt: new Date().toLocaleString('zh-CN') });
+  }
+  refreshStatus();
+  refreshRecords(true);
+}
+
+async function publishRecord(recordId) {
+  addLog('info', `正在立即发布记录 ${recordId}...`);
+  renderProgress({ active: true, stage: 'checking', title: '', detail: '正在执行立即发布', updatedAt: new Date().toLocaleString('zh-CN') });
+  try {
+    const result = await fetchApi('/api/publish/record', 'POST', { recordId });
+    if (result.success) {
+      if (result.inProgress) {
+        addLog('info', `已有任务正在执行，这条记录已加入队列 (${result.queued ?? 0})`);
+      } else {
+        const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
+        addLog('success', `立即发布完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+      }
+    } else {
+      addLog('error', `发布失败: ${result.error}`);
+    }
+  } catch (e) {
+    addLog('error', `请求失败: ${e.message}`);
+    renderProgress({ active: false, stage: 'failed', title: '', detail: `立即发布失败: ${e.message}`, updatedAt: new Date().toLocaleString('zh-CN') });
+  }
+  refreshStatus();
+  refreshRecords(true);
+}
+
+// Legacy toggle functions → redirect to switchTab
+function toggleSettings() { switchSection('setup'); switchSetupPane('schedule', { preserveSection: true }); }
+function toggleAccounts() { switchSection('setup'); switchSetupPane('accounts', { preserveSection: true }); refreshAccounts(); }
+function toggleBitbrowserMappings() { switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true }); refreshBitbrowserMappings(); }
+function toggleMusic() { switchSection('setup'); switchSetupPane('music', { preserveSection: true }); loadCurrentMusic(); }
+
+function renderBitbrowserMappings() {
+  const listEl = document.getElementById('bitbrowserList');
+  const summaryEl = document.getElementById('bitbrowserSummary');
+  if (!bitbrowserMappings.length) {
+    listEl.innerHTML = '<div class="empty">当前飞书记录里还没有检测到小红书账号</div>';
+    summaryEl.textContent = '当前没有可配置的比特浏览器账号。';
+    renderContextPreview();
+    return;
+  }
+  const configuredCount = bitbrowserMappings.filter(item => item.browserId).length;
+  const bitbrowserUsageCount = bitbrowserMappings.filter(item => item.bitbrowserRecords > 0).length;
+  summaryEl.textContent = `共识别 ${bitbrowserMappings.length} 个小红书账号，已配置 ${configuredCount} 个 browserId，其中 ${bitbrowserUsageCount} 个账号已有记录明确选择比特浏览器。`;
+
+  listEl.innerHTML = bitbrowserMappings.map((item, index) => `
+    <div class="mapping-row">
+      <div class="mapping-row-top">
+        <div class="account-title">${escapeHtml(item.accountName)}</div>
+        <div class="account-badges">
+          <span class="${item.browserId ? 'badge-ok' : 'badge-bad'}">${item.browserId ? '已配置' : '未配置'}</span>
+          <span class="${item.bitbrowserRecords > 0 ? 'badge-map' : 'badge-unmap'}">${item.bitbrowserRecords > 0 ? '飞书已选' : '未选择'}</span>
+        </div>
+      </div>
+      <div class="account-meta">飞书记录: ${item.totalRecords || 0} 条 · 走比特浏览器: ${item.bitbrowserRecords || 0} 条</div>
+      <input class="mapping-input" placeholder="填写该账号对应的 BitBrowser browserId"
+        value="${escapeHtml(item.browserId || '')}" onchange="updateBitbrowserMapping(${index}, this.value)">
+    </div>
+  `).join('');
+  renderContextPreview();
+}
+
+function updateBitbrowserMapping(index, value) {
+  if (!bitbrowserMappings[index]) return;
+  bitbrowserMappings[index].browserId = String(value || '').trim();
+}
+
+async function refreshBitbrowserMappings(forceLog = false, forceReload = false) {
+  const listEl = document.getElementById('bitbrowserList');
+  if (!forceReload && bitbrowserMappings.length > 0) {
+    renderBitbrowserMappings();
+    return;
+  }
+  listEl.innerHTML = '<div class="empty">正在同步飞书账号与本地 browserId 映射...</div>';
+  try {
+    const resp = await fetchApi('/api/bitbrowser/accounts');
+    if (!resp.success) throw new Error(resp.error);
+    bitbrowserMappings = resp.data || [];
+    renderBitbrowserMappings();
+    if (forceLog) addLog('success', '已同步飞书中的小红书账号列表');
+  } catch (e) {
+    bitbrowserMappings = [];
+    listEl.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${escapeHtml(e.message)}</div>`;
+    renderContextPreview();
+  }
+}
+
+async function syncFeishuBitbrowserFields() {
+  const listEl = document.getElementById('bitbrowserList');
+  listEl.innerHTML = '<div class="empty">正在同步飞书单选字段与本地 browserId 映射...</div>';
+  try {
+    const resp = await fetchApi('/api/bitbrowser/sync-feishu', 'POST', {});
+    if (!resp.success) throw new Error(resp.error);
+    bitbrowserMappings = resp.data || [];
+    renderBitbrowserMappings();
+    addLog('success', resp.message || '飞书单选字段已同步');
+    refreshRecords(true);
+  } catch (e) {
+    listEl.innerHTML = `<div class="empty" style="color:#ff3b30">同步失败: ${escapeHtml(e.message)}</div>`;
+    addLog('error', `同步飞书单选字段失败: ${e.message}`);
+    renderContextPreview();
+  }
+}
+
+async function saveBitbrowserMappings() {
+  try {
+    const resp = await fetchApi('/api/bitbrowser/accounts', 'POST', { mappings: bitbrowserMappings });
+    if (!resp.success) throw new Error(resp.error);
+    bitbrowserMappings = resp.data || [];
+    renderBitbrowserMappings();
+    addLog('success', resp.message || '比特浏览器账号映射已保存');
+    refreshRecords(true);
+  } catch (e) {
+    addLog('error', `保存比特浏览器映射失败: ${e.message}`);
+    renderContextPreview();
+  }
+}
+
+function closeMusicLibrary(event) {
+  if (event && event.target && event.target.id !== 'musicModal') return;
+  document.getElementById('musicModal').classList.remove('open');
+}
+
+async function openMusicLibrary(mode = 'recommend') {
+  document.getElementById('musicModal').classList.add('open');
+  document.getElementById('musicLibraryList').innerHTML = '<div class="music-empty">正在加载音乐列表...</div>';
+  document.getElementById('musicLibrarySearch').value = '';
+  await loadMusicCategories();
+  if (mode === 'hot') {
+    const hotTab = builtInMusicTabs.find(tab => tab.key === 'hot');
+    if (hotTab) { await selectBuiltInMusicTab(hotTab.key, hotTab.label, hotTab.keyword); return; }
+  }
+  await selectBuiltInMusicTab('recommend', '热歌推荐', '热歌');
+}
+
+async function loadMusicCategories() {
+  if (musicCategories.length > 0) { renderMusicTabs(); return; }
+  const resp = await fetchApi('/api/music/categories');
+  if (!resp.success) throw new Error(resp.error || '加载分类失败');
+  musicCategories = resp.categories || [];
+  renderMusicTabs();
+}
+
+function renderMusicTabs() {
+  const tabs = [
+    ...builtInMusicTabs,
+    ...musicCategories.slice(0, 4).map(c => ({ key: c.yixiaoerId, label: c.yixiaoerName, categoryId: c.yixiaoerId, categoryName: c.yixiaoerName })),
+  ];
+  const activeKey = musicLibraryState.mode === 'search' ? 'search' : (musicLibraryState.categoryId || musicLibraryState.mode || 'recommend');
+  document.getElementById('musicTabs').innerHTML = tabs.map(tab => {
+    const active = activeKey === tab.key;
+    const handler = tab.keyword
+      ? `selectBuiltInMusicTab('${escapeJsSingleQuotedString(tab.key)}', '${escapeJsSingleQuotedString(tab.label)}', '${escapeJsSingleQuotedString(tab.keyword)}')`
+      : `selectMusicTab('${escapeJsSingleQuotedString(tab.categoryId)}', '${escapeJsSingleQuotedString(tab.categoryName)}')`;
+    return `<button class="music-tab ${active ? 'active' : ''}" onclick="${handler}">${escapeHtml(tab.label)}</button>`;
+  }).join('');
+}
+
+async function selectBuiltInMusicTab(modeKey, label, keyword) {
+  musicLibraryState = { mode: modeKey, keyword: keyword || '热歌', categoryId: '', categoryName: label || '', nextPage: null };
+  renderMusicTabs();
+  await fetchMusicLibrary();
+}
+
+async function selectMusicTab(categoryId, categoryName) {
+  musicLibraryState = { mode: 'category', keyword: '', categoryId, categoryName, nextPage: null };
+  renderMusicTabs();
+  await fetchMusicLibrary();
+}
+
+async function searchMusicLibrary() {
+  const keyword = document.getElementById('musicLibrarySearch').value.trim();
+  if (!keyword) { await selectBuiltInMusicTab('recommend', '热歌推荐', '热歌'); return; }
+  musicLibraryState = { mode: 'search', keyword, categoryId: '', categoryName: '', nextPage: null };
+  document.getElementById('musicTabs').innerHTML = '<button class="music-tab active">搜索结果</button>';
+  await fetchMusicLibrary();
+}
+
+async function fetchMusicLibrary(append = false) {
+  const listEl = document.getElementById('musicLibraryList');
+  const loadMoreEl = document.getElementById('musicLoadMore');
+  if (!append) { listEl.innerHTML = '<div class="music-empty">正在加载音乐列表...</div>'; loadMoreEl.style.display = 'none'; }
+  try {
+    const resp = await fetchApi('/api/music/library', 'POST', { keyword: musicLibraryState.keyword, categoryId: musicLibraryState.categoryId, categoryName: musicLibraryState.categoryName, nextPage: append ? musicLibraryState.nextPage : '' });
+    if (!resp.success) throw new Error(resp.error);
+    musicLibraryState.nextPage = resp.nextPage || null;
+    renderMusicLibrary(resp.music || [], append);
+    loadMoreEl.style.display = musicLibraryState.nextPage ? 'block' : 'none';
+  } catch (e) {
+    listEl.innerHTML = `<div class="music-empty" style="color:#ff3b30;">加载失败: ${escapeHtml(e.message)}</div>`;
+    loadMoreEl.style.display = 'none';
+  }
+}
+
+function renderMusicLibrary(musicList, append = false) {
+  const listEl = document.getElementById('musicLibraryList');
+  const html = musicList.length > 0
+    ? musicList.map(m => `
+      <div class="music-library-item">
+        <button class="music-play-btn ${currentPreviewUrl === (m.playUrl || '') ? 'playing' : ''}" onclick="previewMusic('${escapeJsSingleQuotedString(m.playUrl || '')}', this)">▶</button>
+        <div class="music-meta">
+          <div class="music-name">${escapeHtml(m.yixiaoerName || '未命名音乐')}</div>
+          <div class="music-sub">${escapeHtml(m.authorName || '未知作者')}</div>
+        </div>
+        <div class="music-actions">
+          <button class="music-preview ${currentPreviewUrl === (m.playUrl || '') ? 'playing' : ''}" onclick="previewMusic('${escapeJsSingleQuotedString(m.playUrl || '')}', this)">${currentPreviewUrl === (m.playUrl || '') ? '暂停' : '试听'}</button>
+          <span class="music-duration">${formatDuration(m.duration)}</span>
+          <button class="music-use-btn" onclick="selectMusicFromLibrary('${escapeJsSingleQuotedString(m.yixiaoerId)}', '${escapeJsSingleQuotedString(m.yixiaoerName)}')">使用</button>
+        </div>
+      </div>`).join('')
+    : '<div class="music-empty">暂无音乐</div>';
+  if (append && !listEl.querySelector('.music-empty')) { listEl.insertAdjacentHTML('beforeend', html); } else { listEl.innerHTML = html; }
+}
+
+async function loadMoreMusic() {
+  if (!musicLibraryState.nextPage) return;
+  await fetchMusicLibrary(true);
+}
+
+function previewMusic(playUrl) {
+  if (!playUrl) { addLog('error', '当前音乐没有可试听地址'); return; }
+  const player = document.getElementById('musicPreviewPlayer');
+  if (currentPreviewUrl === playUrl && !player.paused) { player.pause(); currentPreviewUrl = ''; refreshMusicPreviewButtons(); return; }
+  currentPreviewUrl = playUrl;
+  player.src = playUrl;
+  player.play().catch(err => addLog('error', `试听失败: ${err.message}`));
+  refreshMusicPreviewButtons();
+}
+
+function refreshMusicPreviewButtons() {
+  const player = document.getElementById('musicPreviewPlayer');
+  document.querySelectorAll('.music-play-btn').forEach(btn => btn.classList.remove('playing'));
+  document.querySelectorAll('.music-preview').forEach(btn => { btn.classList.remove('playing'); btn.textContent = '试听'; });
+  if (!currentPreviewUrl || player.paused) return;
+  document.querySelectorAll('.music-library-item').forEach(item => {
+    const playHandler = item.querySelector('.music-play-btn')?.getAttribute('onclick') || '';
+    if (playHandler.includes(escapeJsSingleQuotedString(currentPreviewUrl))) {
+      const playBtn = item.querySelector('.music-play-btn');
+      const previewBtn = item.querySelector('.music-preview');
+      if (playBtn) playBtn.classList.add('playing');
+      if (previewBtn) { previewBtn.classList.add('playing'); previewBtn.textContent = '暂停'; }
+    }
+  });
+}
+
+async function saveSchedule() {
+  for (const p of periods) {
+    if (!p.startTime || !p.endTime) { addLog('error', '请填写完整的开始和结束时间'); return; }
+    if (p.startTime >= p.endTime) { addLog('error', `时间段 ${p.startTime}-${p.endTime} 的开始时间必须早于结束时间`); return; }
+  }
+  try {
+    const resp = await fetchApi('/api/schedule', 'POST', { periods });
+    if (resp.success) { addLog('success', '定时配置已保存'); refreshStatus(); }
+    else { addLog('error', '保存失败: ' + resp.error); }
+  } catch (e) { addLog('error', '保存失败: ' + e.message); }
+}
+
+async function refreshAccounts() {
+  const el = document.getElementById('accountList');
+  el.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    const resp = await fetchApi('/api/accounts/status');
+    if (!resp.success) throw new Error(resp.error);
+    const list = resp.data || [];
+    accountStatusData = list;
+    if (list.length === 0) { el.innerHTML = '<div class="empty">没有账号数据</div>'; return; }
+    el.innerHTML = list.map(item => `
+      <div class="account-item">
+        <div class="account-main">
+          <div class="account-title">${escapeHtml(item.accountName || '未命名账号')}</div>
+          <div class="account-meta">${escapeHtml(item.platform || '-')} · ID: ${escapeHtml(item.id || '-')}</div>
+          ${renderAccountAliases(item)}
+          <div class="account-meta">${item.status === 1 ? '状态正常' : '状态异常'} · ${item.isFreeze ? '已冻结' : '未冻结'} · ${item.isOperate ? '可操作' : '不可操作'} · ${item.isRealNameVerified ? '已实名' : '未实名'}</div>
+        </div>
+        <div class="account-badges">
+          <span class="${item.statusText === '在线/授权正常' ? 'badge-ok' : 'badge-bad'}">${escapeHtml(item.statusText)}</span>
+          <span class="${item.mapped ? 'badge-map' : 'badge-unmap'}">${item.mapped ? '已映射' : '未映射'}</span>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    accountStatusData = [];
+    el.innerHTML = `<div class="empty" style="color:#ff3b30">加载失败: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    renderContextPreview();
+  }
+}
+
+async function loadFeishuConfig(force = false) {
+  if (feishuConfigLoaded && !force) return;
+  const statusEl = document.getElementById('feishuConfigStatus');
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在读取当前飞书接入配置...';
+  try {
+    const resp = await fetchApi('/api/config');
+    const feishu = resp.feishu || {};
+    const runtimePaths = resp.runtimePaths || {};
+    latestFeishuConfig = feishu;
+    latestRuntimePaths = runtimePaths;
+    document.getElementById('feishuAppId').value = feishu.appId || '';
+    document.getElementById('feishuAppSecret').value = feishu.appSecret || '';
+    document.getElementById('feishuAppToken').value = feishu.appToken || '';
+    document.getElementById('feishuTableId').value = feishu.tableId || '';
+    document.getElementById('feishuWikiUrl').value = feishu.wikiUrl || '';
+    const storagePathEl = document.getElementById('configStoragePath');
+    if (storagePathEl) storagePathEl.textContent = runtimePaths.configPath
+      ? `本机数据位置：配置文件 ${runtimePaths.configPath}；数据目录 ${runtimePaths.dataDir || '-'}`
+      : '配置会保存到当前系统用户目录。';
+    const hasCoreConfig = !!(feishu.appId && feishu.appToken && feishu.tableId);
+    statusEl.className = `config-status ${hasCoreConfig ? 'success' : ''}`.trim();
+    statusEl.textContent = hasCoreConfig
+      ? '当前飞书凭证已加载。你可以直接修改并保存。'
+      : '当前是首次生成的空白配置，请补全 App ID、App Secret、App Token 和 Table ID。';
+    feishuConfigLoaded = true;
+  } catch (e) {
+    latestFeishuConfig = null;
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `读取飞书配置失败：${e.message}`;
+  } finally {
+    renderContextPreview();
+  }
+}
+
+async function saveFeishuConfig() {
+  const statusEl = document.getElementById('feishuConfigStatus');
+  const payload = {
+    feishu: {
+      appId: document.getElementById('feishuAppId').value.trim(),
+      appSecret: document.getElementById('feishuAppSecret').value.trim(),
+      appToken: document.getElementById('feishuAppToken').value.trim(),
+      tableId: document.getElementById('feishuTableId').value.trim(),
+      wikiUrl: document.getElementById('feishuWikiUrl').value.trim(),
+    }
+  };
+
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在保存飞书接入配置...';
+  try {
+    const resp = await fetchApi('/api/config/feishu', 'POST', payload);
+    if (!resp.success) throw new Error(resp.error || '保存失败');
+    statusEl.className = 'config-status success';
+    statusEl.textContent = resp.message || '飞书接入配置已保存';
+    document.getElementById('feishuAppSecret').value = '******';
+    feishuConfigLoaded = true;
+    addLog('success', resp.message || '飞书接入配置已保存');
+    await loadFeishuConfig(true);
+    refreshRecords(true);
+    refreshStatus();
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `保存失败：${e.message}`;
+    addLog('error', `保存飞书接入配置失败: ${e.message}`);
+  }
+}
+
+// ── AI 写作 ──────────────────────────────────────────────
+let aiWritingConfigLoaded = false;
+
+function onAiProviderChange() {
+  const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
+  const baseUrlField = document.getElementById('aiBaseUrlField');
+  if (baseUrlField) baseUrlField.style.display = provider === 'openai' ? '' : 'none';
+  // 切换 provider 时更新模型占位符
+  const modelInput = document.getElementById('aiModel');
+  if (modelInput && !modelInput.value) {
+    const defaults = { openai: 'gpt-4o-mini', anthropic: 'claude-3-5-haiku-20241022', gemini: 'gemini-2.0-flash' };
+    modelInput.placeholder = defaults[provider] || 'gpt-4o-mini';
+  }
+}
+
+async function loadAiWritingConfig(force = false) {
+  if (aiWritingConfigLoaded && !force) return;
+  try {
+    const resp = await fetchApi('/api/config');
+    const ai = resp.aiWriting || {};
+    document.getElementById('aiWritingEnabled').checked = !!ai.enabled;
+    const provider = ai.provider || 'openai';
+    const radio = document.querySelector(`input[name="aiProvider"][value="${provider}"]`);
+    if (radio) radio.checked = true;
+    document.getElementById('aiApiBaseUrl').value = ai.apiBaseUrl || '';
+    document.getElementById('aiApiKey').value = ai.apiKey ? '******' : '';
+    document.getElementById('aiModel').value = ai.model || '';
+    onAiProviderChange();
+    aiWritingConfigLoaded = true;
+  } catch (e) {
+    document.getElementById('aiWritingStatus').textContent = `读取配置失败：${e.message}`;
+  }
+}
+
+async function saveAiWritingConfig() {
+  const statusEl = document.getElementById('aiWritingStatus');
+  // 有 apiKey 但未勾选启用时，询问是否同时启用
+  const enabledCb = document.getElementById('aiWritingEnabled');
+  const apiKeyVal = document.getElementById('aiApiKey').value.trim();
+  if (apiKeyVal && apiKeyVal !== '******' && !enabledCb.checked) {
+    if (confirm('已填写 API Key 但未启用 AI 写作，是否同时启用？')) {
+      enabledCb.checked = true;
+    }
+  }
+  statusEl.textContent = '正在保存...';
+  try {
+    const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
+    const payload = {
+      enabled: document.getElementById('aiWritingEnabled').checked,
+      provider,
+      apiBaseUrl: document.getElementById('aiApiBaseUrl').value.trim(),
+      apiKey: document.getElementById('aiApiKey').value.trim(),
+      model: document.getElementById('aiModel').value.trim(),
+    };
+    const resp = await fetchApi('/api/config/ai-writing', 'POST', payload);
+    if (!resp.success) throw new Error(resp.error || '保存失败');
+    statusEl.style.color = 'var(--accent)';
+    statusEl.textContent = '✅ 配置已保存';
+    document.getElementById('aiApiKey').value = '******';
+    aiWritingConfigLoaded = false;
+    addLog('success', 'AI 写作配置已保存');
+  } catch (e) {
+    statusEl.style.color = '#e53e3e';
+    statusEl.textContent = `保存失败：${e.message}`;
+  }
+}
+
+// ===== 发布主机开关 =====
+async function loadMasterPublisherSetting() {
+  try {
+    const resp = await fetchApi('/api/config');
+    const toggle = document.getElementById('isMasterPublisherToggle');
+    const hint = document.getElementById('masterPublisherHint');
+    if (!toggle) return;
+    const isMaster = resp.isMasterPublisher !== false; // 默认 true
+    toggle.checked = isMaster;
+    if (hint) hint.textContent = isMaster
+      ? '开启后此设备将自动运行定时发布'
+      : '当前设备仅用于素材导入，不参与发布';
+  } catch (e) {
+    const st = document.getElementById('masterPublisherStatus');
+    if (st) st.textContent = '读取失败：' + e.message;
+  }
+}
+
+async function saveMasterPublisherSetting(value) {
+  const hint = document.getElementById('masterPublisherHint');
+  const st = document.getElementById('masterPublisherStatus');
+  try {
+    const resp = await fetchApi('/api/config', 'POST', { isMasterPublisher: value });
+    if (!resp.success) throw new Error(resp.error || '保存失败');
+    if (hint) hint.textContent = value
+      ? '开启后此设备将自动运行定时发布'
+      : '当前设备仅用于素材导入，不参与发布';
+    if (st) { st.style.color = 'var(--accent)'; st.textContent = '✅ 已保存'; setTimeout(() => { if (st) st.textContent = ''; }, 2000); }
+  } catch (e) {
+    if (st) { st.style.color = '#e53e3e'; st.textContent = '保存失败：' + e.message; }
+    // 恢复原来的开关状态
+    const toggle = document.getElementById('isMasterPublisherToggle');
+    if (toggle) toggle.checked = !value;
+  }
+}
+
+async function testAiConnection() {
+  const statusEl = document.getElementById('aiWritingStatus');
+  const btn = document.getElementById('aiTestBtn');
+  btn.disabled = true;
+  statusEl.style.color = 'var(--ink-2)';
+  statusEl.textContent = '正在测试连接...';
+  try {
+    const provider = document.querySelector('input[name="aiProvider"]:checked')?.value || 'openai';
+    const apiKey = document.getElementById('aiApiKey').value.trim();
+    const payload = {
+      provider,
+      apiBaseUrl: document.getElementById('aiApiBaseUrl').value.trim(),
+      apiKey: apiKey !== '******' ? apiKey : undefined,
+      model: document.getElementById('aiModel').value.trim(),
+    };
+    const resp = await fetchApi('/api/ai-writing/test', 'POST', payload);
+    if (!resp.success) throw new Error(resp.error || '连接失败');
+    statusEl.style.color = 'var(--accent)';
+    statusEl.textContent = `✅ 连接成功${resp.data?.model ? '（模型：' + resp.data.model + '）' : ''}`;
+    // 测试成功后自动勾选启用，提示用户保存
+    const enabledCb = document.getElementById('aiWritingEnabled');
+    if (enabledCb && !enabledCb.checked) {
+      enabledCb.checked = true;
+      statusEl.textContent += '（已自动勾选启用，请点击「保存配置」生效）';
+    }
+  } catch (e) {
+    statusEl.style.color = '#e53e3e';
+    statusEl.textContent = `❌ 连接失败：${e.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function triggerAiGenerate(recordId) {
+  if (!recordId) return;
+  const btn = document.getElementById(`aiGenBtn-${recordId}`);
+  if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+  try {
+    const resp = await fetchApi('/api/ai-writing/generate', 'POST', { recordId });
+    if (!resp.success) throw new Error(resp.error || '生成失败');
+    addLog('success', `AI 已生成《${resp.data?.title || recordId}》的内容`);
+    await refreshRecords(true);
+  } catch (e) {
+    addLog('error', `AI 生成失败：${e.message}`);
+    alert(`AI 生成失败：${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'AI 生成'; }
+  }
+}
+
+function exportConfigBackup() {
+  const link = document.createElement('a');
+  link.href = `${API}/api/config/export`;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  addLog('info', '已开始导出配置备份');
+}
+
+function triggerConfigImport() {
+  const input = document.getElementById('configImportFile');
+  input.value = '';
+  input.click();
+}
+
+function exportDataBackup() {
+  const link = document.createElement('a');
+  link.href = `${API}/api/data/export`;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  addLog('info', '已开始导出完整数据备份');
+}
+
+function triggerDataImport() {
+  const input = document.getElementById('dataImportFile');
+  input.value = '';
+  input.click();
+}
+
+async function handleConfigImport(event) {
+  const statusEl = document.getElementById('feishuConfigStatus');
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  if (!confirm('导入后会覆盖当前本机配置，是否继续？')) {
+    event.target.value = '';
+    return;
+  }
+
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在导入配置备份...';
+
+  try {
+    const text = await file.text();
+    const imported = JSON.parse(text);
+    const resp = await fetchApi('/api/config/import', 'POST', { config: imported });
+    if (!resp.success) throw new Error(resp.error || '导入失败');
+
+    feishuConfigLoaded = false;
+    bitbrowserMappings = [];
+    statusEl.className = 'config-status success';
+    statusEl.textContent = resp.message || '配置备份已导入';
+    await loadFeishuConfig(true);
+    refreshStatus();
+    refreshRecords(true);
+    addLog('success', resp.message || '配置备份已导入');
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `导入失败：${e.message}`;
+    addLog('error', `导入配置备份失败: ${e.message}`);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function handleDataImport(event) {
+  const statusEl = document.getElementById('feishuConfigStatus');
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  if (!confirm('导入完整数据后会覆盖当前本机配置和发布账本，是否继续？')) {
+    event.target.value = '';
+    return;
+  }
+
+  statusEl.className = 'config-status';
+  statusEl.textContent = '正在导入完整数据备份...';
+
+  try {
+    const text = await file.text();
+    const imported = JSON.parse(text);
+    const resp = await fetchApi('/api/data/import', 'POST', { backup: imported });
+    if (!resp.success) throw new Error(resp.error || '导入失败');
+
+    feishuConfigLoaded = false;
+    bitbrowserMappings = [];
+    statusEl.className = 'config-status success';
+    statusEl.textContent = resp.message || '完整数据备份已导入';
+    await loadFeishuConfig(true);
+    refreshStatus();
+    refreshRecords(true);
+    addLog('success', resp.message || '完整数据备份已导入');
+  } catch (e) {
+    statusEl.className = 'config-status error';
+    statusEl.textContent = `导入失败：${e.message}`;
+    addLog('error', `导入完整数据备份失败: ${e.message}`);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+function renderAccountAliases(item) {
+  const aliases = Array.isArray(item.aliases) ? item.aliases : [];
+  const normalizedPrimary = String(item.accountName || '').trim().toLowerCase();
+  const visibleAliases = aliases
+    .map(alias => String(alias || '').trim())
+    .filter(Boolean)
+    .filter((alias, index, arr) => arr.findIndex(v => v.toLowerCase() === alias.toLowerCase()) === index)
+    .filter(alias => alias.toLowerCase() !== normalizedPrimary);
+
+  if (visibleAliases.length === 0) return '';
+
+  return `<div class="account-meta">备注/别名：${escapeHtml(visibleAliases.join('、'))}</div>`;
+}
+
+function renderLogs(logs) {
+  logEntries = Array.isArray(logs) ? logs.slice(-MAX_LOG_ENTRIES) : [];
+  const el = document.getElementById('logPanel');
+  if (!el) {
+    renderContextPreview();
+    return;
+  }
+  el.innerHTML = logEntries.map(l => {
+    const cls = l.level === 'error' ? 'log-error' : l.level === 'success' ? 'log-success' : 'log-info';
+    return `<div class="log-entry"><span class="log-time">[${l.time}]</span> <span class="${cls}">${l.message}</span></div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+  renderContextPreview();
+}
+
+function addLog(level, message) {
+  const time = new Date().toLocaleString('zh-CN');
+  logEntries.push({ time, level, message });
+  if (logEntries.length > MAX_LOG_ENTRIES) logEntries = logEntries.slice(-MAX_LOG_ENTRIES);
+  renderLogs(logEntries);
+}
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/logs/stream');
+  eventSource.onmessage = (e) => { try { const log = JSON.parse(e.data); addLog(log.level, log.message); } catch (err) {} };
+  eventSource.addEventListener('progress', (e) => { try { renderProgress(JSON.parse(e.data)); } catch (err) {} });
+  eventSource.addEventListener('import_progress', (e) => { try { importProgressUpdate(JSON.parse(e.data)); } catch (err) {} });
+  eventSource.onerror = () => {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connectSSE, 5000);
+  };
+}
+
+async function loadCurrentMusic() {
+  try {
+    const resp = await fetchApi('/api/music/default/validate');
+    latestMusicValidation = resp;
+    const musicEl = document.getElementById('currentMusic').querySelector('.music-status');
+    const hintEl = document.getElementById('musicStatusHint');
+    hintEl.className = 'music-status-hint';
+    if (resp.success && resp.configuredMusic) {
+      musicEl.textContent = `🎵 ${resp.configuredMusic.text}`;
+      musicEl.className = 'music-status selected';
+      hintEl.textContent = resp.message || '当前默认配乐可用';
+      hintEl.classList.add(resp.valid ? 'success' : 'warning');
+    } else {
+      musicEl.textContent = '未设置默认配乐';
+      musicEl.className = 'music-status';
+      hintEl.textContent = '当前未设置默认配乐，发布时会自动回退到热门纯音乐。';
+      hintEl.classList.add('warning');
+    }
+  } catch (e) {
+    latestMusicValidation = null;
+    console.error('加载当前音乐失败:', e);
+  } finally {
+    renderContextPreview();
+  }
+}
+
+async function searchMusic() { await openMusicLibrary(); }
+
+async function selectMusic(musicId, musicName) {
+  try {
+    const resp = await fetchApi('/api/music/default', 'POST', { music: { id: musicId, text: musicName } });
+    if (resp.success) {
+      addLog('success', `默认配乐已设置: ${musicName}`);
+      loadCurrentMusic();
+      document.getElementById('musicResults').innerHTML = '<div class="music-empty">已设置默认配乐，可继续打开音乐库更换</div>';
+    } else { addLog('error', '设置失败: ' + resp.error); }
+  } catch (e) { addLog('error', '设置失败: ' + e.message); }
+}
+
+async function selectMusicFromLibrary(musicId, musicName) { await selectMusic(musicId, musicName); closeMusicLibrary(); }
+
+async function clearDefaultMusic() {
+  try {
+    const resp = await fetchApi('/api/music/default', 'DELETE');
+    if (resp.success) {
+      addLog('success', '已清除默认配乐设置');
+      loadCurrentMusic();
+      document.getElementById('musicResults').innerHTML = '<div class="music-empty">默认配乐已清除，可重新打开音乐库选择</div>';
+    } else { addLog('error', '清除失败: ' + resp.error); }
+  } catch (e) { addLog('error', '清除失败: ' + e.message); }
+}
+
+// Init
+renderPeriods();
+refreshStatus();
+refreshRecords(true);
+connectSSE();
+setInterval(() => { if (!document.hidden) refreshStatus(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
+window.addEventListener('beforeunload', () => { if (eventSource) eventSource.close(); if (reconnectTimer) clearTimeout(reconnectTimer); });
+document.getElementById('musicPreviewPlayer').addEventListener('ended', () => { currentPreviewUrl = ''; refreshMusicPreviewButtons(); });
+document.getElementById('musicPreviewPlayer').addEventListener('pause', () => { if (!document.getElementById('musicPreviewPlayer').ended) { currentPreviewUrl = ''; refreshMusicPreviewButtons(); } });
+</script>
+</body>
+</html>

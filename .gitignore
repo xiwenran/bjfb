@@ -1,0 +1,6 @@
+node_modules/
+dist/
+config.json
+publish-ledger.json
+publish-history.json
+.echo/

@@ -1,0 +1,1413 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const url = require('url');
+const crypto = require('crypto');
+const Scheduler = require('./scheduler.js');
+const publisher = require('./publisher.js');
+const FeishuClient = require('./feishu.js');
+const {
+  updateYixiaoerAccountCache,
+  autoMapAccountMappings,
+  collectMappedAccountIds,
+} = require('./account-mapping.js');
+const {
+  initializeAppStorage,
+  saveConfig: persistConfig,
+  readLedger,
+  saveLedger,
+  getRuntimePaths,
+  isFeishuConfigured,
+  isYixiaoerConfigured,
+  readAiWritingCache,
+  saveAiWritingCache,
+} = require('./config-store.js');
+const { generateContent, testConnection } = require('./ai-writer.js');
+
+const APP_VERSION = require('../package.json').version;
+const storage = initializeAppStorage();
+const runtimePaths = storage.paths;
+const storageState = storage.state;
+const migrationSources = storage.migrationSources || {};
+const config = storage.config;
+const DEFAULT_PORT = Number(process.env.NOTE_PUBLISHER_PORT) || 3210;
+const DEFAULT_HOST = process.env.NOTE_PUBLISHER_HOST || '127.0.0.1';
+
+const scheduler = new Scheduler(config);
+let feishu = new FeishuClient(config.feishu);
+let activeServerInfo = null;
+
+function syncConfigObject(nextConfig) {
+  for (const key of Object.keys(config)) {
+    delete config[key];
+  }
+  Object.assign(config, nextConfig);
+}
+
+function saveConfig() {
+  syncConfigObject(persistConfig(config));
+}
+
+function refreshFeishuClients() {
+  feishu = new FeishuClient(config.feishu);
+  scheduler.feishu = new FeishuClient(config.feishu);
+}
+
+function getConfigState() {
+  return {
+    feishuConfigured: isFeishuConfigured(config),
+    yixiaoerConfigured: isYixiaoerConfigured(config),
+  };
+}
+
+function getPublicRuntimePaths() {
+  const paths = getRuntimePaths();
+  return {
+    configDir: paths.configDir,
+    configPath: paths.configPath,
+    dataDir: paths.dataDir,
+    cacheDir: paths.cacheDir,
+    logsDir: paths.logsDir,
+    ledgerPath: paths.ledgerPath,
+  };
+}
+
+function cloneConfigForExport() {
+  const exported = JSON.parse(JSON.stringify(config));
+  delete exported.yixiaoerAccountCache;
+  return exported;
+}
+
+function buildBackupStamp() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '-',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('');
+}
+
+function writeJsonDownload(res, filename, payload) {
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': `attachment; filename=”${filename}”`,
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.end(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+function cloneDataBackupForExport() {
+  return {
+    type: 'zhifa-data-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    appName: runtimePaths.appName,
+    data: {
+      config: cloneConfigForExport(),
+      ledger: readLedger(),
+    },
+  };
+}
+
+function applyImportedDataBackup(importedBackup) {
+  if (!importedBackup || typeof importedBackup !== 'object' || Array.isArray(importedBackup)) {
+    throw createConfigError('导入的数据备份格式错误');
+  }
+
+  const payload = importedBackup.data;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw createConfigError('导入的数据备份缺少 data 字段');
+  }
+
+  const importedConfig = payload.config;
+  if (!importedConfig || typeof importedConfig !== 'object' || Array.isArray(importedConfig)) {
+    throw createConfigError('导入的数据备份缺少有效的 config');
+  }
+
+  const importedLedger = payload.ledger;
+  if (importedLedger !== undefined && (!importedLedger || typeof importedLedger !== 'object' || Array.isArray(importedLedger))) {
+    throw createConfigError('导入的数据备份中的 ledger 格式错误');
+  }
+
+  syncConfigObject(persistConfig(importedConfig));
+  saveLedger(importedLedger || {});
+  refreshFeishuClients();
+  publisher.resetRuntimeState();
+  restartSchedulerIfRunning();
+
+  return {
+    configState: getConfigState(),
+    runtimePaths: getPublicRuntimePaths(),
+  };
+}
+
+function restartSchedulerIfRunning() {
+  if (!scheduler.running) return;
+  scheduler.stop();
+  scheduler.start();
+}
+
+function createConfigError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function ensureFeishuConfigReady() {
+  if (isFeishuConfigured(config)) return;
+  throw createConfigError('请先在”飞书接入”页完成 App ID、App Secret、App Token、Table ID 配置');
+}
+
+function ensureYixiaoerConfigReady() {
+  if (isYixiaoerConfigured(config)) return;
+  throw createConfigError(`请先在配置文件中补全蚁小二 API Key 和 Team ID：${getRuntimePaths().configPath}`);
+}
+
+// 安全：高权限路由（force-republish 等）必须确认请求来自本机，防御 DNS rebinding 攻击
+function isLocalRequest(req) {
+  const hostHeader = String(req.headers.host || '').split(':')[0].toLowerCase();
+  if (hostHeader && hostHeader !== 'localhost' && hostHeader !== '127.0.0.1' && hostHeader !== '::1') {
+    return false;
+  }
+  const remote = req.socket?.remoteAddress || '';
+  // IPv4 回环 / IPv6 回环 / IPv4-mapped IPv6 回环
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+}
+
+// 启动期飞书字段类型校验所需的字段名
+const REQUIRED_SINGLE_SELECT_FIELDS = [
+  '小红书账号',
+  '小红书发布状态',
+  '小红书发布渠道',
+  '抖音账号',
+  '抖音发布状态',
+];
+
+async function getBitBrowserAccountMappings() {
+  const records = await feishu.getRecords();
+  const parsedRecords = records.map(r => feishu.parseRecord(r));
+  const summaryMap = new Map();
+
+  for (const record of parsedRecords) {
+    const accountName = (record.xiaohongshuAccount || '').trim();
+    if (!accountName) continue;
+
+    if (!summaryMap.has(accountName)) {
+      summaryMap.set(accountName, {
+        accountName,
+        totalRecords: 0,
+        bitbrowserRecords: 0,
+      });
+    }
+
+    const item = summaryMap.get(accountName);
+    item.totalRecords += 1;
+    if (record.xiaohongshuPublishChannel === '比特浏览器') {
+      item.bitbrowserRecords += 1;
+    }
+  }
+
+  const mappingConfig = config.bitbrowser?.xiaohongshu || {};
+  const fieldAccountNames = await feishu.getSingleSelectFieldOptionNames('小红书账号');
+  for (const accountName of fieldAccountNames) {
+    if (!summaryMap.has(accountName)) {
+      summaryMap.set(accountName, {
+        accountName,
+        totalRecords: 0,
+        bitbrowserRecords: 0,
+      });
+    }
+  }
+  for (const accountName of Object.keys(mappingConfig)) {
+    if (!summaryMap.has(accountName)) {
+      summaryMap.set(accountName, {
+        accountName,
+        totalRecords: 0,
+        bitbrowserRecords: 0,
+      });
+    }
+  }
+
+  return Array.from(summaryMap.values())
+    .sort((a, b) => a.accountName.localeCompare(b.accountName, 'zh-CN'))
+    .map(item => ({
+      ...item,
+      browserId: mappingConfig[item.accountName]?.browserId || '',
+      configured: !!mappingConfig[item.accountName]?.browserId,
+    }));
+}
+
+async function syncFeishuSelectFields() {
+  const accountNames = [...new Set([
+    ...Object.keys(config.accountMapping?.xiaohongshu || {}),
+    ...Object.keys(config.bitbrowser?.xiaohongshu || {}),
+    ...(await getBitBrowserAccountMappings()).map(item => item.accountName),
+  ])].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+  await feishu.syncSingleSelectFieldOptions('小红书账号', accountNames, { keepExisting: true });
+  await feishu.syncSingleSelectFieldOptions('小红书发布渠道', ['蚁小二', '比特浏览器']);
+
+  return {
+    accountNames,
+    channels: ['蚁小二', '比特浏览器'],
+  };
+}
+
+function getPrimaryDouyinAccountId() {
+  const douyinAccounts = Object.values(config.accountMapping?.douyin || {});
+  if (douyinAccounts.length === 0) {
+    throw new Error('未配置抖音账号');
+  }
+  return douyinAccounts[0];
+}
+
+function decorateRecord(record) {
+  const xiaohongshuPublishChannel = record.xiaohongshuPublishChannel === '比特浏览器' ? '比特浏览器' : '蚁小二';
+  return {
+    ...record,
+    xiaohongshuPublishChannel,
+    publishRoutePreview: {
+      xiaohongshu: record.xiaohongshuAccount
+        ? `${xiaohongshuPublishChannel} · ${record.xiaohongshuAccount}`
+        : '',
+      douyin: record.douyinAccount ? `蚁小二 · ${record.douyinAccount}` : '',
+    },
+    previewTags: {
+      xiaohongshu: publisher.selectTagsForPlatform('小红书', record.tags, record.title),
+      douyin: publisher.selectTagsForPlatform('抖音', record.tags, record.title),
+    }
+  };
+}
+
+function isPendingRecord(record) {
+  const xhsPending = !!record.xiaohongshuAccount && record.xiaohongshuStatus === '待发布';
+  const dyPending = !!record.douyinAccount && record.douyinStatus === '待发布';
+  return xhsPending || dyPending;
+}
+
+// SSE clients for real-time log updates
+const sseClients = new Set();
+scheduler.onLog = (entry) => {
+  const data = JSON.stringify(entry);
+  for (const res of sseClients) {
+    res.write(`data: ${data}\n\n`);
+  }
+};
+scheduler.onProgress = (progress) => {
+  const data = JSON.stringify(progress);
+  for (const res of sseClients) {
+    res.write(`event: progress\ndata: ${data}\n\n`);
+  }
+};
+
+function sendJson(res, data, status = 200) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+  });
+  res.end(JSON.stringify(data));
+}
+
+function sendHtml(res, filePath) {
+  const content = fs.readFileSync(filePath, 'utf-8');
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(content);
+}
+
+function readBody(req, maxBytes = 2 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(Object.assign(new Error('请求体过大'), { statusCode: 413 }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const parsed = url.parse(req.url, true);
+  const pathname = parsed.pathname;
+
+  // 静态文件
+  if (pathname === '/' || pathname === '/index.html') {
+    return sendHtml(res, path.join(__dirname, '..', 'public', 'index.html'));
+  }
+
+  // SSE 实时日志
+  if (pathname === '/api/logs/stream') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    sseClients.add(res);
+    req.on('close', () => sseClients.delete(res));
+    return;
+  }
+
+  // API 路由
+  if (pathname === '/api/status') {
+    return sendJson(res, {
+      ...scheduler.getStatus(),
+      configState: getConfigState(),
+      version: APP_VERSION,
+    });
+  }
+
+  if (pathname === '/api/pending-count') {
+    try {
+      ensureFeishuConfigReady();
+      const records = await feishu.getRecords();
+      const count = records
+        .map(r => feishu.parseRecord(r))
+        .filter(isPendingRecord)
+        .length;
+      return sendJson(res, { success: true, count });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/records') {
+    try {
+      ensureFeishuConfigReady();
+      const records = await feishu.getUnpublishedRecords();
+      const parsed = records.map(r => decorateRecord(feishu.parseRecord(r)));
+      return sendJson(res, { success: true, data: parsed });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/all-records') {
+    try {
+      ensureFeishuConfigReady();
+      const records = await feishu.getRecords();
+      const parsed = records.map(r => decorateRecord(feishu.parseRecord(r)));
+      return sendJson(res, { success: true, data: parsed });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/import/preflight' && req.method === 'GET') {
+    try {
+      ensureFeishuConfigReady();
+      const REQUIRED_IMPORT_FIELDS = [
+        '笔记主题', '标题', '正文', '标签', '素材', '内容类型',
+        '发布时间', '小红书账号', '小红书发布状态', '小红书发布渠道',
+        '抖音账号', '抖音发布状态', '导入指纹'
+      ];
+      const fields = await feishu.getTableFields();
+      // getTableFields() 已返回 string[]，直接用
+      const existingFieldNames = Array.isArray(fields) ? fields : [];
+      const missingFields = REQUIRED_IMPORT_FIELDS.filter(fieldName => !existingFieldNames.includes(fieldName));
+      if (missingFields.length === 0) {
+        return sendJson(res, { ok: true });
+      }
+      return sendJson(res, { ok: false, missingFields });
+    } catch (err) {
+      return sendJson(res, { error: err.message }, 500);
+    }
+  }
+
+  if (pathname === '/api/import/scan-folder' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const { folderPath } = JSON.parse(body || '{}');
+        if (!folderPath || !fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+          return sendJson(res, { error: '目录不存在: ' + folderPath }, 400);
+        }
+
+        const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+        const videoExtensions = new Set(['.mp4', '.mov', '.avi', '.mkv']);
+        const topics = fs.readdirSync(folderPath, { withFileTypes: true })
+          .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+        const result = topics.map(topicEntry => {
+          const topicPath = path.join(folderPath, topicEntry.name);
+          const noteFolders = fs.readdirSync(topicPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
+            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+          return {
+            topic: topicEntry.name,
+            notes: noteFolders.map(noteEntry => {
+              const noteFolderPath = path.join(topicPath, noteEntry.name);
+              const children = fs.readdirSync(noteFolderPath, { withFileTypes: true })
+                .filter(entry => !entry.name.startsWith('.'))
+                .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+              const images = children
+                .filter(entry => entry.isFile() && imageExtensions.has(path.extname(entry.name).toLowerCase()))
+                .map(entry => {
+                  const imagePath = path.join(noteFolderPath, entry.name);
+                  return {
+                    name: entry.name,
+                    path: imagePath,
+                    size: fs.statSync(imagePath).size,
+                  };
+                });
+              const hasVideo = children.some(entry => entry.isFile() && videoExtensions.has(path.extname(entry.name).toLowerCase()));
+              const warnings = [];
+              if (hasVideo) {
+                warnings.push('包含视频文件（v2.0 不支持，已跳过）');
+              }
+
+              return {
+                noteKey: `${topicEntry.name}/${noteEntry.name}`,
+                folderName: noteEntry.name,
+                folderPath: noteFolderPath,
+                images,
+                imageCount: images.length,
+                firstImagePath: images[0]?.path || '',
+                hasVideo,
+                warnings,
+              };
+            })
+          };
+        });
+
+        return sendJson(res, result);
+      } catch (e) {
+        return sendJson(res, { error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/import/create-records' && req.method === 'POST') {
+    try {
+      ensureFeishuConfigReady();
+      const body = JSON.parse(await readBody(req) || '{}');
+      const { dryRun = false, records = [] } = body;
+
+      const results = [];
+      const total = records.length;
+      let current = 0;
+
+      // SSE 进度推送辅助函数（仅 dryRun=false 时使用）
+      const pushImportProgress = (noteKey, status) => {
+        current++;
+        const data = JSON.stringify({ type: 'import_progress', current, total, noteKey, status });
+        for (const sseRes of sseClients) {
+          sseRes.write(`event: import_progress\ndata: ${data}\n\n`);
+        }
+      };
+
+      for (const record of records) {
+        const {
+          topic = '',
+          noteKey = '',
+          folderPath: recordFolderPath = '',
+          images = [],
+          xiaohongshuAccount = '',
+          douyinAccount = '',
+          publishTime = '',
+          xiaohongshuChannel = '蚁小二',
+          title = '',
+          description = '',
+          tags = [],
+          overwrite = false,
+          overwriteId = '',
+        } = record;
+
+        // 是否覆盖模式（前端明确传 overwrite:true + overwriteId）
+        const isOverwrite = !!(overwrite && overwriteId);
+
+        // Step 1: 账号校验
+        if (!xiaohongshuAccount && !douyinAccount) {
+          results.push({ noteKey, status: 'failed', reason: 'no_account' });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        // 取文件夹名（noteKey 最后一段）
+        const noteFolder = noteKey.split('/').pop() || recordFolderPath.split('/').pop() || '';
+
+        // Step 2: 指纹计算（始终计算，供写入 导入指纹 字段使用）
+        let primaryFingerprint = '';
+        let douyinFingerprint = '';
+        if (xiaohongshuAccount) {
+          const raw = [topic, noteFolder, 'xiaohongshu', xiaohongshuAccount,
+            images.map(i => i.name).sort().join(','),
+            images.slice().sort((a, b) => a.name.localeCompare(b.name)).map(i => i.size).join(',')
+          ].join('|');
+          primaryFingerprint = crypto.createHash('sha256').update(raw).digest('hex');
+        }
+        if (douyinAccount) {
+          const raw = [topic, noteFolder, 'douyin', douyinAccount,
+            images.map(i => i.name).sort().join(','),
+            images.slice().sort((a, b) => a.name.localeCompare(b.name)).map(i => i.size).join(',')
+          ].join('|');
+          douyinFingerprint = crypto.createHash('sha256').update(raw).digest('hex');
+          if (!primaryFingerprint) primaryFingerprint = douyinFingerprint;
+        }
+
+        // 非覆盖模式：查重，命中则跳过并返回旧记录发布状态
+        if (!isOverwrite) {
+          let fingerprintExists = false;
+          let existingRecordId = null;
+
+          if (primaryFingerprint && xiaohongshuAccount) {
+            const existingId = await feishu.findRecordByFingerprint(primaryFingerprint);
+            if (existingId) { fingerprintExists = true; existingRecordId = existingId; }
+          }
+          if (!fingerprintExists && douyinFingerprint) {
+            const existingId = await feishu.findRecordByFingerprint(douyinFingerprint);
+            if (existingId) { fingerprintExists = true; existingRecordId = existingId; }
+          }
+
+          if (fingerprintExists) {
+            // 获取旧记录的发布状态，供前端展示覆盖警告
+            let existingStatus = '';
+            try {
+              const existingRec = await feishu.getRecordById(existingRecordId);
+              const f = existingRec?.fields || {};
+              existingStatus = String(f['小红书发布状态'] || f['抖音发布状态'] || '');
+            } catch (_) {}
+            results.push({ noteKey, status: 'skipped', reason: 'fingerprint_exists', recordId: existingRecordId, existingStatus });
+            if (!dryRun) pushImportProgress(noteKey, 'skipped');
+            continue;
+          }
+        }
+
+        // Step 3: AI 内容生成（B-2）
+        let aiTitle = title;
+        let aiDescription = description;
+        let aiTags = Array.isArray(tags) ? tags : [];
+
+        if (!aiTitle) {
+          const aiConfig = config.aiWriting;
+          if (aiConfig && aiConfig.enabled && aiConfig.apiKey) {
+            try {
+              const aiRecord = {
+                topic,
+                attachments: images.map(i => ({ name: i.name })),
+                xiaohongshuAccount,
+                douyinAccount,
+              };
+              const aiResult = await generateContent(aiConfig, aiRecord);
+              aiTitle = aiResult.title || '';
+              aiDescription = aiResult.description || '';
+              aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
+            } catch (aiErr) {
+              results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message });
+              if (!dryRun) pushImportProgress(noteKey, 'failed');
+              continue;
+            }
+          }
+        }
+
+        // dryRun: 只返回 AI 生成内容，不写飞书
+        if (dryRun) {
+          results.push({
+            noteKey,
+            status: 'preview',
+            title: aiTitle,
+            description: aiDescription,
+            tags: aiTags,
+          });
+          continue;
+        }
+
+        // Step 4: 图片上传（B-3）
+        let uploadedTokens = [];
+        try {
+          const uploaded = await feishu.uploadLocalImagesToFeishu(images.map(i => i.path));
+          uploadedTokens = uploaded.map(u => ({ file_token: u.fileToken }));
+        } catch (uploadErr) {
+          results.push({ noteKey, status: 'failed', reason: 'upload_error', message: uploadErr.message });
+          pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        // Step 5: 组装飞书字段并建单（B-3）
+        const fields = {
+          '笔记主题': topic,
+          '内容类型': '图文',
+          '导入指纹': primaryFingerprint,
+        };
+        if (aiTitle) fields['标题'] = aiTitle;
+        if (aiDescription) fields['正文'] = aiDescription;
+        if (aiTags.length) fields['标签'] = aiTags.join('\n');
+        if (uploadedTokens.length) fields['素材'] = uploadedTokens;
+        // 发布时间（字符串 "YYYY-MM-DD HH:mm" → 毫秒时间戳）
+        if (publishTime) {
+          const ts = new Date(publishTime).getTime();
+          if (!isNaN(ts)) fields['发布时间'] = ts;
+        }
+        // 小红书
+        if (xiaohongshuAccount) {
+          fields['小红书账号'] = xiaohongshuAccount;
+          fields['小红书发布状态'] = '待发布';
+          fields['小红书发布渠道'] = xiaohongshuChannel || '蚁小二';
+        }
+        // 抖音
+        if (douyinAccount) {
+          fields['抖音账号'] = douyinAccount;
+          fields['抖音发布状态'] = '待发布';
+        }
+
+        try {
+          if (isOverwrite) {
+            // 覆盖模式：更新旧记录，并重置发布状态为待发布
+            if (xiaohongshuAccount) fields['小红书发布状态'] = '待发布';
+            if (douyinAccount) fields['抖音发布状态'] = '待发布';
+            await feishu.updateRecord(overwriteId, fields);
+            results.push({ noteKey, status: 'success', recordId: overwriteId, overwritten: true });
+          } else {
+            const { recordId } = await feishu.createRecord(fields);
+            results.push({ noteKey, status: 'success', recordId });
+          }
+          pushImportProgress(noteKey, 'success');
+        } catch (feishuErr) {
+          results.push({ noteKey, status: 'failed', reason: 'feishu_error', message: feishuErr.message });
+          pushImportProgress(noteKey, 'failed');
+        }
+      }
+
+      return sendJson(res, { results });
+    } catch (err) {
+      return sendJson(res, { error: err.message }, 500);
+    }
+  }
+
+  if (pathname === '/api/scheduler/start' && req.method === 'POST') {
+    scheduler.start();
+    return sendJson(res, { success: true, message: '定时服务已启动：系统会立即补扫，并继续处理还没完成的定时任务' });
+  }
+
+  if (pathname === '/api/scheduler/stop' && req.method === 'POST') {
+    const stopState = scheduler.stop();
+    return sendJson(res, {
+      success: true,
+      message: stopState?.draining
+        ? '定时服务已停止：当前正在发布的记录会收尾，未开始的定时任务已暂停'
+        : '定时服务已停止：未开始的定时任务已暂停',
+    });
+  }
+
+  if (pathname === '/api/publish/scheduled-tasks' && req.method === 'GET') {
+    sendJson(res, { success: true, data: scheduler.getScheduledTasks() });
+    return;
+  }
+
+  if (pathname === '/api/publish/now' && req.method === 'POST') {
+    readBody(req).then(async () => {
+      try {
+        const result = await scheduler.manualPublishNow();
+        if (result && result.error) {
+          return sendJson(res, { success: false, ...result }, 500);
+        }
+        sendJson(res, { success: true, ...result });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/publish/record' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { recordId } = JSON.parse(body || '{}');
+        if (!recordId) return sendJson(res, { success: false, error: '缺少 recordId' }, 400);
+        const result = await scheduler.publishSpecificRecord(recordId);
+        if (result && result.error) {
+          return sendJson(res, { success: false, ...result }, 500);
+        }
+        sendJson(res, { success: true, ...result });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  // 强制重发（仅同账号）：清掉本地 ledger 里某条 recordId+platform 的命中
+  // 服务端校验：当前飞书账号必须 ∈ 历史血统账号集合，否则拒绝
+  if (pathname === '/api/force-republish' && req.method === 'POST') {
+    // 安全：仅允许本机请求 + Host 头校验，防御 DNS rebinding / 局域网横向访问
+    if (!isLocalRequest(req)) {
+      return sendJson(res, { success: false, error: '🚨 拒绝：force-republish 仅允许本机访问' }, 403);
+    }
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { recordId, platform } = JSON.parse(body || '{}');
+        if (!recordId || !platform) {
+          return sendJson(res, { success: false, error: '缺少 recordId 或 platform' }, 400);
+        }
+        if (platform !== '小红书' && platform !== '抖音') {
+          return sendJson(res, { success: false, error: '不支持的平台' }, 400);
+        }
+        // 1. 拉飞书最新记录，取当前账号
+        const remote = await feishu.getRecordById(recordId);
+        if (!remote) {
+          return sendJson(res, { success: false, error: '飞书记录不存在' }, 404);
+        }
+        const parsed = feishu.parseRecord(remote);
+        const currentAccount = platform === '小红书' ? parsed.xiaohongshuAccount : parsed.douyinAccount;
+        if (!currentAccount) {
+          return sendJson(res, { success: false, error: `当前记录没有配置${platform}账号` }, 400);
+        }
+        // 2. 校验历史血统
+        const history = publisher.getHistoryAccounts(recordId, platform);
+        if (history.length > 0 && !history.includes(String(currentAccount).trim())) {
+          return sendJson(res, {
+            success: false,
+            error: `🚨 红线保护：拒绝强制重发到非历史账号。历史账号=[${history.join(',')}]，当前账号=[${currentAccount}]`,
+            historyAccounts: history,
+            currentAccount,
+          }, 403);
+        }
+        // 3. 清本地 ledger，把飞书状态改回"待发布"以便下次 checkAndPublish 重发
+        publisher.unmarkAsPublished(recordId, platform);
+        await feishu.markPlatformStatus(recordId, platform, '待发布');
+        return sendJson(res, {
+          success: true,
+          message: `已允许 ${platform}(${currentAccount}) 同账号重发，下次发布检查时会重新提交`,
+          historyAccounts: history,
+        });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/accounts') {
+    try {
+      ensureYixiaoerConfigReady();
+      await publisher.ensureLogin(config.yixiaoer);
+      const accounts = await publisher.getAccountList({ loginStatus: 1 });
+      return sendJson(res, { success: true, data: accounts });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/accounts/status') {
+    try {
+      ensureYixiaoerConfigReady();
+      await publisher.ensureLogin(config.yixiaoer);
+      const accounts = await publisher.getAccountList();
+      let configChanged = false;
+
+      const cacheResult = updateYixiaoerAccountCache(config, accounts, publisher.collectAccountAliases);
+      configChanged = configChanged || cacheResult.changed;
+
+      if (isFeishuConfigured(config)) {
+        const desiredNames = {
+          xiaohongshu: await feishu.getSingleSelectFieldOptionNames('小红书账号'),
+          douyin: await feishu.getSingleSelectFieldOptionNames('抖音账号'),
+        };
+        const autoMapResult = autoMapAccountMappings(config, desiredNames, accounts, publisher.collectAccountAliases);
+        configChanged = configChanged || autoMapResult.changed;
+      }
+
+      if (configChanged) {
+        saveConfig();
+      }
+
+      const mappedIds = collectMappedAccountIds(config);
+      const data = accounts.map(account => ({
+        id: account.id,
+        platform: account.platformName,
+        accountName: account.platformAccountName,
+        status: account.status,
+        isFreeze: !!account.isFreeze,
+        isOperate: account.isOperate !== false,
+        isRealNameVerified: account.isRealNameVerified !== false,
+        statusText: account.status === 1 && !account.isFreeze && account.isOperate !== false
+          ? '在线/授权正常'
+          : '需关注',
+        mapped: mappedIds.has(account.id),
+        aliases: publisher.collectAccountAliases(account),
+      }));
+      return sendJson(res, { success: true, data });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/config') {
+    if (req.method === 'GET') {
+      const safeConfig = JSON.parse(JSON.stringify(config));
+      if (safeConfig.yixiaoer.password) safeConfig.yixiaoer.password = '******';
+      if (safeConfig.yixiaoer.apiKey) safeConfig.yixiaoer.apiKey = '******';
+      if (safeConfig.yixiaoer.clientId) safeConfig.yixiaoer.clientId = '******';
+      if (safeConfig.feishu.appSecret) safeConfig.feishu.appSecret = '******';
+      safeConfig.configState = getConfigState();
+      safeConfig.runtimePaths = getPublicRuntimePaths();
+      return sendJson(res, safeConfig);
+    }
+  }
+
+  if (pathname === '/api/config/export' && req.method === 'GET') {
+    const stamp = buildBackupStamp();
+    const filename = `zhifa-config-backup-${stamp}.json`;
+    writeJsonDownload(res, filename, cloneConfigForExport());
+    return;
+  }
+
+  if (pathname === '/api/config/import' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const importedConfig = payload.config;
+        if (!importedConfig || typeof importedConfig !== 'object' || Array.isArray(importedConfig)) {
+          return sendJson(res, { success: false, error: '导入的配置格式错误' }, 400);
+        }
+
+        syncConfigObject(persistConfig(importedConfig));
+        refreshFeishuClients();
+        publisher.resetRuntimeState();
+        restartSchedulerIfRunning();
+
+        return sendJson(res, {
+          success: true,
+          message: '配置备份已导入，当前运行配置已刷新',
+          configState: getConfigState(),
+          runtimePaths: getPublicRuntimePaths(),
+        });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/data/export' && req.method === 'GET') {
+    const stamp = buildBackupStamp();
+    const filename = `zhifa-data-backup-${stamp}.json`;
+    writeJsonDownload(res, filename, cloneDataBackupForExport());
+    return;
+  }
+
+  if (pathname === '/api/data/import' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const result = applyImportedDataBackup(payload.backup);
+        return sendJson(res, {
+          success: true,
+          message: '完整数据备份已导入，配置和发布账本已刷新',
+          ...result,
+        });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/config/feishu' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const next = payload.feishu || {};
+        const appId = String(next.appId || '').trim();
+        const appSecret = String(next.appSecret || '').trim();
+        const wikiUrl = String(next.wikiUrl || '').trim();
+        const appToken = String(next.appToken || '').trim();
+        const tableId = String(next.tableId || '').trim();
+
+        if (!appId) {
+          return sendJson(res, { success: false, error: '飞书 App ID 不能为空' }, 400);
+        }
+        if (!appToken) {
+          return sendJson(res, { success: false, error: '飞书 App Token 不能为空' }, 400);
+        }
+        if (!tableId) {
+          return sendJson(res, { success: false, error: '飞书 Table ID 不能为空' }, 400);
+        }
+
+        config.feishu = config.feishu || {};
+        config.feishu.appId = appId;
+        config.feishu.appToken = appToken;
+        config.feishu.tableId = tableId;
+        config.feishu.wikiUrl = wikiUrl;
+
+        // 页面不回显真实 secret。空值或掩码都视为“保持不变”。
+        if (appSecret && appSecret !== '******') {
+          config.feishu.appSecret = appSecret;
+        }
+
+        if (!config.feishu.appSecret) {
+          return sendJson(res, { success: false, error: '飞书 App Secret 不能为空' }, 400);
+        }
+
+        saveConfig();
+        refreshFeishuClients();
+        restartSchedulerIfRunning();
+
+        return sendJson(res, {
+          success: true,
+          message: '飞书接入配置已保存',
+          data: {
+            appId: config.feishu.appId,
+            wikiUrl: config.feishu.wikiUrl || '',
+            appToken: config.feishu.appToken,
+            tableId: config.feishu.tableId,
+            appSecretConfigured: !!config.feishu.appSecret,
+          }
+        });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/bitbrowser/accounts' && req.method === 'GET') {
+    try {
+      ensureFeishuConfigReady();
+      const data = await getBitBrowserAccountMappings();
+      return sendJson(res, { success: true, data });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/bitbrowser/accounts' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { mappings } = JSON.parse(body || '{}');
+        if (!Array.isArray(mappings)) {
+          return sendJson(res, { success: false, error: '映射数据格式错误' }, 400);
+        }
+
+        config.bitbrowser = config.bitbrowser || {};
+        config.bitbrowser.xiaohongshu = config.bitbrowser.xiaohongshu || {};
+
+        for (const item of mappings) {
+          const accountName = String(item.accountName || '').trim();
+          if (!accountName) continue;
+          const browserId = String(item.browserId || '').trim();
+
+          if (!browserId) {
+            delete config.bitbrowser.xiaohongshu[accountName];
+            continue;
+          }
+
+          config.bitbrowser.xiaohongshu[accountName] = { browserId };
+        }
+
+        saveConfig();
+        const data = await getBitBrowserAccountMappings();
+        return sendJson(res, { success: true, message: '比特浏览器账号映射已保存', data });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/bitbrowser/sync-feishu' && req.method === 'POST') {
+    try {
+      ensureFeishuConfigReady();
+      const synced = await syncFeishuSelectFields();
+      const data = await getBitBrowserAccountMappings();
+      return sendJson(res, {
+        success: true,
+        message: `已同步飞书单选字段：小红书账号(${synced.accountNames.length}个选项)、小红书发布渠道(2个选项)`,
+        data,
+      });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  // 更新定时配置
+  if (pathname === '/api/schedule' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const schedule = JSON.parse(body);
+        // 验证 periods 数组
+        if (!Array.isArray(schedule.periods) || schedule.periods.length === 0) {
+          return sendJson(res, { success: false, error: '至少需要一个时间段' }, 400);
+        }
+        if (schedule.periods.length > 10) {
+          return sendJson(res, { success: false, error: '最多支持10个时间段' }, 400);
+        }
+        for (const p of schedule.periods) {
+          if (!/^\d{2}:\d{2}$/.test(p.startTime) || !/^\d{2}:\d{2}$/.test(p.endTime)) {
+            return sendJson(res, { success: false, error: '时间格式错误，应为 HH:MM' }, 400);
+          }
+          const interval = parseInt(p.intervalMinutes);
+          if (isNaN(interval) || interval < 5 || interval > 480) {
+            return sendJson(res, { success: false, error: '间隔应在5-480分钟之间' }, 400);
+          }
+          p.intervalMinutes = interval;
+        }
+        scheduler.updateSchedule(schedule);
+        config.schedule = schedule;
+        saveConfig();
+        sendJson(res, { success: true, message: '定时配置已保存' });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  // 音乐设置相关 API
+  if (pathname === '/api/music/default/validate' && req.method === 'GET') {
+    try {
+      ensureYixiaoerConfigReady();
+      await publisher.ensureLogin(config.yixiaoer);
+      const accountId = getPrimaryDouyinAccountId();
+      const result = await publisher.resolveDouyinMusic(accountId, config.defaultMusic || null);
+      return sendJson(res, {
+        success: true,
+        hasDefaultMusic: !!config.defaultMusic,
+        configuredMusic: config.defaultMusic || null,
+        valid: !!result.validDefault,
+        fallbackUsed: !!result.fallbackUsed,
+        fallbackKeyword: result.fallbackKeyword || null,
+        activeMusic: result.music || null,
+        message: result.message,
+      });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/music/default') {
+    if (req.method === 'GET') {
+      return sendJson(res, {
+        success: true,
+        music: config.defaultMusic || null
+      });
+    }
+
+    if (req.method === 'POST') {
+      readBody(req).then(async (body) => {
+        try {
+          const { music } = JSON.parse(body);
+          if (!music || !music.id || !music.text) {
+            return sendJson(res, { success: false, error: '音乐数据格式错误' }, 400);
+          }
+
+          config.defaultMusic = music;
+          saveConfig();
+
+          sendJson(res, { success: true, message: '默认配乐已保存' });
+        } catch (e) {
+          sendJson(res, { success: false, error: e.message }, 500);
+        }
+      }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      delete config.defaultMusic;
+      saveConfig();
+      return sendJson(res, { success: true, message: '默认配乐已清除' });
+    }
+  }
+
+  if (pathname === '/api/music/search' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { keyword } = JSON.parse(body);
+        if (!keyword || keyword.trim().length === 0) {
+          return sendJson(res, { success: false, error: '搜索关键词不能为空' }, 400);
+        }
+
+        await publisher.ensureLogin(config.yixiaoer);
+        const accountId = getPrimaryDouyinAccountId();
+        const music = await publisher.searchMusicByAccount(accountId, keyword.trim());
+
+        sendJson(res, {
+          success: true,
+          music: music || [],
+          keyword: keyword.trim()
+        });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/music/categories' && req.method === 'GET') {
+    try {
+      ensureYixiaoerConfigReady();
+      await publisher.ensureLogin(config.yixiaoer);
+      const accountId = getPrimaryDouyinAccountId();
+      const categories = await publisher.getMusicCategories(accountId);
+      return sendJson(res, {
+        success: true,
+        categories: categories || [],
+      });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  if (pathname === '/api/music/library' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { keyword, nextPage, categoryId, categoryName } = body ? JSON.parse(body) : {};
+        const normalizedKeyword = keyword ? String(keyword).trim() : '';
+        await publisher.ensureLogin(config.yixiaoer);
+        const accountId = getPrimaryDouyinAccountId();
+        const result = await publisher.browseMusicByAccount(accountId, {
+          keyword: normalizedKeyword || '热歌',
+          nextPage,
+          categoryId,
+          categoryName,
+        });
+
+        sendJson(res, {
+          success: true,
+          music: result.list || [],
+          nextPage: result.nextPage || null,
+          categoryId: categoryId || null,
+          categoryName: categoryName || null,
+          keyword: normalizedKeyword || '热歌',
+        });
+      } catch (e) {
+        sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  // ── AI 写作配置 ──────────────────────────────────────────────────────────
+  if (pathname === '/api/config/ai-writing' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const data = JSON.parse(body || '{}');
+        config.aiWriting = config.aiWriting || {};
+        if (data.enabled !== undefined) config.aiWriting.enabled = Boolean(data.enabled);
+        if (data.provider) config.aiWriting.provider = String(data.provider);
+        if (data.apiBaseUrl !== undefined) config.aiWriting.apiBaseUrl = String(data.apiBaseUrl || '');
+        if (data.apiKey && data.apiKey !== '******') config.aiWriting.apiKey = String(data.apiKey);
+        if (data.model) config.aiWriting.model = String(data.model);
+        saveConfig();
+        return sendJson(res, { success: true, message: 'AI 写作配置已保存' });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, 500));
+    return;
+  }
+
+  // ── AI 写作：测试连接 ─────────────────────────────────────────────────────
+  if (pathname === '/api/ai-writing/test' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const aiConfig = {
+          provider: data.provider || config.aiWriting?.provider || 'openai',
+          apiBaseUrl: data.apiBaseUrl || config.aiWriting?.apiBaseUrl || '',
+          apiKey: (data.apiKey && data.apiKey !== '******') ? data.apiKey : config.aiWriting?.apiKey || '',
+          model: data.model || config.aiWriting?.model || 'gpt-4o-mini',
+        };
+        const result = await testConnection(aiConfig);
+        return sendJson(res, { success: true, message: '连接成功', data: result });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, 500));
+    return;
+  }
+
+  // ── AI 写作：手动为单条记录生成内容 ──────────────────────────────────────
+  if (pathname === '/api/ai-writing/generate' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        const { recordId } = JSON.parse(body || '{}');
+        if (!recordId) return sendJson(res, { success: false, error: '缺少 recordId' }, 400);
+        ensureFeishuConfigReady();
+        const records = await feishu.getUnpublishedRecords();
+        const raw = records.find(r => r.record_id === recordId);
+        if (!raw) return sendJson(res, { success: false, error: '找不到该记录' }, 404);
+        const record = feishu.parseRecord(raw);
+        if (!record.topic) return sendJson(res, { success: false, error: '该记录"笔记主题"为空，无法生成' }, 400);
+        if (!config.aiWriting?.apiKey) return sendJson(res, { success: false, error: 'AI 写作未配置 API Key' }, 400);
+        const result = await generateContent(config.aiWriting, record);
+        const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
+        await feishu.updateRecord(recordId, {
+          '标题': result.title,
+          '正文': result.description,
+          '标签': tagsStr,
+        });
+        // 更新缓存，防止下轮自动扫描重复覆盖
+        try {
+          const cache = readAiWritingCache();
+          cache[recordId] = { topic: record.topic, generatedAt: new Date().toISOString() };
+          saveAiWritingCache(cache);
+        } catch (_) { /* 缓存失败不影响主流程 */ }
+        return sendJson(res, { success: true, message: 'AI 内容已生成并回写飞书', data: result });
+      } catch (e) {
+        return sendJson(res, { success: false, error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { success: false, error: e.message }, 500));
+    return;
+  }
+
+  // 404
+  res.writeHead(404);
+  res.end('Not Found');
+});
+
+server.on('close', () => {
+  activeServerInfo = null;
+  scheduler.stop();
+});
+
+function logStartup(port, host) {
+  console.log(`\n🚀 知发已启动！`);
+  console.log(`📡 访问地址: http://${host}:${port}`);
+  console.log(`📁 配置文件: ${runtimePaths.configPath}`);
+  console.log(`🗂 数据目录: ${runtimePaths.dataDir}`);
+  if (storageState.config === 'migrated') {
+    console.log(`♻️ 已从旧路径迁移配置: ${migrationSources.config || runtimePaths.legacyConfigPath}`);
+  } else if (storageState.config === 'created') {
+    console.log(`🆕 已生成空白配置模板，请先在页面或配置文件中完成接入信息`);
+  }
+  if (storageState.ledger === 'migrated') {
+    console.log(`♻️ 已从旧路径迁移发布账本: ${migrationSources.ledger || runtimePaths.legacyLedgerPath}`);
+  }
+  console.log(`\n按 Ctrl+C 停止服务\n`);
+}
+
+function printStartError(err, port) {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ 端口 ${port} 已被占用，请先关闭之前的服务`);
+    console.error(`   运行: lsof -ti:${port} | xargs kill -9\n`);
+  } else {
+    console.error(`\n❌ 启动失败: ${err.message}\n`);
+  }
+}
+
+function normalizeServerAddress(address, fallbackHost) {
+  if (!address || typeof address === 'string') {
+    return {
+      port: DEFAULT_PORT,
+      host: fallbackHost,
+    };
+  }
+
+  let host = address.address || fallbackHost;
+  if (host === '::' || host === '0.0.0.0') {
+    host = '127.0.0.1';
+  }
+
+  return {
+    port: address.port,
+    host,
+  };
+}
+
+function startServer(options = {}) {
+  if (server.listening) {
+    return Promise.resolve(activeServerInfo || {
+      ...normalizeServerAddress(server.address(), options.host || DEFAULT_HOST),
+      server,
+    });
+  }
+
+  const port = options.port ?? DEFAULT_PORT;
+  const host = options.host || DEFAULT_HOST;
+  const exitOnError = options.exitOnError === true;
+  const silent = options.silent === true;
+
+  return new Promise((resolve, reject) => {
+    const handleError = (err) => {
+      cleanup();
+      if (!silent) {
+        printStartError(err, port);
+      }
+      if (exitOnError) {
+        process.exit(1);
+        return;
+      }
+      reject(err);
+    };
+
+    const handleListening = () => {
+      cleanup();
+      const info = normalizeServerAddress(server.address(), host);
+      activeServerInfo = { ...info, server };
+      if (!silent) {
+        logStartup(info.port, info.host);
+      }
+      resolve(activeServerInfo);
+    };
+
+    const cleanup = () => {
+      server.off('error', handleError);
+      server.off('listening', handleListening);
+    };
+
+    server.once('error', handleError);
+    server.once('listening', handleListening);
+    server.listen(port, host);
+  });
+}
+
+function stopServer() {
+  for (const res of sseClients) {
+    try { res.end(); } catch (_) {}
+  }
+  sseClients.clear();
+
+  if (!server.listening) {
+    activeServerInfo = null;
+    scheduler.stop();
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) return reject(err);
+      activeServerInfo = null;
+      resolve();
+    });
+  });
+}
+
+function getServerState() {
+  return {
+    runtimePaths: getPublicRuntimePaths(),
+    storageState,
+    configState: getConfigState(),
+    server: activeServerInfo,
+  };
+}
+
+module.exports = {
+  startServer,
+  stopServer,
+  getServerState,
+  scheduler,
+  config,
+};
+
+if (require.main === module) {
+  startServer({
+    port: DEFAULT_PORT,
+    host: DEFAULT_HOST,
+    exitOnError: true,
+  }).catch(() => {});
+}
