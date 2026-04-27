@@ -167,6 +167,30 @@ function ensureYixiaoerConfigReady() {
   throw createConfigError(`请先在配置文件中补全蚁小二 API Key 和 Team ID：${getRuntimePaths().configPath}`);
 }
 
+// 安全：维护用户已扫描的素材根目录白名单（in-memory，进程重启后清空）。
+// /api/file 只允许读取这些根目录下的文件，防 DNS rebinding 配合恶意 path 读任意本地图片。
+const approvedImportRoots = new Set();
+function approveImportRoot(folderPath) {
+  try {
+    const real = fs.realpathSync(folderPath);
+    approvedImportRoots.add(real);
+  } catch (_) {}
+}
+function isPathInApprovedRoots(targetPath) {
+  if (!targetPath) return false;
+  let real;
+  try {
+    real = fs.realpathSync(targetPath);
+  } catch (_) {
+    return false;
+  }
+  for (const root of approvedImportRoots) {
+    if (real === root) return true;
+    if (real.startsWith(root + path.sep)) return true;
+  }
+  return false;
+}
+
 // 安全：高权限路由（force-republish 等）必须确认请求来自本机，防御 DNS rebinding 攻击
 function isLocalRequest(req) {
   const hostHeader = String(req.headers.host || '').split(':')[0].toLowerCase();
@@ -233,7 +257,7 @@ async function getBitBrowserAccountMappings() {
   }
 
   return Array.from(summaryMap.values())
-    .sort((a, b) => a.accountName.localeCompare(b.accountName, 'zh-CN'))
+    .sort((a, b) => a.accountName.localeCompare(b.accountName, 'zh-CN', { numeric: true }))
     .map(item => ({
       ...item,
       browserId: mappingConfig[item.accountName]?.browserId || '',
@@ -246,7 +270,7 @@ async function syncFeishuSelectFields() {
     ...Object.keys(config.accountMapping?.xiaohongshu || {}),
     ...Object.keys(config.bitbrowser?.xiaohongshu || {}),
     ...(await getBitBrowserAccountMappings()).map(item => item.accountName),
-  ])].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  ])].sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }));
 
   await feishu.syncSingleSelectFieldOptions('小红书账号', accountNames, { keepExisting: true });
   await feishu.syncSingleSelectFieldOptions('小红书发布渠道', ['蚁小二', '比特浏览器']);
@@ -432,6 +456,9 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, { error: '目录不存在: ' + folderPath }, 400);
         }
 
+        // 把扫描通过的根目录加入 /api/file 白名单
+        approveImportRoot(folderPath);
+
         const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
         const videoExtensions = new Set(['.mp4', '.mov', '.avi', '.mkv']);
 
@@ -439,7 +466,7 @@ const server = http.createServer(async (req, res) => {
         function collectImagesFromDir(dirPath, extraDepth) {
           const entries = fs.readdirSync(dirPath, { withFileTypes: true })
             .filter(e => !e.name.startsWith('.'))
-            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
           const images = [];
           let hasVideo = false;
           for (const entry of entries) {
@@ -462,13 +489,13 @@ const server = http.createServer(async (req, res) => {
 
         const topics = fs.readdirSync(folderPath, { withFileTypes: true })
           .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
-          .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+          .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
 
         const result = topics.map(topicEntry => {
           const topicPath = path.join(folderPath, topicEntry.name);
           const topicChildren = fs.readdirSync(topicPath, { withFileTypes: true })
             .filter(e => !e.name.startsWith('.'))
-            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
 
           const noteFolders = topicChildren.filter(e => e.isDirectory());
           const directImages = topicChildren
@@ -524,6 +551,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 本地图片文件中转（Electron 页面 file:// 受限，改由 HTTP 接口提供）
+  // 安全限制：只允许本地请求 + 路径必须在已扫描的素材根目录白名单内
+  if (pathname === '/api/file' && req.method === 'GET') {
+    if (!isLocalRequest(req)) return sendJson(res, { error: 'forbidden' }, 403);
+    const filePath = new URL(req.url, 'http://localhost').searchParams.get('path');
+    if (!filePath) return sendJson(res, { error: 'missing path' }, 400);
+    const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif', '.bmp']);
+    const ext = path.extname(filePath).toLowerCase();
+    if (!ALLOWED_EXT.has(ext)) return sendJson(res, { error: 'unsupported type' }, 400);
+    if (!isPathInApprovedRoots(filePath)) return sendJson(res, { error: 'path not in approved roots' }, 403);
+    try {
+      const stat = fs.statSync(filePath);
+      if (!stat.isFile()) return sendJson(res, { error: 'not a file' }, 400);
+      const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic', '.heif': 'image/heif', '.bmp': 'image/bmp' };
+      res.writeHead(200, { 'Content-Type': MIME[ext] || 'image/jpeg', 'Content-Length': stat.size, 'Cache-Control': 'private,max-age=3600' });
+      fs.createReadStream(filePath).pipe(res);
+    } catch (e) {
+      return sendJson(res, { error: e.message }, 404);
+    }
+    return;
+  }
+
   if (pathname === '/api/import/create-records' && req.method === 'POST') {
     try {
       ensureFeishuConfigReady();
@@ -548,6 +597,7 @@ const server = http.createServer(async (req, res) => {
       for (const record of records) {
         const {
           topic = '',
+          topicOverride = '',
           noteKey = '',
           folderPath: recordFolderPath = '',
           images = [],
@@ -651,20 +701,23 @@ const server = http.createServer(async (req, res) => {
         let aiTitle = title;
         let aiDescription = description;
         let aiTags = Array.isArray(tags) ? tags : [];
+        const topicForAi = typeof topicOverride === 'string' && topicOverride.trim()
+          ? topicOverride.trim()
+          : topic;
 
         if (!aiTitle) {
           const aiConfig = config.aiWriting;
           if (aiConfig && aiConfig.enabled && aiConfig.apiKey) {
             try {
-              if (topicAiCache.has(topic)) {
+              if (topicAiCache.has(topicForAi)) {
                 // 同主题已生成过，直接复用
-                const cached = topicAiCache.get(topic);
+                const cached = topicAiCache.get(topicForAi);
                 aiTitle = cached.title;
                 aiDescription = cached.description;
                 aiTags = cached.tags;
               } else {
                 const aiRecord = {
-                  topic,
+                  topic: topicForAi,
                   attachments: images.map(i => ({ name: i.name })),
                   xiaohongshuAccount,
                   douyinAccount,
@@ -674,7 +727,7 @@ const server = http.createServer(async (req, res) => {
                 aiTitle = aiResult.title || '';
                 aiDescription = aiResult.description || '';
                 aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
-                topicAiCache.set(topic, { title: aiTitle, description: aiDescription, tags: aiTags });
+                topicAiCache.set(topicForAi, { title: aiTitle, description: aiDescription, tags: aiTags });
               }
             } catch (aiErr) {
               results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message });

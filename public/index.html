@@ -1297,81 +1297,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .import-topic-group {
-    margin-bottom: 8px;
-  }
-  .import-topic-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 16px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ink);
-    background: var(--accent-soft);
-    border-radius: 8px 8px 0 0;
-    margin: 0 8px;
-  }
-  .import-topic-count {
-    font-size: 12px;
-    color: var(--muted);
-    font-weight: 400;
-  }
-  .import-note-cards {
-    padding: 6px 8px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .import-note-card {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
-    background: #fff;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    transition: box-shadow 0.15s;
-  }
-  .import-note-card:not(.import-note-card--disabled):hover {
-    box-shadow: var(--shadow-card);
-  }
-  .import-note-card--disabled {
-    opacity: 0.55;
-  }
-  .import-card-thumb {
-    width: 48px;
-    height: 48px;
-    border-radius: 6px;
-    object-fit: cover;
-    background: var(--accent-soft);
-    flex-shrink: 0;
-  }
-  .import-card-thumb-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    background: var(--accent-soft);
-  }
-  .import-card-info { flex: 1; min-width: 0; }
-  .import-card-name {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--ink);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .import-card-meta {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 3px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .import-card-warning { cursor: help; }
   .import-stat-row {
     display: flex;
     gap: 12px;
@@ -1395,75 +1320,759 @@
     color: var(--muted);
     margin-top: 4px;
   }
-  /* 卡片改为竖排，支持账号选择区 */
-  .import-note-card {
+  .import-table-shell {
+    display: flex;
     flex-direction: column;
-    align-items: stretch;
-    gap: 0;
+    gap: 14px;
+    padding: 16px;
   }
-  .import-card-top {
+  .import-topic-nav {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+    padding: 12px 16px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 12px;
-    padding: 2px 0 8px;
+    flex-wrap: wrap;
   }
-  .import-note-card--disabled .import-card-selects { display: none; }
-  .import-card-selects {
-    border-top: 1px solid var(--line);
-    padding-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .import-topic-nav-info {
+    font-size: 14px;
+    color: var(--ink);
   }
-  .import-select-row {
-    display: flex;
-    gap: 6px;
+  .import-topic-nav-info strong {
+    font-weight: 700;
+    color: var(--accent);
   }
-  .import-select-row select {
-    flex: 1;
+  .import-topic-nav-meta {
     font-size: 12px;
-    padding: 5px 8px;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+  .import-topic-nav-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .import-topic-nav-btn {
     border: 1px solid var(--line);
-    border-radius: 6px;
     background: #fff;
     color: var(--ink);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
-    min-width: 0;
   }
-  .import-select-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  /* 批量设置栏 */
-  .import-batch-bar {
+  .import-topic-nav-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .import-topic-nav-btn:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+  }
+  .import-batch-section-title {
     display: flex;
-    align-items: flex-end;
-    gap: 6px;
+    align-items: baseline;
+    gap: 10px;
     flex-wrap: wrap;
-    padding: 8px 8px 4px;
-    background: #f9f9f7;
-    border-bottom: 1px solid var(--line);
+    padding: 8px 4px 0;
+  }
+  .import-batch-section-icon {
+    font-size: 16px;
+  }
+  .import-batch-section-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .import-batch-section-hint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .import-table-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .import-table-tab {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .import-table-tab.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .import-pool-panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .import-pool-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .import-pool-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .import-pool-meta {
     font-size: 12px;
     color: var(--muted);
   }
-  .import-batch-bar label { align-self: center; white-space: nowrap; }
-  .import-batch-bar select {
-    font-size: 12px;
-    padding: 4px 8px;
+  .import-pool-meta-sub {
+    font-size: 11px;
+    color: var(--muted);
+    opacity: .75;
+    margin-top: 2px;
+  }
+  .import-pool-topic-override {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .import-pool-topic-input,
+  .import-tw-row input,
+  .import-tw-meta input,
+  .import-tw-meta select {
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     background: #fff;
     color: var(--ink);
+    font-size: 12px;
+    padding: 7px 10px;
+    box-sizing: border-box;
+  }
+  .import-pool-topic-help {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .import-pool-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 140px;
+    gap: 10px;
+    align-items: start;
+  }
+  .import-pool-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .import-pool-label {
+    font-size: 11px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .import-pool-line {
+    min-height: 42px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fafaf8;
+    padding: 6px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .import-pool-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .import-pool-tag button {
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+  }
+  .import-pool-inline-select,
+  .import-pool-channel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 12px;
+    padding: 7px 10px;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .import-pool-inline-select {
+    flex: 0 0 110px;
+  }
+  .import-pool-picker-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .import-pool-picker-trigger {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 12px;
+    padding: 7px 10px;
+    cursor: pointer;
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+  .import-pool-picker-trigger:hover {
+    border-color: var(--accent);
+  }
+  .import-pool-picker-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 50;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    min-width: 200px;
+    max-width: 280px;
+    display: flex;
+    flex-direction: column;
+  }
+  .import-pool-picker-list {
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .import-pool-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .import-pool-picker-item:hover {
+    background: var(--accent-soft);
+  }
+  .import-pool-picker-item input[type="checkbox"] {
+    accent-color: var(--accent);
     cursor: pointer;
   }
-  .import-batch-bar button {
+  .import-pool-picker-empty {
+    padding: 14px 12px;
+    text-align: center;
     font-size: 12px;
-    padding: 4px 10px;
-    border-radius: 6px;
+    color: var(--muted);
+  }
+  .import-pool-picker-actions {
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--line);
+    justify-content: flex-end;
+  }
+  .import-pool-picker-cancel {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .import-pool-picker-apply {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .import-pool-picker-apply:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
+  .import-pool-empty {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .import-pool-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .import-pool-hint {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .import-pool-rr-btn {
     border: 1px solid var(--accent);
     background: var(--accent-soft);
     color: var(--accent);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
     cursor: pointer;
-    white-space: nowrap;
   }
-  .import-batch-bar button:hover { background: var(--accent); color: #fff; }
+  .import-pool-rr-btn:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+  .import-tw-panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .import-tw-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+  }
+  .import-tw-row span {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+  }
+  .import-tw-row button {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 7px 10px;
+    cursor: pointer;
+  }
+  .import-tw-row button:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+  }
+  .import-tw-add-btn {
+    width: 100%;
+    border: 1px dashed #bedbc8;
+    border-radius: 10px;
+    background: #f8fcfa;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 9px 12px;
+    cursor: pointer;
+  }
+  .import-tw-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    align-items: end;
+  }
+  .import-tw-meta .import-pool-field:last-child {
+    align-self: stretch;
+    justify-content: end;
+  }
+  .import-tw-apply-btn {
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+  }
+  .import-tw-apply-btn:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+  .import-table-panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .import-table-scroll {
+    overflow: auto;
+    max-height: calc(100vh - 280px);
+  }
+  .import-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: fixed;
+  }
+  .import-table th,
+  .import-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink);
+    text-align: left;
+    background: #fff;
+    line-height: 1.4;
+  }
+  .import-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f7f8f5;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
+  }
+  .import-table tbody tr {
+    cursor: pointer;
+  }
+  .import-table tbody tr:hover td {
+    background: #f3f8f5;
+  }
+  .import-table tbody tr.selected td:first-child {
+    border-left: 3px solid var(--accent);
+    padding-left: 9px;
+  }
+  .import-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .import-table-index {
+    width: 56px;
+    color: var(--muted);
+  }
+  .import-table-thumb-col {
+    width: 68px;
+  }
+  .import-table-thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #eef2ec;
+    display: block;
+  }
+  .import-table-thumb-empty {
+    width: 40px;
+    height: 40px;
+    border-radius: 4px;
+    background: #eef2ec;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+  }
+  .import-table-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .import-table-note-name {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .import-table-note-warn {
+    color: #c2410c;
+    cursor: help;
+  }
+  .import-table-select,
+  .import-table-time {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 12px;
+    padding: 7px 10px;
+    box-sizing: border-box;
+  }
+  .import-table-select:focus,
+  .import-table-time:focus,
+  .import-pool-inline-select:focus,
+  .import-pool-channel:focus,
+  .import-pool-topic-input:focus,
+  .import-tw-row input:focus,
+  .import-tw-meta input:focus,
+  .import-tw-meta select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .import-table-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .import-table-status.manual {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .import-table-header-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+  }
+  .import-table-header-menu-wrap {
+    position: relative;
+  }
+  .import-table-header-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 5;
+    min-width: 180px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .import-table-header-menu button {
+    border: none;
+    background: transparent;
+    color: var(--ink);
+    text-align: left;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .import-table-header-menu button:hover {
+    background: #f3f8f5;
+    color: var(--accent);
+  }
+  .import-table-empty {
+    padding: 36px 24px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .import-table-footer {
+    display: flex;
+    justify-content: flex-end;
+    padding: 14px 16px 0;
+  }
+  .import-preview-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .import-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .import-preview-heading {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .import-preview-subtitle {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .import-preview-back {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 10px;
+    padding: 7px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .import-preview-account-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .import-preview-account-card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px 16px;
+  }
+  .import-preview-account-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .import-preview-account-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .import-preview-account-count {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .import-preview-note-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .import-preview-note-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .import-preview-empty-tip {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .import-preview-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .import-preview-gallery {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 88px;
+    gap: 12px;
+    align-items: start;
+  }
+  .import-preview-main-image {
+    width: 100%;
+    max-width: 380px;
+    max-height: 380px;
+    aspect-ratio: 1;
+    object-fit: contain;
+    background: #f0f0f0;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    justify-self: center;
+  }
+  .import-preview-thumbs {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .import-preview-thumb {
+    width: 72px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    background: #eef2ec;
+  }
+  .import-preview-thumb.active {
+    border-color: var(--accent);
+  }
+  .import-preview-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .import-preview-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .import-preview-label {
+    font-size: 11px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .import-preview-select,
+  .import-preview-time {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+    font-size: 13px;
+    padding: 9px 11px;
+    box-sizing: border-box;
+  }
+  .import-preview-nav {
+    display: flex;
+    gap: 10px;
+  }
+  .import-preview-nav button {
+    flex: 1;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 10px;
+    padding: 10px 0;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .import-preview-nav button:hover,
+  .import-preview-back:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .import-toast {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    z-index: 9998;
+    min-width: 220px;
+    max-width: 360px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(29, 29, 31, 0.92);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
+  }
   /* 时间分配控制栏 */
   .import-time-bar {
     display: flex;
@@ -1499,17 +2108,10 @@
     white-space: nowrap;
   }
   .import-time-bar button:hover { background: var(--accent-deep); }
-  /* 卡片内时间输入 */
-  .import-card-time {
-    border-top: 1px solid var(--line);
-    padding-top: 7px;
-    margin-top: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .import-card-time label { font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .import-card-time input {
+  .import-card-actions { display:flex; align-items:center; gap:8px; padding-top:7px; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .import-card-preview-btn { font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--line); background:#fff; color:var(--muted); cursor:pointer; }
+  .import-card-preview-btn:hover { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+  .import-card-actions input {
     flex: 1;
     font-size: 12px;
     padding: 4px 8px;
@@ -1519,7 +2121,7 @@
     color: var(--ink);
     min-width: 0;
   }
-  .import-card-time input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .import-card-actions input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* P3.0 预览卡 */
   .import-preview-card {
     background: #fff;
@@ -1716,17 +2318,8 @@
         <!-- 顶部选择栏 -->
         <div class="import-header-bar">
           <button class="btn btn-sm btn-secondary" onclick="importSelectFolder()">📁 选择根目录</button>
+          <button class="btn btn-sm btn-secondary" onclick="importAddFolder()" id="importAddFolderBtn" style="display:none">+ 追加</button>
           <div class="import-root-path" id="importRootPathDisplay">未选择</div>
-        </div>
-        <!-- 时间自动分配栏（扫描完成后显示） -->
-        <div class="import-time-bar" id="importTimeBar" style="display:none">
-          <label>📅 自动分配：起始</label>
-          <input type="date" id="importStartDate">
-          <label>每天最多</label>
-          <input type="number" id="importMaxPerDay" value="2" min="1" max="20">
-          <label>条，时间</label>
-          <input type="time" id="importPublishTime" value="10:00">
-          <button onclick="importAutoDistributeTimes()">应用到全部</button>
         </div>
         <!-- 扫描结果滚动区 -->
         <div style="flex:1;overflow-y:auto;padding:8px 0;" id="importScanResult">
@@ -2081,9 +2674,10 @@ let latestPendingCount = '-';
 const MAX_LOG_ENTRIES = 200;
 
 // 素材导入页状态
-let importRootPath = null;
+let importRootPaths = [];
 let importScanData = [];
-// key: noteKey → { xiaohongshuAccount, xiaohongshuChannel, douyinAccount, publishTime }
+let importGroupState = new Map();
+// key: noteKey → { publishTime, xhsAccount, dyAccount, dirty, source }
 let importNoteState = new Map();
 // P3.0 预览状态
 let importPreviewData = [];      // dryRun 返回的结果数组
@@ -2095,6 +2689,135 @@ let importReportData = [];       // 正式导入的结果数组
 let importProgressCurrent = 0;   // P4.1 当前进度
 let importProgressTotal = 0;
 let importProgressNoteKey = '';
+let _importActiveTopicIdx = 0;
+let _importPickerOpen = null;
+let _importPickerSelection = new Set();
+let _importPickerOutsideHandler = null;
+let _importPickerKeyHandler = null;
+let _importSelectedNoteKey = null;
+let _importSelectedImageIdx = 0;
+let _importOpenBatchField = '';
+
+function getTodayDateString() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function createDefaultImportTimeWindows() {
+  return [
+    { start: '10:00', end: '12:00' },
+    { start: '14:00', end: '18:00' },
+  ];
+}
+
+function createDefaultImportGroupState() {
+  return {
+    topic: '',
+    topicOverride: '',
+    xhsAccounts: [],
+    channel: '蚁小二',
+    dyAccounts: [],
+    timeWindows: createDefaultImportTimeWindows(),
+    intervalMin: 30,
+    startDate: getTodayDateString(),
+  };
+}
+
+function createDefaultImportNoteState() {
+  return {
+    publishTime: '',
+    xhsAccount: '',
+    dyAccount: '',
+    dirty: false,
+    source: 'inherit',
+  };
+}
+
+function normalizeImportGroupState(state) {
+  const next = { ...createDefaultImportGroupState(), ...(state || {}) };
+  next.xhsAccounts = Array.isArray(next.xhsAccounts) ? next.xhsAccounts : [];
+  next.dyAccounts = Array.isArray(next.dyAccounts) ? next.dyAccounts : [];
+  next.timeWindows = Array.isArray(next.timeWindows) && next.timeWindows.length
+    ? next.timeWindows.map(window => ({
+      start: typeof window?.start === 'string' ? window.start : '',
+      end: typeof window?.end === 'string' ? window.end : '',
+    }))
+    : createDefaultImportTimeWindows();
+  next.intervalMin = Number.isFinite(Number(next.intervalMin)) ? Number(next.intervalMin) : 30;
+  next.startDate = typeof next.startDate === 'string' && next.startDate ? next.startDate : getTodayDateString();
+  return next;
+}
+
+function normalizeImportNoteState(state) {
+  const next = { ...createDefaultImportNoteState(), ...(state || {}) };
+  next.dirty = !!next.dirty;
+  next.source = next.source === 'batch' || next.source === 'manual' ? next.source : 'inherit';
+  return next;
+}
+
+function calcDailyCapacity(windows, intervalMin) {
+  if (!Array.isArray(windows) || !windows.length || intervalMin <= 0) return 0;
+  let total = 0;
+  for (const window of windows) {
+    const start = typeof window?.start === 'string' ? window.start : '';
+    const end = typeof window?.end === 'string' ? window.end : '';
+    if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) continue;
+    const [startHour, startMinute] = start.split(':').map(Number);
+    const [endHour, endMinute] = end.split(':').map(Number);
+    const startTotal = startHour * 60 + startMinute;
+    const endTotal = endHour * 60 + endMinute;
+    if (startTotal > endTotal) continue;
+    total += Math.floor((endTotal - startTotal) / intervalMin) + 1;
+  }
+  return total;
+}
+
+function allocateTimesByWindows(noteCount, windows, intervalMin, startDate) {
+  if (noteCount <= 0) return [];
+  if (!Array.isArray(windows) || !windows.length || intervalMin <= 0) {
+    return Array.from({ length: noteCount }, () => '');
+  }
+  const normalizedWindows = windows
+    .map(window => {
+      const start = typeof window?.start === 'string' ? window.start : '';
+      const end = typeof window?.end === 'string' ? window.end : '';
+      if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return null;
+      const [startHour, startMinute] = start.split(':').map(Number);
+      const [endHour, endMinute] = end.split(':').map(Number);
+      const startTotal = startHour * 60 + startMinute;
+      const endTotal = endHour * 60 + endMinute;
+      if (startTotal > endTotal) return null;
+      return { startTotal, endTotal };
+    })
+    .filter(Boolean);
+  if (!normalizedWindows.length) {
+    return Array.from({ length: noteCount }, () => '');
+  }
+  const results = [];
+  let dayOffset = 0;
+  while (results.length < noteCount) {
+    const day = new Date(`${startDate}T00:00:00`);
+    if (Number.isNaN(day.getTime())) {
+      return Array.from({ length: noteCount }, () => '');
+    }
+    day.setDate(day.getDate() + dayOffset);
+    const yyyy = day.getFullYear();
+    const mm = String(day.getMonth() + 1).padStart(2, '0');
+    const dd = String(day.getDate()).padStart(2, '0');
+    for (const window of normalizedWindows) {
+      for (let minutes = window.startTotal; minutes <= window.endTotal && results.length < noteCount; minutes += intervalMin) {
+        const hour = String(Math.floor(minutes / 60)).padStart(2, '0');
+        const minute = String(minutes % 60).padStart(2, '0');
+        results.push(`${yyyy}-${mm}-${dd} ${hour}:${minute}`);
+      }
+    }
+    dayOffset++;
+  }
+  return results;
+}
 
 const SECTION_META = {
   overview: {
@@ -2760,15 +3483,88 @@ async function importSelectFolder() {
   }
   const folderPath = await window.electronAPI.openFolder();
   if (!folderPath) return;
-  importRootPath = folderPath;
-  const display = document.getElementById('importRootPathDisplay');
-  if (display) display.textContent = folderPath;
   await importScanFolder(folderPath);
 }
 
-async function importScanFolder(folderPath) {
+async function importAddFolder() {
+  if (!window.electronAPI) {
+    alert('此功能需要在桌面 App 环境中运行');
+    return;
+  }
+  const folderPath = await window.electronAPI.openFolder();
+  if (!folderPath) return;
+  await importScanFolder(folderPath, true);
+}
+
+function importUpdateRootPathDisplay() {
+  const display = document.getElementById('importRootPathDisplay');
+  if (!display) return;
+  if (!importRootPaths.length) {
+    display.textContent = '未选择';
+    return;
+  }
+  if (importRootPaths.length === 1) {
+    display.textContent = importRootPaths[0];
+    return;
+  }
+  display.textContent = `${importRootPaths[0]} 等 ${importRootPaths.length} 个文件夹`;
+}
+
+// 组 key = rootPath + '::' + topic，避免追加时不同文件夹同名主题碰撞
+function importGroupKey(topicGroup) {
+  return (topicGroup._rootPath || '') + '::' + (topicGroup.topic || '');
+}
+
+function importEnsureGroupState(topicGroup) {
+  if (!topicGroup || !topicGroup.topic) return;
+  const key = importGroupKey(topicGroup);
+  importGroupState.set(key, normalizeImportGroupState(importGroupState.get(key)));
+}
+
+function importEnsureNoteState(note) {
+  if (!note || !note.noteKey || note.imageCount <= 0) return;
+  importNoteState.set(note.noteKey, normalizeImportNoteState(importNoteState.get(note.noteKey)));
+}
+
+function importSetGroupField(el) {
+  const idx = parseInt(el.dataset.groupIdx, 10);
+  const tg = importScanData[idx];
+  if (!tg) return;
+  const gs = importGroupState.get(importGroupKey(tg));
+  if (!gs) return;
+  const field = el.dataset.groupField;
+  if (el.multiple) {
+    gs[field] = Array.from(el.selectedOptions).map(o => o.value).filter(Boolean);
+  } else {
+    gs[field] = el.value;
+  }
+  importUpdateButtonState();
+  renderContextPreview();
+}
+
+async function importScanFolder(folderPath, append = false) {
   const scanEl = document.getElementById('importScanResult');
   if (scanEl) scanEl.innerHTML = '<div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">扫描中…</div>';
+  // Fix3：事务快照，失败时完整回滚（不只是 rootPaths）
+  const snapshot = {
+    scanData: importScanData.slice(),
+    groupState: new Map(importGroupState),
+    noteState: new Map(importNoteState),
+    rootPaths: importRootPaths.slice(),
+  };
+  if (!append) {
+    importScanData = [];
+    importGroupState = new Map();
+    importNoteState = new Map();
+    importRootPaths = folderPath ? [folderPath] : [];
+    _importActiveTopicIdx = 0;
+    _importSelectedNoteKey = null;
+    _importSelectedImageIdx = 0;
+    _importOpenBatchField = '';
+  } else if (folderPath) {
+    importRootPaths.push(folderPath);
+  }
+  importUpdateRootPathDisplay();
   renderContextPreview();
   try {
     const resp = await fetch('/api/import/scan-folder', {
@@ -2778,16 +3574,28 @@ async function importScanFolder(folderPath) {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '扫描失败');
-    importScanData = Array.isArray(data) ? data : [];
-    // 初始化每张卡片的账号状态
-    importNoteState = new Map();
-    for (const topicGroup of importScanData) {
+    const scannedData = Array.isArray(data) ? data : [];
+    // Fix2：给 topicGroup 打 rootPath 标记；给 note.noteKey 加 rootPath 前缀，
+    // 避免不同根文件夹下同名子文件夹（1/2/3...）的 noteKey 相互碰撞。
+    // 服务端指纹只用 noteKey.split('/').pop()（最末段），加前缀不影响去重逻辑。
+    scannedData.forEach(tg => {
+      tg._rootPath = folderPath || '';
+      (tg.notes || []).forEach(note => {
+        note.noteKey = (folderPath || '') + '||' + note.noteKey;
+      });
+    });
+    if (append) {
+      // 追加扫描时按 _rootPath::topic 去重，避免用户重复选同一根目录导致 pill 翻倍
+      const seen = new Set(importScanData.map(g => (g._rootPath || '') + '::' + (g.topic || '')));
+      const newGroups = scannedData.filter(g => !seen.has((g._rootPath || '') + '::' + (g.topic || '')));
+      importScanData = importScanData.concat(newGroups);
+    } else {
+      importScanData = scannedData;
+    }
+    for (const topicGroup of scannedData) {
+      importEnsureGroupState(topicGroup);
       for (const note of (topicGroup.notes || [])) {
-        if (note.imageCount > 0) {
-          importNoteState.set(note.noteKey, {
-            xiaohongshuAccount: '', xiaohongshuChannel: '蚁小二', douyinAccount: '', publishTime: ''
-          });
-        }
+        importEnsureNoteState(note);
       }
     }
     // 初始化自动分配默认起始日期为明天
@@ -2796,12 +3604,19 @@ async function importScanFolder(folderPath) {
     if (startInput && !startInput.value) {
       startInput.value = tmr.toISOString().slice(0, 10);
     }
-    // 显示时间分配栏
-    const timeBar = document.getElementById('importTimeBar');
-    if (timeBar) timeBar.style.display = importScanData.length > 0 ? '' : 'none';
+    const addBtn = document.getElementById('importAddFolderBtn');
+    if (addBtn) addBtn.style.display = importScanData.length > 0 ? '' : 'none';
     renderImportScanResult();
+    importUpdateButtonState();
     renderContextPreview();
   } catch (err) {
+    // Fix3：完整回滚所有状态，不只是 rootPaths
+    importScanData = snapshot.scanData;
+    importGroupState = snapshot.groupState;
+    importNoteState = snapshot.noteState;
+    importRootPaths = snapshot.rootPaths;
+    importUpdateRootPathDisplay();
+    renderImportScanResult();
     if (scanEl) scanEl.innerHTML = `<div style="padding:24px;color:#e53e3e;font-size:13px;">扫描失败：${escapeHtml(err.message)}</div>`;
   }
 }
@@ -2813,207 +3628,691 @@ function renderImportScanResult() {
     scanEl.innerHTML = '<div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">未发现可导入的笔记素材</div>';
     return;
   }
+  const groups = importGetTopicGroups();
+  if (_importActiveTopicIdx < 0 || _importActiveTopicIdx >= groups.length) _importActiveTopicIdx = 0;
+  const activeGroup = groups[_importActiveTopicIdx] || groups[0];
+  if (!activeGroup) {
+    scanEl.innerHTML = '<div class="import-table-empty">未发现可导入的主题</div>';
+    return;
+  }
+  importEnsureGroupState(activeGroup);
+  const activeKey = importGroupKey(activeGroup);
+  const groupState = normalizeImportGroupState(importGroupState.get(activeKey));
+  const notes = (activeGroup.notes || []).filter(note => note.imageCount > 0);
   const xhsAccounts = importGetXhsAccounts();
   const dyAccounts = importGetDouyinAccounts();
-  let html = '';
-  for (const topicGroup of importScanData) {
-    const notes = topicGroup.notes || [];
-    const validNotes = notes.filter(n => n.imageCount > 0);
-    const topicKey = escapeAttr(topicGroup.topic);
-    // 批量设置栏（每个主题组顶部）
-    const batchBar = validNotes.length > 0 ? `
-      <div class="import-batch-bar">
-        <label>批量设置：</label>
-        <select id="batchXhs_${topicKey}" style="min-width:120px">
-          <option value="">小红书账号…</option>
-          ${xhsAccounts.map(a => `<option value="${escapeAttr(a.accountName)}">${escapeHtml(a.accountName)}</option>`).join('')}
-        </select>
-        <select id="batchChannel_${topicKey}" style="min-width:90px">
-          <option value="蚁小二">蚁小二</option>
-          <option value="比特浏览器">比特浏览器</option>
-        </select>
-        <select id="batchDy_${topicKey}" style="min-width:120px">
-          <option value="">抖音账号…</option>
-          ${dyAccounts.map(a => `<option value="${escapeAttr(a.accountName)}">${escapeHtml(a.accountName)}</option>`).join('')}
-        </select>
-        <button onclick="importBatchSet('${escapeAttr(topicGroup.topic)}')">应用到本组</button>
-      </div>` : '';
-    html += `<div class="import-topic-group">
-      <div class="import-topic-header">
-        <span>${escapeHtml(topicGroup.topic)}</span>
-        <span class="import-topic-count">${notes.length} 篇</span>
+  const xhsPool = Array.isArray(groupState.xhsAccounts) ? groupState.xhsAccounts : [];
+  const dyPool = Array.isArray(groupState.dyAccounts) ? groupState.dyAccounts : [];
+  const tabHtml = groups.map((topicGroup, idx) => {
+    return `<button class="import-table-tab ${idx === _importActiveTopicIdx ? 'active' : ''}"
+      onclick="importSwitchTopic(${idx})">${escapeHtml(topicGroup.topic || `主题 ${idx + 1}`)}</button>`;
+  }).join('');
+  const totalGroups = groups.length;
+  const activeIdx = _importActiveTopicIdx;
+  const activeName = escapeHtml(activeGroup.topic || `主题 ${activeIdx + 1}`);
+  const activeNotesCount = (activeGroup.notes || []).filter(n => n.imageCount > 0).length;
+  const prevDisabled = activeIdx <= 0 ? 'disabled' : '';
+  const nextDisabled = activeIdx >= totalGroups - 1 ? 'disabled' : '';
+  const navHtml = totalGroups > 0 ? `
+    <div class="import-topic-nav">
+      <div class="import-topic-nav-info">
+        📂 当前主题：<strong>${activeName}</strong>
+        <span class="import-topic-nav-meta">（${activeNotesCount} 篇笔记 · ${activeIdx + 1}/${totalGroups} 组）</span>
       </div>
-      ${batchBar}
-      <div class="import-note-cards">
-        ${notes.map(note => renderImportNoteCard(note, xhsAccounts, dyAccounts)).join('')}
+      <div class="import-topic-nav-actions">
+        <button class="import-topic-nav-btn" ${prevDisabled} onclick="importSwitchTopic(${activeIdx - 1})">← 上一组</button>
+        <button class="import-topic-nav-btn" ${nextDisabled} onclick="importSwitchTopic(${activeIdx + 1})">下一组 →</button>
       </div>
+    </div>` : '';
+  const batchTitleHtml = `
+    <div class="import-batch-section-title">
+      <span class="import-batch-section-icon">📦</span>
+      <span class="import-batch-section-text">批量配置 · 当前主题 ${activeNotesCount} 篇笔记</span>
+      <span class="import-batch-section-hint">下方设置会一次性应用到这组所有笔记</span>
     </div>`;
-  }
-  scanEl.innerHTML = html;
+  scanEl.innerHTML = `
+    <div class="import-table-shell">
+      ${navHtml}
+      <div class="import-table-tabs">${tabHtml}</div>
+      ${batchTitleHtml}
+      ${renderImportPoolPanel(activeGroup, groupState, xhsAccounts, dyAccounts)}
+      ${renderImportTimeWindowPanel(activeGroup, groupState, notes)}
+      ${renderImportTablePanel(activeGroup, notes, groupState)}
+    </div>`;
 }
 
-function renderImportNoteCard(note, xhsAccounts, dyAccounts) {
-  xhsAccounts = xhsAccounts || importGetXhsAccounts();
-  dyAccounts = dyAccounts || importGetDouyinAccounts();
-  const isEmpty = note.imageCount === 0;
-  const hasWarning = note.warnings && note.warnings.length > 0;
-  const thumbUrl = note.firstImagePath ? `file://${note.firstImagePath}` : '';
-  const thumbHtml = thumbUrl
-    ? `<img class="import-card-thumb" src="${thumbUrl}" alt="" onerror="this.style.display='none'">`
-    : `<div class="import-card-thumb import-card-thumb-empty">📁</div>`;
-  const warningHint = hasWarning ? `<span class="import-card-warning" title="${escapeAttr(note.warnings.join('\n'))}">⚠️</span>` : '';
+function importGetTopicGroups() {
+  return Array.isArray(importScanData) ? importScanData : [];
+}
 
-  const state = importNoteState.get(note.noteKey) || { xiaohongshuAccount: '', xiaohongshuChannel: '蚁小二', douyinAccount: '' };
-  const nk = escapeAttr(note.noteKey);
-  const channelVisible = state.xiaohongshuAccount ? '' : 'display:none';
+function importGetActiveTopicGroup() {
+  const groups = importGetTopicGroups();
+  if (!groups.length) return null;
+  if (_importActiveTopicIdx < 0 || _importActiveTopicIdx >= groups.length) _importActiveTopicIdx = 0;
+  return groups[_importActiveTopicIdx] || null;
+}
 
-  const selectsHtml = isEmpty ? '' : `
-    <div class="import-card-selects">
-      <div class="import-select-row">
-        <select data-field="xiaohongshuAccount" data-note-key="${nk}" onchange="importSetNoteField(this)" style="flex:2">
-          <option value="">小红书账号</option>
-          ${xhsAccounts.map(a => `<option value="${escapeAttr(a.accountName)}" ${state.xiaohongshuAccount === a.accountName ? 'selected' : ''}>${escapeHtml(a.accountName)}</option>`).join('')}
-        </select>
-        <select data-field="xiaohongshuChannel" data-note-key="${nk}" onchange="importSetNoteField(this)" class="import-channel-sel" style="flex:1;${channelVisible}">
-          <option value="蚁小二" ${state.xiaohongshuChannel === '蚁小二' ? 'selected' : ''}>蚁小二</option>
-          <option value="比特浏览器" ${state.xiaohongshuChannel === '比特浏览器' ? 'selected' : ''}>比特浏览器</option>
-        </select>
-      </div>
-      <div class="import-select-row">
-        <select data-field="douyinAccount" data-note-key="${nk}" onchange="importSetNoteField(this)">
-          <option value="">抖音账号（蚁小二）</option>
-          ${dyAccounts.map(a => `<option value="${escapeAttr(a.accountName)}" ${state.douyinAccount === a.accountName ? 'selected' : ''}>${escapeHtml(a.accountName)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="import-card-time">
-        <label>发布时间</label>
-        <input type="text" placeholder="留空则立即处理" data-field="publishTime" data-note-key="${nk}"
-          value="${escapeAttr(state.publishTime || '')}"
-          onchange="importSetNoteField(this)"
-          style="font-family:monospace">
-      </div>
-    </div>`;
+function importGetGroupByIdx(groupIdx) {
+  const groups = importGetTopicGroups();
+  return groupIdx >= 0 && groupIdx < groups.length ? groups[groupIdx] : null;
+}
 
-  return `<div class="import-note-card ${isEmpty ? 'import-note-card--disabled' : ''}">
-    <div class="import-card-top">
-      ${thumbHtml}
-      <div class="import-card-info">
-        <div class="import-card-name">${escapeHtml(note.folderName)}</div>
-        <div class="import-card-meta">
-          ${isEmpty ? '<span style="color:#e53e3e">⚠️ 无有效图片</span>' : `📷 ${note.imageCount} 张`}
-          ${warningHint}
+function importAddTimeWindow(groupIdx) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  state.timeWindows = [...(state.timeWindows || []), { start: '20:00', end: '22:00' }];
+  importGroupState.set(key, state);
+  renderImportScanResult();
+}
+
+function importRemoveTimeWindow(groupIdx, winIdx) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  if ((state.timeWindows || []).length <= 1) return;
+  state.timeWindows = state.timeWindows.filter((_, idx) => idx !== winIdx);
+  importGroupState.set(key, state);
+  renderImportScanResult();
+}
+
+function importUpdateTimeWindow(groupIdx, winIdx, field, value) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup || !['start', 'end'].includes(field)) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  state.timeWindows = (state.timeWindows || []).map((window, idx) => (
+    idx === winIdx ? { ...window, [field]: value || '' } : window
+  ));
+  importGroupState.set(key, state);
+  renderImportScanResult();
+}
+
+function importUpdateInterval(groupIdx, value) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  const nextValue = Number(value);
+  state.intervalMin = Number.isFinite(nextValue) && nextValue > 0 ? nextValue : 30;
+  importGroupState.set(key, state);
+  renderImportScanResult();
+}
+
+function importUpdateStartDate(groupIdx, value) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  state.startDate = value || getTodayDateString();
+  importGroupState.set(key, state);
+  renderImportScanResult();
+}
+
+function importUpdateTopicOverride(groupIdx, value) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  state.topicOverride = value || '';
+  importGroupState.set(key, state);
+}
+
+function importGetCapacityPreview(groupIdx) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return '0 槽位/天 · 共 0 篇 → 跨 0 天';
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  const dailyCapacity = calcDailyCapacity(state.timeWindows, state.intervalMin);
+  const totalNotes = importGetNotesForGroup(topicGroup).length;
+  const totalDays = dailyCapacity > 0 ? Math.ceil(totalNotes / dailyCapacity) : '—';
+  return `${dailyCapacity} 槽位/天 · 共 ${totalNotes} 篇 → 跨 ${totalDays} 天`;
+}
+
+function importApplyTimesByWindows(groupIdx) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const groupState = normalizeImportGroupState(importGroupState.get(key));
+  const notes = importGetNotesForGroup(topicGroup);
+  const allocated = allocateTimesByWindows(notes.length, groupState.timeWindows, groupState.intervalMin, groupState.startDate);
+  let assignedCount = 0;
+  let skippedCount = 0;
+  notes.forEach((note, idx) => {
+    const state = importGetNoteState(note.noteKey);
+    if (state.dirty) {
+      skippedCount += 1;
+      return;
+    }
+    state.publishTime = (allocated[idx] || '').replace(' ', 'T');
+    state.source = 'batch';
+    state.dirty = false;
+    importNoteState.set(note.noteKey, state);
+    assignedCount += 1;
+  });
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+  importShowToast(`已分配 ${assignedCount} 篇，跳过 ${skippedCount} 篇手动改过的`);
+}
+
+function importGetNotesForGroup(topicGroup) {
+  return (topicGroup?.notes || []).filter(note => note.imageCount > 0);
+}
+
+function importGetNoteState(noteKey) {
+  return normalizeImportNoteState(importNoteState.get(noteKey));
+}
+
+function importFindNote(noteKey) {
+  for (const tg of importScanData) {
+    for (const note of (tg.notes || [])) {
+      if (note.noteKey === noteKey) return note;
+    }
+  }
+  return null;
+}
+
+function importFindGroupByNoteKey(noteKey) {
+  for (let idx = 0; idx < importScanData.length; idx++) {
+    const topicGroup = importScanData[idx];
+    if ((topicGroup.notes || []).some(note => note.noteKey === noteKey)) {
+      return { topicGroup, idx };
+    }
+  }
+  return null;
+}
+
+function importSwitchTopic(idx) {
+  _importActiveTopicIdx = idx;
+  _importSelectedNoteKey = null;
+  _importSelectedImageIdx = 0;
+  _importOpenBatchField = '';
+  renderImportScanResult();
+  renderContextPreview();
+}
+
+function importSelectNoteRow(noteKey) {
+  _importSelectedNoteKey = noteKey;
+  _importSelectedImageIdx = 0;
+  renderImportScanResult();
+  renderContextPreview();
+}
+
+function renderImportPoolPanel(topicGroup, groupState, xhsAccounts, dyAccounts) {
+  const groupIdx = importGetTopicGroups().findIndex(item => item === topicGroup);
+  return `
+    <div class="import-pool-panel">
+      <div class="import-pool-head">
+        <div>
+          <div class="import-pool-title">${escapeHtml(topicGroup.topic || '未命名主题')}</div>
+          <div class="import-pool-meta">当前主题 ${importGetNotesForGroup(topicGroup).length} 篇笔记 · 切换上方主题切换其他组</div>
+          <div class="import-pool-meta-sub">池里多账号 → 🎲 后轮流分配，每篇只发一个账号</div>
         </div>
       </div>
-    </div>
-    ${selectsHtml}
+      <div class="import-pool-topic-override">
+        <div class="import-pool-label">覆盖描述（可选）</div>
+        <input class="import-pool-topic-input" type="text" value="${escapeAttr(groupState.topicOverride || '')}"
+          placeholder="${escapeAttr(topicGroup.topic || '')}" onchange="importUpdateTopicOverride(${groupIdx}, this.value)">
+        <div class="import-pool-topic-help">留空则用文件夹名给 AI；填写后 AI 用这个文字</div>
+      </div>
+      <div class="import-pool-grid">
+        <div class="import-pool-field">
+          <div class="import-pool-label">小红书账号池</div>
+          <div class="import-pool-line">
+            ${renderImportPoolTags(groupState.xhsAccounts, 'xhs', groupIdx)}
+            <div class="import-pool-picker-wrap">
+              <button class="import-pool-picker-trigger" onclick="event.stopPropagation(); importOpenPoolPicker('xhs', ${groupIdx})">+ 添加 ▾</button>
+              ${_importPickerOpen === 'xhs:' + groupIdx ? importRenderPoolPicker('xhs', groupIdx, xhsAccounts, groupState.xhsAccounts || []) : ''}
+            </div>
+          </div>
+        </div>
+        <div class="import-pool-field">
+          <div class="import-pool-label">抖音账号池</div>
+          <div class="import-pool-line">
+            ${renderImportPoolTags(groupState.dyAccounts, 'dy', groupIdx)}
+            <div class="import-pool-picker-wrap">
+              <button class="import-pool-picker-trigger" onclick="event.stopPropagation(); importOpenPoolPicker('dy', ${groupIdx})">+ 添加 ▾</button>
+              ${_importPickerOpen === 'dy:' + groupIdx ? importRenderPoolPicker('dy', groupIdx, dyAccounts, groupState.dyAccounts || []) : ''}
+            </div>
+          </div>
+        </div>
+        <div class="import-pool-field">
+          <div class="import-pool-label">小红书渠道</div>
+          <select class="import-pool-channel" onchange="importSetPoolChannel(this.value)">
+            <option value="蚁小二" ${groupState.channel === '蚁小二' ? 'selected' : ''}>蚁小二</option>
+            <option value="比特浏览器" ${groupState.channel === '比特浏览器' ? 'selected' : ''}>比特浏览器</option>
+          </select>
+        </div>
+      </div>
+      <div class="import-pool-actions">
+        <div class="import-pool-hint">🎲 只覆盖未手动改过的笔记；右侧标"手动改过"的不会被动。</div>
+        <button class="import-pool-rr-btn" onclick="importApplyRoundRobin()">🎲 round-robin 分配</button>
+      </div>
+    </div>`;
+}
+
+function renderImportTimeWindowPanel(topicGroup, groupState, notes) {
+  const groupIdx = importGetTopicGroups().findIndex(item => item === topicGroup);
+  const intervalOptions = [5, 10, 15, 20, 30, 45, 60, 90, 120]
+    .map(value => `<option value="${value}" ${Number(groupState.intervalMin) === value ? 'selected' : ''}>${value} 分钟</option>`)
+    .join('');
+  const windowRows = (groupState.timeWindows || []).map((window, idx, arr) => `
+    <div class="import-tw-row">
+      <input type="time" value="${escapeAttr(window.start || '')}" onchange="importUpdateTimeWindow(${groupIdx}, ${idx}, 'start', this.value)">
+      <span>—</span>
+      <input type="time" value="${escapeAttr(window.end || '')}" onchange="importUpdateTimeWindow(${groupIdx}, ${idx}, 'end', this.value)">
+      <button type="button" onclick="importRemoveTimeWindow(${groupIdx}, ${idx})" ${arr.length <= 1 ? 'disabled' : ''}>×</button>
+    </div>`).join('');
+  return `
+    <div class="import-tw-panel">
+      <div class="import-pool-head">
+        <div>
+          <div class="import-pool-title">⏰ 时间窗口</div>
+          <div class="import-pool-meta">为当前主题统一维护发布时间窗口；算法会按窗口顺序填槽，排满后自动顺延到下一天。</div>
+        </div>
+      </div>
+      ${windowRows}
+      <button class="import-tw-add-btn" type="button" onclick="importAddTimeWindow(${groupIdx})">+ 添加时间窗口</button>
+      <div class="import-tw-meta">
+        <div class="import-pool-field">
+          <div class="import-pool-label">发布间隔</div>
+          <select onchange="importUpdateInterval(${groupIdx}, this.value)">${intervalOptions}</select>
+        </div>
+        <div class="import-pool-field">
+          <div class="import-pool-label">起始日期</div>
+          <input type="date" value="${escapeAttr(groupState.startDate || getTodayDateString())}" onchange="importUpdateStartDate(${groupIdx}, this.value)">
+        </div>
+        <div class="import-pool-field">
+          <div class="import-pool-label">容量预览</div>
+          <div class="import-pool-topic-help">${importGetCapacityPreview(groupIdx)}</div>
+        </div>
+      </div>
+      <button class="import-tw-apply-btn" type="button" onclick="importApplyTimesByWindows(${groupIdx})" ${notes.length ? '' : 'disabled'}>📅 按窗口重新分配时间</button>
+    </div>`;
+}
+
+function renderImportPoolTags(accounts, platform, groupIdx) {
+  if (!Array.isArray(accounts) || !accounts.length) {
+    return '<span class="import-pool-empty">未添加候选账号</span>';
+  }
+  return accounts.map(account => `
+    <span class="import-pool-tag">
+      ${escapeHtml(account)}
+      <button type="button" onclick="event.stopPropagation(); importRemovePoolAccount('${platform}', '${escapeJsSingleQuotedString(account)}', ${groupIdx})">×</button>
+    </span>`).join('');
+}
+
+function renderImportTablePanel(topicGroup, notes, groupState) {
+  if (!notes.length) {
+    return '<div class="import-table-panel"><div class="import-table-empty">当前主题下没有可导入的图片笔记</div></div>';
+  }
+  return `
+    <div class="import-table-panel">
+      <div class="import-table-scroll">
+        <table class="import-table">
+          <thead>
+            <tr>
+              <th class="import-table-index">序号</th>
+              <th class="import-table-thumb-col">缩略图</th>
+              <th>${renderImportBatchHeader('xhs', '小红书', groupState.xhsAccounts || [])}</th>
+              <th>${renderImportBatchHeader('dy', '抖音', groupState.dyAccounts || [])}</th>
+              <th>时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${notes.map((note, idx) => renderImportTableRow(note, idx, groupState)).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderImportBatchHeader(field, label, accounts) {
+  const isOpen = _importOpenBatchField === field;
+  return `<div class="import-table-header-menu-wrap">
+    <button class="import-table-header-trigger" type="button" onclick="event.stopPropagation(); importToggleBatchMenu('${field}')">${label} ▾</button>
+    ${isOpen ? renderImportBatchMenu(field, accounts) : ''}
   </div>`;
 }
 
-// 账号变更时更新状态 + 渠道下拉可见性
-function importSetNoteField(el) {
+function renderImportBatchMenu(field, accounts) {
+  const accountButtons = (accounts || []).map(account => `
+    <button type="button" onclick="event.stopPropagation(); importApplyColumnBatch('${field}', 'assign', '${escapeJsSingleQuotedString(account)}')">批量改为 ${escapeHtml(account)}</button>`).join('');
+  return `<div class="import-table-header-menu">
+    ${accountButtons || '<button type="button" onclick="event.stopPropagation()">池内暂无账号</button>'}
+    <button type="button" onclick="event.stopPropagation(); importApplyColumnBatch('${field}', 'clear')">清空该列</button>
+    <button type="button" onclick="event.stopPropagation(); importApplyColumnBatch('${field}', 'roundRobin')">重新 round-robin</button>
+  </div>`;
+}
+
+function renderImportTableRow(note, idx, groupState) {
+  const state = importGetNoteState(note.noteKey);
+  const warning = Array.isArray(note.warnings) && note.warnings.length
+    ? `<span class="import-table-note-warn" title="${escapeAttr(note.warnings.join('\n'))}">⚠️</span>`
+    : '';
+  const thumbHtml = note.firstImagePath
+    ? `<img class="import-table-thumb" src="/api/file?path=${encodeURIComponent(note.firstImagePath)}" alt="" loading="lazy">`
+    : '<div class="import-table-thumb-empty">无图</div>';
+  const rowClass = _importSelectedNoteKey === note.noteKey ? 'selected' : '';
+  return `<tr class="${rowClass}" data-note-key="${escapeAttr(note.noteKey)}" onclick="importSelectNoteRow('${escapeJsSingleQuotedString(note.noteKey)}')">
+    <td class="import-table-index">${idx + 1}</td>
+    <td class="import-table-thumb-col">${thumbHtml}</td>
+    <td>
+      <div class="import-table-note">
+        <div>
+          <div class="import-table-note-name">${escapeHtml(note.folderName || `笔记 ${idx + 1}`)}</div>
+          <div class="import-table-status ${state.dirty ? 'manual' : ''}">${state.dirty ? '手动改过' : (state.source === 'batch' ? '批量分配' : '未分配')}</div>
+        </div>
+        ${warning}
+      </div>
+      <div style="margin-top:8px;">
+        ${renderImportAccountSelect('xhs', note.noteKey, state.xhsAccount, groupState.xhsAccounts || [])}
+      </div>
+    </td>
+    <td>
+      <div style="margin-top:24px;">
+        ${renderImportAccountSelect('dy', note.noteKey, state.dyAccount, groupState.dyAccounts || [])}
+      </div>
+    </td>
+    <td>
+      <input class="import-table-time" type="datetime-local" data-note-key="${escapeAttr(note.noteKey)}" value="${escapeAttr(state.publishTime || '')}"
+        onclick="event.stopPropagation()" onchange="importHandleNoteTimeChange(this)">
+    </td>
+  </tr>`;
+}
+
+function renderImportAccountSelect(field, noteKey, currentValue, accounts) {
+  const value = currentValue || '';
+  const options = [`<option value="">未分配</option>`]
+    .concat((accounts || []).map(account => `<option value="${escapeAttr(account)}" ${value === account ? 'selected' : ''}>${escapeHtml(account)}</option>`));
+  if (value && !(accounts || []).includes(value)) {
+    options.push(`<option value="${escapeAttr(value)}" selected>${escapeHtml(value)}（已移出候选池）</option>`);
+  }
+  return `<select class="import-table-select" data-note-key="${escapeAttr(noteKey)}" data-field="${field}"
+    onclick="event.stopPropagation()" onchange="importHandleNoteSelectChange(this)">${options.join('')}</select>`;
+}
+
+function importToggleBatchMenu(field) {
+  _importOpenBatchField = _importOpenBatchField === field ? '' : field;
+  renderImportScanResult();
+}
+
+function importOpenPoolPicker(platform, groupIdx) {
+  if (_importPickerOutsideHandler) {
+    document.removeEventListener('click', _importPickerOutsideHandler);
+    _importPickerOutsideHandler = null;
+  }
+  if (_importPickerKeyHandler) {
+    document.removeEventListener('keydown', _importPickerKeyHandler);
+    _importPickerKeyHandler = null;
+  }
+  _importPickerOpen = platform + ':' + groupIdx;
+  _importPickerSelection = new Set();
+  _importPickerOutsideHandler = (e) => {
+    if (!e.target.closest('.import-pool-picker-popover') && !e.target.closest('.import-pool-picker-trigger')) {
+      importClosePoolPicker();
+    }
+  };
+  setTimeout(() => document.addEventListener('click', _importPickerOutsideHandler), 0);
+  _importPickerKeyHandler = (e) => {
+    if (e.key === 'Escape') importClosePoolPicker();
+  };
+  document.addEventListener('keydown', _importPickerKeyHandler);
+  renderImportScanResult();
+}
+
+function importClosePoolPicker() {
+  _importPickerOpen = null;
+  _importPickerSelection = new Set();
+  if (_importPickerOutsideHandler) {
+    document.removeEventListener('click', _importPickerOutsideHandler);
+    _importPickerOutsideHandler = null;
+  }
+  if (_importPickerKeyHandler) {
+    document.removeEventListener('keydown', _importPickerKeyHandler);
+    _importPickerKeyHandler = null;
+  }
+  renderImportScanResult();
+}
+
+function importTogglePoolPickerItem(account) {
+  if (_importPickerSelection.has(account)) {
+    _importPickerSelection.delete(account);
+  } else {
+    _importPickerSelection.add(account);
+  }
+  renderImportScanResult();
+}
+
+function importApplyPoolPicker() {
+  if (!_importPickerOpen || _importPickerSelection.size === 0) return;
+  const [platform, groupIdxStr] = _importPickerOpen.split(':');
+  const groupIdx = parseInt(groupIdxStr, 10);
+  if (Number.isNaN(groupIdx)) return;
+  for (const account of _importPickerSelection) {
+    importAddPoolAccount(platform, account);
+  }
+  importClosePoolPicker();
+}
+
+function importRenderPoolPicker(platform, groupIdx, allAccounts, currentPool) {
+  const available = allAccounts.filter(a => !currentPool.includes(a.accountName));
+  if (available.length === 0) {
+    return `<div class="import-pool-picker-popover" onclick="event.stopPropagation()"><div class="import-pool-picker-empty">所有账号都已加入池</div></div>`;
+  }
+  const items = available.map(a => `
+    <label class="import-pool-picker-item">
+      <input type="checkbox" ${_importPickerSelection.has(a.accountName) ? 'checked' : ''}
+             onchange="importTogglePoolPickerItem('${escapeJsSingleQuotedString(a.accountName)}')">
+      <span>${escapeHtml(a.accountName)}</span>
+    </label>
+  `).join('');
+  const count = _importPickerSelection.size;
+  return `
+    <div class="import-pool-picker-popover" onclick="event.stopPropagation()">
+      <div class="import-pool-picker-list">${items}</div>
+      <div class="import-pool-picker-actions">
+        <button class="import-pool-picker-cancel" onclick="importClosePoolPicker()">取消</button>
+        <button class="import-pool-picker-apply" ${count === 0 ? 'disabled' : ''} onclick="importApplyPoolPicker()">应用 (${count})</button>
+      </div>
+    </div>`;
+}
+
+function importAddPoolAccount(platform, accountName) {
+  if (!accountName) return;
+  const topicGroup = importGetActiveTopicGroup();
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  const listField = platform === 'xhs' ? 'xhsAccounts' : 'dyAccounts';
+  if (!state[listField].includes(accountName)) state[listField].push(accountName);
+  importGroupState.set(key, state);
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+}
+
+function importRemovePoolAccount(platform, accountName, groupIdx) {
+  const topicGroup = importGetTopicGroups()[groupIdx];
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  const listField = platform === 'xhs' ? 'xhsAccounts' : 'dyAccounts';
+  state[listField] = (state[listField] || []).filter(item => item !== accountName);
+  importGroupState.set(key, state);
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+}
+
+function importSetPoolChannel(value) {
+  const topicGroup = importGetActiveTopicGroup();
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  state.channel = value || '蚁小二';
+  importGroupState.set(key, state);
+  renderImportScanResult();
+  renderContextPreview();
+}
+
+function importApplyRoundRobin() {
+  const topicGroup = importGetActiveTopicGroup();
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const groupState = normalizeImportGroupState(importGroupState.get(key));
+  const notes = importGetNotesForGroup(topicGroup);
+  let xhsCount = 0;
+  let dyCount = 0;
+  let xhsCursor = 0;
+  let dyCursor = 0;
+  notes.forEach(note => {
+    const state = importGetNoteState(note.noteKey);
+    if (!state.dirty && (groupState.xhsAccounts || []).length) {
+      state.xhsAccount = groupState.xhsAccounts[xhsCursor % groupState.xhsAccounts.length] || '';
+      state.source = 'batch';
+      state.dirty = false;
+      importNoteState.set(note.noteKey, state);
+      xhsCursor += 1;
+      xhsCount += 1;
+    }
+    if (!state.dirty && (groupState.dyAccounts || []).length) {
+      state.dyAccount = groupState.dyAccounts[dyCursor % groupState.dyAccounts.length] || '';
+      state.source = 'batch';
+      state.dirty = false;
+      importNoteState.set(note.noteKey, state);
+      dyCursor += 1;
+      dyCount += 1;
+    }
+  });
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+  importShowToast(`已批量分配：小红书 ${xhsCount} 篇，抖音 ${dyCount} 篇`);
+}
+
+function importApplyColumnBatch(field, action, value = '') {
+  const topicGroup = importGetActiveTopicGroup();
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const groupState = normalizeImportGroupState(importGroupState.get(key));
+  const notes = importGetNotesForGroup(topicGroup);
+  const accountField = field === 'xhs' ? 'xhsAccount' : 'dyAccount';
+  const pool = field === 'xhs' ? (groupState.xhsAccounts || []) : (groupState.dyAccounts || []);
+  let changed = 0;
+  let cursor = 0;
+  notes.forEach(note => {
+    const state = importGetNoteState(note.noteKey);
+    if (state.dirty) return;
+    if (action === 'assign') {
+      state[accountField] = value || '';
+      state.source = 'batch';
+    } else if (action === 'clear') {
+      state[accountField] = '';
+      state.source = 'batch';
+    } else if (action === 'roundRobin' && pool.length) {
+      state[accountField] = pool[cursor % pool.length] || '';
+      state.source = 'batch';
+      cursor += 1;
+    } else if (action === 'roundRobin') {
+      state[accountField] = '';
+      state.source = 'batch';
+    }
+    state.dirty = false;
+    importNoteState.set(note.noteKey, state);
+    changed += 1;
+  });
+  _importOpenBatchField = '';
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+  const actionLabel = action === 'assign' ? `改为 ${value}` : (action === 'clear' ? '清空' : '重新 round-robin');
+  importShowToast(`${field === 'xhs' ? '小红书' : '抖音'}列已${actionLabel}，影响 ${changed} 行`);
+}
+
+function importHandleNoteSelectChange(el) {
   const noteKey = el.dataset.noteKey;
   const field = el.dataset.field;
-  const value = el.value;
-  if (!importNoteState.has(noteKey)) {
-    importNoteState.set(noteKey, { xiaohongshuAccount: '', xiaohongshuChannel: '蚁小二', douyinAccount: '' });
-  }
-  importNoteState.get(noteKey)[field] = value;
-  // 渠道下拉随小红书账号联动
-  if (field === 'xiaohongshuAccount') {
-    const card = el.closest('.import-note-card');
-    const channelSel = card && card.querySelector('.import-channel-sel');
-    if (channelSel) channelSel.style.display = value ? '' : 'none';
-  }
+  if (!noteKey || !field) return;
+  const state = importGetNoteState(noteKey);
+  if (field === 'xhs') state.xhsAccount = el.value;
+  if (field === 'dy') state.dyAccount = el.value;
+  state.dirty = true;
+  state.source = 'manual';
+  importNoteState.set(noteKey, state);
   importUpdateButtonState();
+  importSyncNoteRow(noteKey);
+  if (!_importSelectedNoteKey || _importSelectedNoteKey === noteKey) renderContextPreview();
 }
 
-// 批量设置：将当前主题组的批量选择应用到账号为空的卡片
-function importBatchSet(topicName) {
-  const topicKey = topicName.replace(/['"]/g, '_');
-  const xhsEl = document.getElementById(`batchXhs_${topicKey}`);
-  const channelEl = document.getElementById(`batchChannel_${topicKey}`);
-  const dyEl = document.getElementById(`batchDy_${topicKey}`);
-  const batchXhs = xhsEl ? xhsEl.value : '';
-  const batchChannel = channelEl ? channelEl.value : '蚁小二';
-  const batchDy = dyEl ? dyEl.value : '';
-  if (!batchXhs && !batchDy) return;
-
-  // 找到本主题的所有 noteKey
-  const topicGroup = importScanData.find(t => t.topic === topicName);
-  if (!topicGroup) return;
-  let changed = false;
-  for (const note of (topicGroup.notes || [])) {
-    if (note.imageCount === 0) continue;
-    const state = importNoteState.get(note.noteKey);
-    if (!state) continue;
-    if (batchXhs && !state.xiaohongshuAccount) {
-      state.xiaohongshuAccount = batchXhs;
-      state.xiaohongshuChannel = batchChannel;
-      changed = true;
-    }
-    if (batchDy && !state.douyinAccount) {
-      state.douyinAccount = batchDy;
-      changed = true;
-    }
-  }
-  if (changed) {
-    renderImportScanResult(); // 重新渲染以同步下拉选中状态
-    importUpdateButtonState();
-  }
+function importHandleNoteTimeChange(el) {
+  const noteKey = el.dataset.noteKey;
+  if (!noteKey) return;
+  const state = importGetNoteState(noteKey);
+  state.publishTime = el.value;
+  state.dirty = true;
+  state.source = 'manual';
+  importNoteState.set(noteKey, state);
+  importSyncNoteRow(noteKey);
+  if (_importSelectedNoteKey === noteKey) renderContextPreview();
 }
 
-// 自动分配发布时间（纯前端计算，按主题/子文件夹字典序排列）
-function importAutoDistributeTimes() {
-  const startDateVal = document.getElementById('importStartDate')?.value;
-  const maxPerDay = parseInt(document.getElementById('importMaxPerDay')?.value || '2', 10) || 2;
-  const timeVal = document.getElementById('importPublishTime')?.value || '10:00';
-  if (!startDateVal) { alert('请先选择起始日期'); return; }
-
-  // 收集所有有效卡片（按主题字典序 → 子文件夹字典序）
-  const validNoteKeys = [];
-  for (const topicGroup of importScanData) {
-    for (const note of (topicGroup.notes || [])) {
-      if (note.imageCount > 0) validNoteKeys.push(note.noteKey);
-    }
+function importSyncNoteRow(noteKey) {
+  const row = document.querySelector(`tr[data-note-key="${CSS.escape(noteKey)}"]`);
+  if (!row) return;
+  const state = importGetNoteState(noteKey);
+  const statusEl = row.querySelector('.import-table-status');
+  if (statusEl) {
+    statusEl.textContent = state.dirty ? '手动改过' : (state.source === 'batch' ? '批量分配' : '未分配');
+    statusEl.classList.toggle('manual', state.dirty);
   }
+  row.querySelectorAll('select[data-field]').forEach(select => {
+    if (select.dataset.field === 'xhs') select.value = state.xhsAccount || '';
+    if (select.dataset.field === 'dy') select.value = state.dyAccount || '';
+  });
+  const timeInput = row.querySelector('.import-table-time');
+  if (timeInput) timeInput.value = state.publishTime || '';
+}
 
-  // 计算每张卡片的发布时间
-  let dayOffset = 0;
-  let countOnDay = 0;
-  const [hh, mm] = timeVal.split(':').map(Number);
+function importShowNotePreview(noteKey) {
+  const note = importFindNote(noteKey);
+  if (!note) return;
+  const grid = document.getElementById('importImgModalGrid');
+  const title = document.getElementById('importImgModalTitle');
+  if (!grid || !title) return;
+  title.textContent = note.folderName + ' — ' + (note.imageCount || 0) + ' 张图片';
+  grid.innerHTML = (note.images || []).map(img =>
+    `<img src="/api/file?path=${encodeURIComponent(img.path)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px"
+       onerror="this.style.background='#f0f0f0'">`
+  ).join('');
+  document.getElementById('importImgModal').style.display = 'flex';
+}
 
-  for (const noteKey of validNoteKeys) {
-    if (countOnDay >= maxPerDay) {
-      dayOffset++;
-      countOnDay = 0;
-    }
-    const d = new Date(`${startDateVal}T${timeVal}:00`);
-    d.setDate(d.getDate() + dayOffset);
-    const yyyy = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const hStr = String(hh).padStart(2, '0');
-    const mStr = String(mm).padStart(2, '0');
-    const timeStr = `${yyyy}-${mo}-${dd} ${hStr}:${mStr}`;
+function importClosePreview() {
+  document.getElementById('importImgModal').style.display = 'none';
+}
 
-    const state = importNoteState.get(noteKey);
-    if (state) state.publishTime = timeStr;
-    countOnDay++;
-  }
-
-  // 重新渲染卡片（让 input 显示新值）
-  renderImportScanResult();
+function importShowToast(message) {
+  const existing = document.getElementById('importToast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.id = 'importToast';
+  toast.className = 'import-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    if (toast.parentNode) toast.parentNode.removeChild(toast);
+  }, 2200);
 }
 
 // 检查是否有至少一张卡片设置了账号，控制"主题撰写并预览"按钮
 function importUpdateButtonState() {
   const btn = document.getElementById('btnImportPreview');
   if (!btn) return;
-  let hasAccount = false;
-  for (const [, state] of importNoteState) {
-    if (state.xiaohongshuAccount || state.douyinAccount) { hasAccount = true; break; }
-  }
-  btn.disabled = !hasAccount;
+  btn.disabled = importCollectRecords().length === 0;
 }
 
 function renderImportPreview() {
@@ -3025,7 +4324,7 @@ function renderImportPreview() {
   if (importPhase === 'previewing' || importPhase === 'importing') {
     return renderImportPreviewCards();
   }
-  if (!importRootPath) {
+  if (!importRootPaths.length) {
     return `<div style="padding:28px 20px">
       <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:12px">目录结构说明</div>
       <div style="font-size:12px;color:var(--muted);line-height:1.8">
@@ -3041,58 +4340,202 @@ function renderImportPreview() {
       </div>
     </div>`;
   }
-  let totalTopics = importScanData.length;
-  let validNotes = 0, totalImages = 0;
-  for (const t of importScanData) {
-    for (const n of (t.notes || [])) {
-      if (n.imageCount > 0) validNotes++;
-      totalImages += n.imageCount || 0;
+  if (!_importSelectedNoteKey) {
+    return renderImportPreviewSimulation();
+  }
+  return renderImportPreviewDetail();
+}
+
+function renderImportPreviewSimulation() {
+  const accountMap = new Map();
+  for (const topicGroup of importScanData) {
+    for (const note of importGetNotesForGroup(topicGroup)) {
+      const state = importGetNoteState(note.noteKey);
+      if (state.xhsAccount) {
+        const key = `小红书||${state.xhsAccount}`;
+        if (!accountMap.has(key)) accountMap.set(key, []);
+        accountMap.get(key).push({ topic: topicGroup.topic, note });
+      }
+      if (state.dyAccount) {
+        const key = `抖音||${state.dyAccount}`;
+        if (!accountMap.has(key)) accountMap.set(key, []);
+        accountMap.get(key).push({ topic: topicGroup.topic, note });
+      }
     }
   }
-  // 统计已配账号卡片数
-  let accountedCards = 0;
-  for (const [, state] of importNoteState) {
-    if (state.xiaohongshuAccount || state.douyinAccount) accountedCards++;
-  }
-  return `<div style="padding:24px 20px">
-    <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:16px">扫描结果</div>
-    <div class="import-stat-row">
-      <div class="import-stat-box"><div class="import-stat-num">${totalTopics}</div><div class="import-stat-label">个主题</div></div>
-      <div class="import-stat-box"><div class="import-stat-num">${validNotes}</div><div class="import-stat-label">篇笔记</div></div>
-      <div class="import-stat-box"><div class="import-stat-num">${totalImages}</div><div class="import-stat-label">张图片</div></div>
+  const accountCards = Array.from(accountMap.entries()).map(([key, items]) => {
+    const [platform, accountName] = key.split('||');
+    const previewItems = items.slice(0, 6).map(item => `
+      <div class="import-preview-note-item">
+        <span>${escapeHtml(item.topic || '未命名主题')} / ${escapeHtml(item.note.folderName || item.note.noteKey)}</span>
+        <span>${item.note.imageCount || 0} 图</span>
+      </div>`).join('');
+    const remainCount = Math.max(0, items.length - 6);
+    return `<div class="import-preview-account-card">
+      <div class="import-preview-account-head">
+        <div class="import-preview-account-name">${escapeHtml(platform)} · ${escapeHtml(accountName)}</div>
+        <div class="import-preview-account-count">${items.length} 篇</div>
+      </div>
+      <div class="import-preview-note-list">
+        ${previewItems}
+        ${remainCount > 0 ? `<div>还有 ${remainCount} 篇未展开…</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="import-preview-empty">
+    <div>
+      <div class="import-preview-heading">账号视角分配预演</div>
+      <div class="import-preview-subtitle">按当前表格里的分配结果聚合，每个账号会收到哪些笔记一眼可见。</div>
     </div>
-    ${accountedCards > 0 ? `<div style="font-size:12px;color:var(--accent);margin-bottom:12px;text-align:center;">已配置账号 ${accountedCards}/${validNotes} 篇</div>` : ''}
-    <button class="btn btn-primary" style="width:100%;padding:11px;font-size:14px;" ${accountedCards > 0 ? '' : 'disabled'} id="btnImportPreview" onclick="importStartPreview()">
-      主题撰写并预览
-    </button>
-    <p style="font-size:12px;color:var(--muted);margin-top:10px;text-align:center;">在左侧为每篇笔记选择发布账号，然后点此按钮</p>
+    <div class="import-preview-account-list">
+      ${accountCards || '<div class="import-preview-account-card"><div class="import-preview-note-list">当前还没有任何账号分配，先在左侧表格里指定账号。</div></div>'}
+    </div>
+    <div class="import-preview-empty-tip">点击左侧笔记行查看详情</div>
   </div>`;
+}
+
+function renderImportPreviewDetail() {
+  const note = importFindNote(_importSelectedNoteKey);
+  if (!note) {
+    _importSelectedNoteKey = null;
+    return renderImportPreviewSimulation();
+  }
+  const groupInfo = importFindGroupByNoteKey(note.noteKey);
+  const topicGroup = groupInfo?.topicGroup || null;
+  const groupState = normalizeImportGroupState(importGroupState.get(importGroupKey(topicGroup || {})));
+  const state = importGetNoteState(note.noteKey);
+  const images = Array.isArray(note.images) ? note.images : [];
+  if (_importSelectedImageIdx >= images.length) _importSelectedImageIdx = 0;
+  const mainImage = images[_importSelectedImageIdx] || null;
+  const xhsOptions = groupState.xhsAccounts || [];
+  const dyOptions = groupState.dyAccounts || [];
+  return `<div class="import-preview-detail">
+    <div class="import-preview-head">
+      <div>
+        <div class="import-preview-heading">${escapeHtml(note.folderName || '未命名笔记')}</div>
+        <div class="import-preview-subtitle">${escapeHtml(topicGroup?.topic || '未命名主题')} · ${images.length} 张图片</div>
+      </div>
+      <button class="import-preview-back" onclick="importBackToSimulation()">返回预演</button>
+    </div>
+    <div class="import-preview-gallery">
+      ${mainImage ? `<img class="import-preview-main-image" src="/api/file?path=${encodeURIComponent(mainImage.path)}" alt="">` : '<div class="import-preview-main-image"></div>'}
+      <div class="import-preview-thumbs">
+        ${images.map((img, idx) => `<img class="import-preview-thumb ${idx === _importSelectedImageIdx ? 'active' : ''}" src="/api/file?path=${encodeURIComponent(img.path)}" alt="" loading="lazy" onclick="importSelectPreviewImage(${idx})">`).join('')}
+      </div>
+    </div>
+    <div class="import-preview-form">
+      <div class="import-preview-field">
+        <label class="import-preview-label">小红书</label>
+        <select id="importPreviewXhsSelect" class="import-preview-select" onchange="importHandlePreviewFieldChange('xhs', this.value)">
+          <option value="">未分配</option>
+          ${xhsOptions.map(account => `<option value="${escapeAttr(account)}" ${state.xhsAccount === account ? 'selected' : ''}>${escapeHtml(account)}</option>`).join('')}
+          ${state.xhsAccount && !xhsOptions.includes(state.xhsAccount) ? `<option value="${escapeAttr(state.xhsAccount)}" selected>${escapeHtml(state.xhsAccount)}（已移出候选池）</option>` : ''}
+        </select>
+      </div>
+      <div class="import-preview-field">
+        <label class="import-preview-label">抖音</label>
+        <select id="importPreviewDySelect" class="import-preview-select" onchange="importHandlePreviewFieldChange('dy', this.value)">
+          <option value="">未分配</option>
+          ${dyOptions.map(account => `<option value="${escapeAttr(account)}" ${state.dyAccount === account ? 'selected' : ''}>${escapeHtml(account)}</option>`).join('')}
+          ${state.dyAccount && !dyOptions.includes(state.dyAccount) ? `<option value="${escapeAttr(state.dyAccount)}" selected>${escapeHtml(state.dyAccount)}（已移出候选池）</option>` : ''}
+        </select>
+      </div>
+      <div class="import-preview-field">
+        <label class="import-preview-label">发布时间</label>
+        <input id="importPreviewTimeInput" class="import-preview-time" type="datetime-local" value="${escapeAttr(state.publishTime || '')}" onchange="importHandlePreviewFieldChange('publishTime', this.value)">
+      </div>
+    </div>
+    <div class="import-preview-nav">
+      <button onclick="importStepSelectedNote(-1)">上一篇</button>
+      <button onclick="importStepSelectedNote(1)">下一篇</button>
+    </div>
+  </div>`;
+}
+
+function importBackToSimulation() {
+  _importSelectedNoteKey = null;
+  _importSelectedImageIdx = 0;
+  renderImportScanResult();
+  renderContextPreview();
+}
+
+function importSelectPreviewImage(idx) {
+  _importSelectedImageIdx = idx;
+  renderContextPreview();
+}
+
+function importHandlePreviewFieldChange(field, value) {
+  if (!_importSelectedNoteKey) return;
+  const state = importGetNoteState(_importSelectedNoteKey);
+  if (field === 'xhs') state.xhsAccount = value;
+  if (field === 'dy') state.dyAccount = value;
+  if (field === 'publishTime') state.publishTime = value;
+  state.dirty = true;
+  state.source = 'manual';
+  importNoteState.set(_importSelectedNoteKey, state);
+  importUpdateButtonState();
+  importSyncNoteRow(_importSelectedNoteKey);
+}
+
+function importStepSelectedNote(direction) {
+  const topicGroup = importGetActiveTopicGroup();
+  if (!topicGroup) return;
+  const notes = importGetNotesForGroup(topicGroup);
+  if (!notes.length) return;
+  const currentIndex = notes.findIndex(note => note.noteKey === _importSelectedNoteKey);
+  const nextIndex = currentIndex < 0
+    ? 0
+    : (currentIndex + direction + notes.length) % notes.length;
+  _importSelectedNoteKey = notes[nextIndex].noteKey;
+  _importSelectedImageIdx = 0;
+  renderImportScanResult();
+  renderContextPreview();
 }
 
 // ===== P3.0 AI 预览 =====
 
-// 组装要发给 create-records 的 records 列表（从 importScanData + importNoteState）
-function importBuildRecordList() {
+function importMakeRecordKey(record) {
+  return [
+    record.noteKey || '',
+    record.xiaohongshuAccount || '',
+    record.douyinAccount || '',
+    record.xiaohongshuChannel || '',
+  ].join('||');
+}
+
+// 组装要发给 create-records 的 records 列表（从 importScanData + importGroupState + importNoteState）
+// 账号分配策略：轮流分配（round-robin），每篇笔记只发一个账号
+// 选 3 个小红书账号 + 9 篇笔记 → 每个账号分配 3 篇，每篇只发一次
+function importCollectRecords() {
   const records = [];
   for (const topicGroup of importScanData) {
-    for (const note of (topicGroup.notes || [])) {
-      if (note.imageCount === 0) continue;
-      const state = importNoteState.get(note.noteKey) || {};
-      if (!state.xiaohongshuAccount && !state.douyinAccount) continue; // 没配账号跳过
-      records.push({
-        topic: topicGroup.topic,
+    const gs = normalizeImportGroupState(importGroupState.get(importGroupKey(topicGroup)));
+    const validNotes = (topicGroup.notes || []).filter(n => n.imageCount > 0);
+    validNotes.forEach(note => {
+      const state = normalizeImportNoteState(importNoteState.get(note.noteKey));
+      const base = {
+        topic: gs.topic || '',
+        topicOverride: gs.topicOverride || '',
         noteKey: note.noteKey,
         folderPath: note.folderPath,
         images: note.images,
-        xiaohongshuAccount: state.xiaohongshuAccount || '',
-        douyinAccount: state.douyinAccount || '',
-        xiaohongshuChannel: state.xiaohongshuChannel || '蚁小二',
+        xiaohongshuChannel: gs.channel || '蚁小二',
         publishTime: state.publishTime || '',
         title: '', description: '', tags: [],
-      });
-    }
+      };
+      if (state.xhsAccount) {
+        records.push({ ...base, xiaohongshuAccount: state.xhsAccount, douyinAccount: '' });
+      }
+      if (state.dyAccount) {
+        records.push({ ...base, xiaohongshuAccount: '', douyinAccount: state.dyAccount });
+      }
+    });
   }
   return records;
+}
+
+function importBuildRecordList() {
+  return importCollectRecords();
 }
 
 // 点击"主题撰写并预览"
@@ -3100,7 +4543,7 @@ async function importStartPreview() {
   const btn = document.getElementById('btnImportPreview');
   if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
 
-  const records = importBuildRecordList();
+  const records = importCollectRecords();
   if (!records.length) {
     alert('请先为至少一篇笔记选择发布账号');
     if (btn) { btn.disabled = false; btn.textContent = '主题撰写并预览'; }
@@ -3120,10 +4563,17 @@ async function importStartPreview() {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '请求失败');
-    importPreviewData = data.results || [];
+    importPreviewData = (data.results || []).map((item, idx) => {
+      const baseRecord = records[idx] || {};
+      return {
+        ...baseRecord,
+        ...item,
+        __recordKey: importMakeRecordKey(baseRecord || item),
+      };
+    });
     // 初始化每张卡片的决策状态
     for (const r of importPreviewData) {
-      importCardDecisions.set(r.noteKey, { skipped: false, emptyBuild: false });
+      importCardDecisions.set(r.__recordKey, { skipped: false, emptyBuild: false });
     }
   } catch (err) {
     importPhase = 'scan';
@@ -3144,20 +4594,22 @@ function renderImportPreviewCards() {
 
   let cardsHtml = '';
   for (const item of importPreviewData) {
-    const dec = importCardDecisions.get(item.noteKey) || {};
+    const recordKey = item.__recordKey || importMakeRecordKey(item);
+    const cardTitle = [item.noteKey, item.xiaohongshuAccount, item.douyinAccount].filter(Boolean).join(' · ');
+    const dec = importCardDecisions.get(recordKey) || {};
     if (item.status === 'failed' || item.status === 'ai_error') {
       // AI 失败卡片
       cardsHtml += `
-        <div class="import-preview-card import-preview-card--error" data-note-key="${escapeAttr(item.noteKey)}">
-          <div class="import-preview-card-head">${escapeHtml(item.noteKey)}</div>
+        <div class="import-preview-card import-preview-card--error" data-record-key="${escapeAttr(recordKey)}">
+          <div class="import-preview-card-head">${escapeHtml(cardTitle || item.noteKey)}</div>
           <div style="font-size:12px;color:#e53e3e;margin:6px 0;">⚠️ ${escapeHtml(item.message || item.reason || '生成失败')}</div>
           <div style="display:flex;gap:8px;margin-top:8px;">
             <button class="import-preview-action ${dec.skipped ? 'active' : ''}"
-              onclick="importSetCardDecision('${escapeAttr(item.noteKey)}', 'skipped', ${!dec.skipped})">
+              onclick="importSetCardDecision('${escapeJsSingleQuotedString(recordKey)}', 'skipped', ${!dec.skipped})">
               ${dec.skipped ? '✓ 已跳过' : '跳过此条'}
             </button>
             <button class="import-preview-action ${dec.emptyBuild && !dec.skipped ? 'active' : ''}"
-              onclick="importSetCardDecision('${escapeAttr(item.noteKey)}', 'emptyBuild', ${!dec.emptyBuild})">
+              onclick="importSetCardDecision('${escapeJsSingleQuotedString(recordKey)}', 'emptyBuild', ${!dec.emptyBuild})">
               ${dec.emptyBuild && !dec.skipped ? '✓ 空建' : '空建（手动填写）'}
             </button>
           </div>
@@ -3165,7 +4617,7 @@ function renderImportPreviewCards() {
     } else if (item.status === 'skipped') {
       cardsHtml += `
         <div class="import-preview-card import-preview-card--skipped">
-          <div class="import-preview-card-head">${escapeHtml(item.noteKey)}</div>
+          <div class="import-preview-card-head">${escapeHtml(cardTitle || item.noteKey)}</div>
           <div style="font-size:12px;color:var(--muted);">⏭ 已存在相同记录，将跳过</div>
         </div>`;
     } else {
@@ -3174,11 +4626,11 @@ function renderImportPreviewCards() {
       const desc = item.description || '';
       const tags = Array.isArray(item.tags) ? item.tags : [];
       cardsHtml += `
-        <div class="import-preview-card" data-note-key="${escapeAttr(item.noteKey)}">
-          <div class="import-preview-card-head">${escapeHtml(item.noteKey)}</div>
+        <div class="import-preview-card" data-record-key="${escapeAttr(recordKey)}">
+          <div class="import-preview-card-head">${escapeHtml(cardTitle || item.noteKey)}</div>
           <div style="margin-top:8px;">
             <label style="font-size:11px;color:var(--muted);">标题</label>
-            <input class="import-preview-title" data-note-key="${escapeAttr(item.noteKey)}"
+            <input class="import-preview-title" data-record-key="${escapeAttr(recordKey)}"
               value="${escapeAttr(title)}"
               placeholder="（AI 未生成，可手动输入）"
               oninput="importUpdatePreviewItem(this)">
@@ -3186,7 +4638,7 @@ function renderImportPreviewCards() {
           ${desc ? `<div style="margin-top:8px;">
             <details>
               <summary style="font-size:11px;color:var(--muted);cursor:pointer;">正文（点击展开）</summary>
-              <textarea class="import-preview-desc" data-note-key="${escapeAttr(item.noteKey)}"
+              <textarea class="import-preview-desc" data-record-key="${escapeAttr(recordKey)}"
                 oninput="importUpdatePreviewItem(this)"
                 style="width:100%;margin-top:6px;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:6px;resize:vertical;min-height:80px;box-sizing:border-box;">${escapeHtml(desc)}</textarea>
             </details>
@@ -3236,19 +4688,19 @@ function renderImportPreviewCards() {
 
 // 用户在预览卡中编辑标题/正文，更新 importPreviewData
 function importUpdatePreviewItem(el) {
-  const noteKey = el.dataset.noteKey;
-  const item = importPreviewData.find(r => r.noteKey === noteKey);
+  const recordKey = el.dataset.recordKey;
+  const item = importPreviewData.find(r => (r.__recordKey || importMakeRecordKey(r)) === recordKey);
   if (!item) return;
   if (el.classList.contains('import-preview-title')) item.title = el.value;
   if (el.classList.contains('import-preview-desc')) item.description = el.value;
 }
 
 // 用户点击"跳过"或"空建"
-function importSetCardDecision(noteKey, field, value) {
-  const dec = importCardDecisions.get(noteKey) || {};
+function importSetCardDecision(recordKey, field, value) {
+  const dec = importCardDecisions.get(recordKey) || {};
   if (field === 'skipped') { dec.skipped = value; if (value) dec.emptyBuild = false; }
   if (field === 'emptyBuild') { dec.emptyBuild = value; if (value) dec.skipped = false; }
-  importCardDecisions.set(noteKey, dec);
+  importCardDecisions.set(recordKey, dec);
   renderContextPreview();
 }
 
@@ -3264,16 +4716,18 @@ function importResetToScan() {
 
 async function importConfirm() {
   // 组装请求：预览卡数据 + 用户决策
+  const allRecords = importCollectRecords();
   const records = [];
   for (const item of importPreviewData) {
-    const dec = importCardDecisions.get(item.noteKey) || {};
+    const recordKey = item.__recordKey || importMakeRecordKey(item);
+    const dec = importCardDecisions.get(recordKey) || {};
     // 跳过：不发送这条
     if (dec.skipped) continue;
     // 已存在指纹的记录也跳过
     if (item.status === 'skipped') continue;
 
     // 找到原始记录信息（账号、时间、图片路径等）
-    const origRecord = importBuildRecordList().find(r => r.noteKey === item.noteKey);
+    const origRecord = allRecords.find(r => importMakeRecordKey(r) === recordKey);
     if (!origRecord) continue;
 
     if (dec.emptyBuild) {
@@ -3311,7 +4765,14 @@ async function importConfirm() {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || '导入失败');
-    importReportData = data.results || [];
+    importReportData = (data.results || []).map((item, idx) => {
+      const baseRecord = records[idx] || {};
+      return {
+        ...baseRecord,
+        ...item,
+        __recordKey: importMakeRecordKey(baseRecord || item),
+      };
+    });
   } catch (err) {
     importPhase = 'previewing'; // 失败后回到预览状态
     renderContextPreview();
@@ -3359,13 +4820,14 @@ function renderImportReport() {
   const failed = results.filter(r => r.status === 'failed').length;
 
   const itemsHtml = results.map(r => {
+    const recordLabel = [r.noteKey, r.xiaohongshuAccount, r.douyinAccount].filter(Boolean).join(' · ') || r.noteKey;
     if (r.status === 'success') {
       const shortId = r.recordId ? r.recordId.slice(-8) : '-';
       const badge = r.overwritten ? '<span style="margin-left:6px;font-size:10px;color:#888;background:#f0f0f0;padding:1px 5px;border-radius:4px;">已覆盖</span>' : '';
       return `<div class="import-report-item">
         <span style="color:var(--accent);">✅</span>
         <div class="import-report-info">
-          <span class="import-report-key">${escapeHtml(r.noteKey)}${badge}</span>
+          <span class="import-report-key">${escapeHtml(recordLabel)}${badge}</span>
           <span class="import-report-sub">recordId: …${escapeHtml(shortId)}</span>
         </div>
       </div>`;
@@ -3374,12 +4836,12 @@ function renderImportReport() {
       const canOverwrite = r.reason === 'fingerprint_exists' && r.recordId;
       const overwriteBtn = canOverwrite
         ? `<button class="btn btn-sm btn-secondary" style="flex-shrink:0;font-size:11px;padding:3px 8px;"
-            onclick="importOverwriteRecord(${JSON.stringify(r.noteKey)}, ${JSON.stringify(r.recordId)}, ${JSON.stringify(r.existingStatus || '')})">覆盖旧记录</button>`
+            onclick="importOverwriteRecord(${JSON.stringify(r.__recordKey || importMakeRecordKey(r))}, ${JSON.stringify(r.recordId)}, ${JSON.stringify(r.existingStatus || '')})">覆盖旧记录</button>`
         : '';
-      return `<div class="import-report-item" id="report-item-${encodeURIComponent(r.noteKey)}">
+      return `<div class="import-report-item" id="report-item-${encodeURIComponent(r.__recordKey || importMakeRecordKey(r))}">
         <span style="color:var(--muted);">⏭</span>
         <div class="import-report-info">
-          <span class="import-report-key">${escapeHtml(r.noteKey)}</span>
+          <span class="import-report-key">${escapeHtml(recordLabel)}</span>
           <span class="import-report-sub">已存在相同记录${r.existingStatus ? '（' + escapeHtml(r.existingStatus) + '）' : ''}</span>
         </div>
         ${overwriteBtn}
@@ -3392,7 +4854,7 @@ function renderImportReport() {
       <summary style="list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;">
         <span style="color:#e53e3e;">❌</span>
         <div class="import-report-info">
-          <span class="import-report-key">${escapeHtml(r.noteKey)}</span>
+          <span class="import-report-key">${escapeHtml(recordLabel)}</span>
           <span class="import-report-sub">${escapeHtml(reason)} · 点击展开</span>
         </div>
       </summary>
@@ -3431,24 +4893,24 @@ function renderImportReport() {
 
 // ===== P4.2-A 覆盖旧记录 =====
 
-async function importOverwriteRecord(noteKey, overwriteId, existingStatus) {
+async function importOverwriteRecord(recordKey, overwriteId, existingStatus) {
   // 构建确认提示
-  let msg = `确定要覆盖这条已存在的记录吗？\n\n笔记：${noteKey}`;
+  let msg = `确定要覆盖这条已存在的记录吗？\n\n记录：${recordKey}`;
   if (existingStatus === '已发布' || existingStatus === '发布中') {
     msg += `\n\n⚠️ 警告：该记录当前状态为「${existingStatus}」，覆盖后将重置为「待发布」，可能导致重复发布！`;
   }
   if (!confirm(msg)) return;
 
   // 从当前导入数据中找到该笔记的完整记录信息
-  const allRecords = importBuildRecordList();
-  const baseRecord = allRecords.find(r => r.noteKey === noteKey);
+  const allRecords = importCollectRecords();
+  const baseRecord = allRecords.find(r => importMakeRecordKey(r) === recordKey);
   if (!baseRecord) {
     alert('找不到该笔记的数据，请重新导入');
     return;
   }
 
   // 找到预览数据中该笔记的 AI 生成内容（用户可能已编辑过）
-  const previewItem = importPreviewData.find(p => p.noteKey === noteKey);
+  const previewItem = importPreviewData.find(p => (p.__recordKey || importMakeRecordKey(p)) === recordKey);
   const record = {
     ...baseRecord,
     title: previewItem?.title || baseRecord.title || '',
@@ -3469,9 +4931,9 @@ async function importOverwriteRecord(noteKey, overwriteId, existingStatus) {
     const result = (data.results || [])[0];
     if (result && result.status === 'success') {
       // 更新报告数据并重新渲染右栏
-      const idx = importReportData.findIndex(r => r.noteKey === noteKey);
+      const idx = importReportData.findIndex(r => (r.__recordKey || importMakeRecordKey(r)) === recordKey);
       if (idx >= 0) {
-        importReportData[idx] = { noteKey, status: 'success', recordId: overwriteId, overwritten: true };
+        importReportData[idx] = { ...baseRecord, noteKey: baseRecord.noteKey, status: 'success', recordId: overwriteId, overwritten: true, __recordKey: recordKey };
       }
       renderContextPreview();
     } else {
@@ -3486,8 +4948,9 @@ async function importOverwriteRecord(noteKey, overwriteId, existingStatus) {
 // 完全重置导入页状态（关闭报告后可开始新一轮）
 function importResetFull() {
   importPhase = 'scan';
-  importRootPath = null;
+  importRootPaths = [];
   importScanData = [];
+  importGroupState = new Map();
   importNoteState = new Map();
   importPreviewData = [];
   importCardDecisions = new Map();
@@ -3495,13 +4958,16 @@ function importResetFull() {
   importProgressCurrent = 0;
   importProgressTotal = 0;
   importProgressNoteKey = '';
+  _importActiveTopicIdx = 0;
+  _importSelectedNoteKey = null;
+  _importSelectedImageIdx = 0;
+  _importOpenBatchField = '';
   // 重置 UI
-  const display = document.getElementById('importRootPathDisplay');
-  if (display) display.textContent = '未选择';
+  importUpdateRootPathDisplay();
   const scanEl = document.getElementById('importScanResult');
   if (scanEl) scanEl.innerHTML = '<div style="padding:40px 24px;color:var(--muted);text-align:center;font-size:13px;">请先选择素材根目录</div>';
-  const timeBar = document.getElementById('importTimeBar');
-  if (timeBar) timeBar.style.display = 'none';
+  const addBtn = document.getElementById('importAddFolderBtn');
+  if (addBtn) addBtn.style.display = 'none';
   renderContextPreview();
 }
 
@@ -4637,5 +6103,14 @@ window.addEventListener('beforeunload', () => { if (eventSource) eventSource.clo
 document.getElementById('musicPreviewPlayer').addEventListener('ended', () => { currentPreviewUrl = ''; refreshMusicPreviewButtons(); });
 document.getElementById('musicPreviewPlayer').addEventListener('pause', () => { if (!document.getElementById('musicPreviewPlayer').ended) { currentPreviewUrl = ''; refreshMusicPreviewButtons(); } });
 </script>
+<div id="importImgModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center" onclick="importClosePreview()">
+  <div style="background:#fff;border-radius:12px;padding:20px;max-width:800px;max-height:80vh;overflow-y:auto;width:90%" onclick="event.stopPropagation()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:13px;font-weight:600" id="importImgModalTitle">图片预览</span>
+      <button onclick="importClosePreview()" style="background:none;border:none;font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div id="importImgModalGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px"></div>
+  </div>
+</div>
 </body>
 </html>
