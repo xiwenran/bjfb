@@ -2,6 +2,34 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { mapWithConcurrency } = require('./async-utils.js');
+const { readImportRecovery, saveImportRecovery } = require('./config-store.js');
+
+// 缓存 24 小时(超过认为飞书 fileToken 可能失效,重新上传更安全)
+// TODO(B4 冷眼审查 P0-5): 24h 没查证,审查员建议保守降到 1h
+const RECOVERY_TTL_MS = 24 * 3600 * 1000;
+
+function makeRecoveryKey(imagePath) {
+  try {
+    const stat = fs.statSync(imagePath);
+    return `${imagePath}|${stat.size}|${Math.floor(stat.mtimeMs)}`;
+  } catch (_) {
+    // 文件不存在 fallback 用纯路径(后续上传会失败,这里只是为了不崩)
+    return imagePath;
+  }
+}
+
+// recovery 内存缓存:同一进程多次上传时不必反复读盘
+// TODO(B4 冷眼审查 P0-2): 单例 + JSON.stringify 期间被并发 mutate 风险,需要浅拷贝再序列化
+let _recoveryCache = null;
+function getRecovery() {
+  if (_recoveryCache === null) _recoveryCache = readImportRecovery();
+  return _recoveryCache;
+}
+function persistRecovery() {
+  if (_recoveryCache !== null) saveImportRecovery(_recoveryCache);
+}
+// 给单元测试 / 异常清理用,正常流程不需要
+function _resetRecoveryCache() { _recoveryCache = null; }
 
 function parseAttachmentSortKey(name) {
   const normalizedName = String(name || '')
@@ -280,13 +308,22 @@ class FeishuClient {
   }
 
   async updateRecord(recordId, fields) {
-    await this.requestWithRetry(token =>
+    const resp = await this.requestWithRetry(token =>
       axios.put(
         `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
         { fields },
         { headers: { Authorization: `Bearer ${token}` } }
       )
     );
+    // 同 createRecord:飞书 HTTP 200 不代表业务成功,必须检查 code
+    const data = resp.data || {};
+    if (data.code && data.code !== 0) {
+      const err = new Error(`飞书 updateRecord 失败: code=${data.code} msg=${data.msg || '未知'} (recordId=${recordId})`);
+      err.feishuCode = data.code;
+      err.feishuMsg = data.msg;
+      err.feishuFields = fields;
+      throw err;
+    }
   }
 
   async markPublished(recordId) {
@@ -544,6 +581,23 @@ class FeishuClient {
     return (resp.data.data?.items || []).map(item => item.field_name);
   }
 
+  // 在多维表格中新建一个文本类型字段（type=1）
+  // 用于导入功能自动创建「导入指纹」等辅助字段
+  async createTextField(fieldName) {
+    const resp = await this.requestWithRetry(token =>
+      axios.post(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
+        { field_name: fieldName, type: 1 },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+    );
+    const data = resp.data || {};
+    if (data.code && data.code !== 0) {
+      throw new Error(`飞书创建字段「${fieldName}」失败: code=${data.code} msg=${data.msg || '未知'}`);
+    }
+    return data.data?.field?.field_name || fieldName;
+  }
+
   async createRecord(fields) {
     const resp = await this.requestWithRetry(token =>
       axios.post(
@@ -552,13 +606,33 @@ class FeishuClient {
         { headers: { Authorization: `Bearer ${token}` } }
       )
     );
-    return { recordId: resp.data.data?.record?.record_id || '' };
+    // 飞书 API 即使 HTTP 200 也可能返回业务错误(code != 0)。
+    // 此前实现用 `?.||''` 静默吞噬,导致 server.js 误报 success 但飞书实际未建单。
+    // 修复:遇到业务错误或 record_id 缺失,都抛出明确异常给上层。
+    const data = resp.data || {};
+    if (data.code && data.code !== 0) {
+      const err = new Error(`飞书 createRecord 失败: code=${data.code} msg=${data.msg || '未知'}`);
+      err.feishuCode = data.code;
+      err.feishuMsg = data.msg;
+      err.feishuFields = fields; // 排查用,server 端可写诊断日志
+      throw err;
+    }
+    const recordId = data.data?.record?.record_id;
+    if (!recordId) {
+      const err = new Error(`飞书 createRecord 返回 200 但没有 record_id (响应: ${JSON.stringify(data).slice(0, 500)})`);
+      err.feishuFields = fields;
+      throw err;
+    }
+    return { recordId };
   }
 
   // imagePaths: string[] - 待上传的本地图片绝对路径
   // options.concurrency: 并发数,默认 3(飞书 medias/upload_all 默认 QPS 50,3 路远低于阈值)
-  // options.onProgress: (done, total, currentItem) => void  每张完成后回调,供 SSE 推进度
+  // options.onProgress: (done, total, currentItem, fromCache) => void  每张完成后回调
+  // options.useRecovery: 是否启用断点续传缓存,默认 true。整批中途失败时已成功的会被
+  //   缓存,用户重试时跳过这些图,只重传失败的。文件 size/mtime 任一变化即视为新图。
   // 返回值顺序与 imagePaths 输入顺序严格一致(mapWithConcurrency 按 index 写回)
+  // TODO(B4 冷眼审查 P0-4): cache hit 时未把 _meta.truncated 透出,需要在 server 层补齐
   async uploadLocalImagesToFeishu(imagePaths, options = {}) {
     const crypto = require('crypto');
     const FormData = require('form-data');
@@ -567,17 +641,64 @@ class FeishuClient {
 
     const concurrency = Math.max(1, Number(options.concurrency) || 3);
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+    const useRecovery = options.useRecovery !== false; // 默认启用
     let doneCount = 0;
     const total = list.length;
+    const recoveryCache = useRecovery ? getRecovery() : null;
+    const now = Date.now();
+    let recoveryDirty = false;
+
+    const tryRecover = (imagePath) => {
+      if (!recoveryCache) return null;
+      const key = makeRecoveryKey(imagePath);
+      const entry = recoveryCache[key];
+      if (!entry || !entry.fileToken) return null;
+      // 过期(>24h)清理掉
+      if (entry.uploadedAt && now - entry.uploadedAt > RECOVERY_TTL_MS) {
+        delete recoveryCache[key];
+        recoveryDirty = true;
+        return null;
+      }
+      return entry.fileToken;
+    };
+
+    const recordRecovery = (imagePath, fileToken) => {
+      if (!recoveryCache || !fileToken) return;
+      const key = makeRecoveryKey(imagePath);
+      recoveryCache[key] = { fileToken, uploadedAt: Date.now() };
+      recoveryDirty = true;
+    };
 
     const uploadOne = async (imagePath) => {
       const originalName = path.basename(imagePath);
+
+      // P0-7: 提前检查文件可用性,给出明确错误而不是让飞书返回神秘的 HTTP 400
+      // fs.createReadStream() 对不存在的文件不会立即抛出,而是返回空流,
+      // axios 发送空流时飞书会返回 HTTP 400 "Bad Request",根因完全不可见。
+      if (!fs.existsSync(imagePath)) {
+        throw new Error(`图片文件不存在: ${imagePath}`);
+      }
+      let stat;
+      try {
+        stat = fs.statSync(imagePath);
+      } catch (e) {
+        throw new Error(`无法读取图片文件信息: ${imagePath}: ${e.message}`);
+      }
+      if (stat.size === 0) {
+        throw new Error(`图片文件为空 (0 字节): ${imagePath}`);
+      }
+
+      // 创建流并监听错误(TOCTOU 兜底:stat 之后到 axios 发送期间文件被删或权限变化)
+      const stream = fs.createReadStream(imagePath);
+      let streamError = null;
+      stream.once('error', (e) => { streamError = e; });
+
       const form = new FormData();
       form.append('file_name', `${crypto.randomBytes(6).toString('hex')}_${originalName}`);
       form.append('parent_type', 'bitable_file');
       form.append('parent_node', this.appToken);
-      form.append('size', fs.statSync(imagePath).size);
-      form.append('file', fs.createReadStream(imagePath));
+      form.append('size', stat.size);
+      form.append('file', stream);
 
       const resp = await this.requestWithRetry(token =>
         axios.post(
@@ -592,41 +713,101 @@ class FeishuClient {
         )
       );
 
-      return {
-        originalName,
-        fileToken: resp.data.data?.file_token || '',
-      };
+      // 流错误优先:如果传输过程中文件被删/断开,优先报流错误
+      if (streamError) {
+        throw new Error(`图片读取失败(传输中断): ${imagePath}: ${streamError.message}`);
+      }
+
+      // P0-6: 检查飞书上传业务错误(HTTP 200 + code!=0)
+      // 此前 `file_token || ''` 静默返回空字符串,导致 createRecord 建单成功但素材为空
+      const data = resp.data || {};
+      if (data.code && data.code !== 0) {
+        throw new Error(`飞书上传失败: code=${data.code} msg=${data.msg || '未知'} (${imagePath})`);
+      }
+      const fileToken = data.data?.file_token;
+      if (!fileToken) {
+        throw new Error(`飞书上传返回空 fileToken (${imagePath}): ${JSON.stringify(data).slice(0, 200)}`);
+      }
+
+      return { originalName, fileToken };
     };
 
-    return await mapWithConcurrency(list, concurrency, async (imagePath) => {
-      const result = await uploadOne(imagePath);
-      doneCount += 1;
-      if (onProgress) {
-        try { onProgress(doneCount, total, result.originalName); } catch (_) {}
+    try {
+      return await mapWithConcurrency(list, concurrency, async (imagePath) => {
+        const originalName = path.basename(imagePath);
+        // 优先查 recovery cache
+        const cachedToken = tryRecover(imagePath);
+        if (cachedToken) {
+          doneCount += 1;
+          if (onProgress) {
+            try { onProgress(doneCount, total, originalName, true /* fromCache */); } catch (_) {}
+          }
+          return { originalName, fileToken: cachedToken };
+        }
+        // cache miss → 真上传
+        const result = await uploadOne(imagePath);
+        recordRecovery(imagePath, result.fileToken);
+        doneCount += 1;
+        if (onProgress) {
+          try { onProgress(doneCount, total, result.originalName, false); } catch (_) {}
+        }
+        return result;
+      });
+    } finally {
+      // 无论成功还是失败,把已记录的 recovery 落盘(失败时尤其重要,
+      // 让用户重试时能跳过已成功的图)
+      // TODO(B4 冷眼审查 P1-1): persistRecovery 失败被静默 catch,改 console.error
+      if (recoveryDirty) {
+        try { persistRecovery(); } catch (_) {}
       }
-      return result;
-    });
+    }
+  }
+
+  // 整批导入完成后,清掉本批用过的 recovery 条目,避免长期堆积。
+  // 调用时机:server.js 在 create-records 全部 records 处理完后调用。
+  // TODO(B4 冷眼审查 P0-1): 同图被两条记录引用时会误删失败记录的 cache,
+  // 需要 Map<imagePath, Set<noteKey>> 反向索引,只清"全部 noteKey 都成功"的图
+  clearImportRecoveryFor(imagePaths) {
+    if (!Array.isArray(imagePaths) || imagePaths.length === 0) return;
+    const cache = getRecovery();
+    let dirty = false;
+    for (const p of imagePaths) {
+      const key = makeRecoveryKey(p);
+      if (key in cache) {
+        delete cache[key];
+        dirty = true;
+      }
+    }
+    if (dirty) {
+      try { persistRecovery(); } catch (_) {}
+    }
   }
 
   async findRecordByFingerprint(fingerprint) {
     // 使用 contains 而非 is，支持「双平台导入」场景下同一字段存储多个指纹（换行分隔）
-    const resp = await this.requestWithRetry(token =>
-      axios.post(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
-        {
-          filter: {
-            conjunction: 'and',
-            conditions: [
-              { field_name: '导入指纹', operator: 'contains', value: [fingerprint] }
-            ],
+    // 若用户表格不存在「导入指纹」字段，飞书 search API 返回空结果或报错——均优雅降级
+    try {
+      const resp = await this.requestWithRetry(token =>
+        axios.post(
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+          {
+            filter: {
+              conjunction: 'and',
+              conditions: [
+                { field_name: '导入指纹', operator: 'contains', value: [fingerprint] }
+              ],
+            },
+            page_size: 1,
           },
-          page_size: 1,
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-    );
-    const items = resp.data.data?.items || [];
-    return items[0]?.record_id || null;
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+      );
+      const items = resp.data.data?.items || [];
+      return items[0]?.record_id || null;
+    } catch (_) {
+      // 「导入指纹」字段不存在或网络失败时，返回 null（跳过查重，继续导入）
+      return null;
+    }
   }
 }
 

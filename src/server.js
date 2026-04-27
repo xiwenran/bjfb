@@ -432,9 +432,10 @@ const server = http.createServer(async (req, res) => {
     try {
       ensureFeishuConfigReady();
       const REQUIRED_IMPORT_FIELDS = [
-        '笔记主题', '标题', '正文', '标签', '素材', '内容类型',
+        '笔记主题', '标题', '正文', '标签', '素材',
         '发布时间', '小红书账号', '小红书发布状态', '小红书发布渠道',
-        '抖音账号', '抖音发布状态', '导入指纹'
+        '抖音账号', '抖音发布状态',
+        // 「内容类型」「导入指纹」是可选增强字段，表格没有也不影响导入
       ];
       const fields = await feishu.getTableFields();
       // getTableFields() 已返回 string[]，直接用
@@ -634,14 +635,58 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/import/create-records' && req.method === 'POST') {
+    // 诊断日志写到 ~/Library/Caches/Zhifa/logs/import-debug.log
+    // 跟 publisher-debug.log 同模式,记录 createRecord/updateRecord 的请求 fields + 飞书响应,
+    // 用户报「成功但表格里没记录」时直接看这个文件就能定位
+    const importDebugLog = (() => {
+      try {
+        const paths = getRuntimePaths();
+        if (!fs.existsSync(paths.logsDir)) fs.mkdirSync(paths.logsDir, { recursive: true });
+        return path.join(paths.logsDir, 'import-debug.log');
+      } catch (_) { return null; }
+    })();
+    const writeImportLog = (label, obj) => {
+      if (!importDebugLog) return;
+      try {
+        if (fs.existsSync(importDebugLog)) {
+          const stat = fs.statSync(importDebugLog);
+          if (stat.size > 10 * 1024 * 1024) {
+            fs.writeFileSync(importDebugLog, `===== [${new Date().toISOString()}] 日志超 10MB,已自动清空 =====\n`, 'utf-8');
+          }
+        }
+        const line = `\n===== [${new Date().toISOString()}] ${label} =====\n${typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)}\n`;
+        fs.appendFileSync(importDebugLog, line, 'utf-8');
+      } catch (_) {}
+    };
+
     try {
       ensureFeishuConfigReady();
       const body = JSON.parse(await readBody(req) || '{}');
       const { dryRun = false, records = [] } = body;
 
+      // 预取飞书字段列表，用于判断可选字段是否存在（避免 FieldNameNotFound）
+      const tableFieldNames = await feishu.getTableFields().catch(() => []);
+      const tableFieldSet = new Set(Array.isArray(tableFieldNames) ? tableFieldNames : []);
+
+      // 「导入指纹」字段不存在时自动创建（文本类型）
+      // 用于跨批次查重，避免重复导入同一内容
+      if (!tableFieldSet.has('导入指纹')) {
+        try {
+          await feishu.createTextField('导入指纹');
+          tableFieldSet.add('导入指纹');
+          writeImportLog('自动创建字段「导入指纹」成功', {});
+        } catch (createErr) {
+          // 创建失败不阻断导入，只是这批次查重和指纹写入会跳过
+          writeImportLog('自动创建字段「导入指纹」失败（已跳过）', { error: createErr.message });
+        }
+      }
+
       const results = [];
       const total = records.length;
       let current = 0;
+      // 跟踪每条记录用到的图片路径,本批结束后清掉成功记录的 recovery 缓存,
+      // 失败的保留供下次重试复用(B4 断点续传)
+      const recordImagesByNoteKey = new Map();
       // 同主题 AI 结果缓存：topic → {title, description, tags}
       // key 用归一化后的字符串(全角空格→半角、连续空白合并、去首尾空白),
       // 防止「主题A 」「主题A」「主题A 」(尾随全角空格)被当成不同 key 重复调 AI
@@ -849,14 +894,20 @@ const server = http.createServer(async (req, res) => {
 
         // Step 4: 图片上传（B-3）
         // 并发 3 路 + 每张完成后推 SSE,UI 能看到「正在传 5/16 张」之类的实时进度
+        // 启用断点续传 (useRecovery=true,默认):中途失败的下次重试自动跳过已成功的图
+        const imagePathsForRecord = images.map(i => i.path);
+        recordImagesByNoteKey.set(noteKey, imagePathsForRecord);
         let uploadedTokens = [];
         try {
           const uploaded = await feishu.uploadLocalImagesToFeishu(
-            images.map(i => i.path),
+            imagePathsForRecord,
             {
               concurrency: 3,
-              onProgress: (done, totalImages, fileName) => {
+              useRecovery: true,
+              onProgress: (done, totalImages, fileName, fromCache) => {
                 pushImageProgress(noteKey, done, totalImages, fileName);
+                // fromCache=true 说明这张图复用了之前批次上传成功的缓存
+                // 不影响 done 计数,只影响日志可读性,这里暂不区分
               },
             }
           );
@@ -870,9 +921,11 @@ const server = http.createServer(async (req, res) => {
         // Step 5: 组装飞书字段并建单（B-3）
         const fields = {
           '笔记主题': topic,
-          '内容类型': '图文',
-          '导入指纹': storedFingerprint,   // 双平台时存双指纹（换行分隔）
         };
+        // 「内容类型」「导入指纹」属于可选增强字段，用户表格中可能不存在
+        // 只在字段实际存在时才写入，避免 code=1254045 FieldNameNotFound
+        if (tableFieldSet.has('内容类型')) fields['内容类型'] = '图文';
+        if (tableFieldSet.has('导入指纹') && storedFingerprint) fields['导入指纹'] = storedFingerprint;
         if (aiTitle) fields['标题'] = aiTitle;
         if (aiDescription) fields['正文'] = aiDescription;
         if (aiTags.length) fields['标签'] = aiTags.join('\n');
@@ -913,9 +966,26 @@ const server = http.createServer(async (req, res) => {
           ...(aiWarning ? { aiDegraded: true, aiError: aiWarning } : {}),
           ...(aiTruncMeta ? { aiImagesTruncated: aiTruncMeta } : {}),
         };
+        // 写一份诊断:noteKey + 即将提交的 fields(脱敏:不打印 file_token 完整值,只打数量)
+        writeImportLog(`即将建单 noteKey=${noteKey}`, {
+          isOverwrite,
+          overwriteId: isOverwrite ? overwriteId : null,
+          fieldsKeys: Object.keys(fields),
+          fieldSamples: {
+            笔记主题: fields['笔记主题'],
+            标题: fields['标题'] || '(空)',
+            正文长度: (fields['正文'] || '').length,
+            标签数: (fields['标签'] || '').split('\n').filter(Boolean).length,
+            素材张数: (fields['素材'] || []).length,
+            小红书账号: fields['小红书账号'] || '(无)',
+            抖音账号: fields['抖音账号'] || '(无)',
+            发布时间: fields['发布时间'] || '(无)',
+          },
+        });
         try {
           if (isOverwrite) {
             await feishu.updateRecord(overwriteId, fields);
+            writeImportLog(`updateRecord 成功 noteKey=${noteKey}`, { recordId: overwriteId });
             results.push({
               noteKey,
               status: 'success',
@@ -925,6 +995,7 @@ const server = http.createServer(async (req, res) => {
             });
           } else {
             const { recordId } = await feishu.createRecord(fields);
+            writeImportLog(`createRecord 成功 noteKey=${noteKey}`, { recordId });
             results.push({
               noteKey,
               status: 'success',
@@ -934,9 +1005,41 @@ const server = http.createServer(async (req, res) => {
           }
           pushImportProgress(noteKey, 'success');
         } catch (feishuErr) {
-          results.push({ noteKey, status: 'failed', reason: 'feishu_error', message: feishuErr.message });
+          // 飞书业务错误(code != 0 / record_id 缺失)现在能拿到具体 message
+          // 把飞书原始 code/msg 也透给前端,失败 UI 不再是模糊的「feishu_error」
+          writeImportLog(`建单失败 noteKey=${noteKey}`, {
+            message: feishuErr.message,
+            feishuCode: feishuErr.feishuCode || null,
+            feishuMsg: feishuErr.feishuMsg || null,
+            stack: feishuErr.stack,
+          });
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'feishu_error',
+            message: feishuErr.message,
+            ...(feishuErr.feishuCode ? { feishuCode: feishuErr.feishuCode } : {}),
+            ...(feishuErr.feishuMsg ? { feishuMsg: feishuErr.feishuMsg } : {}),
+          });
           pushImportProgress(noteKey, 'failed');
         }
+      }
+
+      // 整批结束:对成功的记录,把对应图片路径从 recovery 缓存清掉(避免长期堆积);
+      // 失败的记录不清,保留缓存供用户重试时复用,实现断点续传
+      try {
+        const successfulImagePaths = [];
+        for (const r of results) {
+          if (r.status === 'success' && recordImagesByNoteKey.has(r.noteKey)) {
+            const paths = recordImagesByNoteKey.get(r.noteKey);
+            if (Array.isArray(paths)) successfulImagePaths.push(...paths);
+          }
+        }
+        if (successfulImagePaths.length > 0) {
+          feishu.clearImportRecoveryFor(successfulImagePaths);
+        }
+      } catch (_) {
+        // 清理失败不影响主流程,缓存条目最迟 24h 自然过期
       }
 
       return sendJson(res, { results });

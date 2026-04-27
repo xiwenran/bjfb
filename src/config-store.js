@@ -60,6 +60,7 @@ const DEFAULT_CONFIG = {
     apiBaseUrl: '',
     apiKey: '',
     model: 'gpt-4o-mini',
+    maxImages: 3, // 发给 AI 的最大图片数，默认 3（8 张 base64=16MB，容易超 120s timeout）
   },
   isMasterPublisher: true,
 };
@@ -151,6 +152,7 @@ function getRuntimePaths() {
     ledgerPath: path.join(dataDir, 'publish-ledger.json'),
     historyPath: path.join(dataDir, 'publish-history.json'),
     aiWritingCachePath: path.join(dataDir, 'ai-writing-cache.json'),
+    importRecoveryPath: path.join(dataDir, 'import-recovery.json'),
     legacyConfigPath: LEGACY_CONFIG_PATH,
     legacyLedgerPath: LEGACY_LEDGER_PATH,
     legacyNamedConfigPaths: LEGACY_APP_DIRECTORY_NAMES.map((name) => path.join(configBaseDir, name, 'config.json')),
@@ -332,6 +334,23 @@ function saveAiWritingCache(data) {
   fs.renameSync(tmp, paths.aiWritingCachePath);
 }
 
+// 导入断点续传缓存:整批上传中途失败时,已成功上传到飞书的图片 fileToken
+// 缓存到这里,用户重试时直接复用,避免重复上传产生孤儿文件 + 无谓流量。
+// 缓存 key 格式:`${imagePath}|${size}|${mtime}` —— 任一变化即视为不同图,自动失效
+// 缓存过期:24 小时(飞书 attachment fileToken 长期有效,但保守起见限期)
+function readImportRecovery() {
+  const paths = getRuntimePaths();
+  return readJsonFile(paths.importRecoveryPath, {}) || {};
+}
+
+function saveImportRecovery(data) {
+  const paths = getRuntimePaths();
+  ensureRuntimeDirs(paths);
+  const tmp = `${paths.importRecoveryPath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data || {}, null, 2), 'utf-8');
+  fs.renameSync(tmp, paths.importRecoveryPath);
+}
+
 function getRecordTempDir(recordId) {
   const paths = getRuntimePaths();
   const safeRecordId = String(recordId || 'unknown').replace(/[\\/:*?"<>|]/g, '_');
@@ -366,4 +385,6 @@ module.exports = {
   normalizeConfig,
   readAiWritingCache,
   saveAiWritingCache,
+  readImportRecovery,
+  saveImportRecovery,
 };

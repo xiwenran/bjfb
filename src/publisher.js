@@ -3,7 +3,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const axios = require('axios');
 const { publishToXiaohongshuViaBitBrowser } = require('./bitbrowser-xhs.js');
-const { loadConfig, readLedger, saveLedger, readHistory, saveHistory, getHistoryPath } = require('./config-store.js');
+const { loadConfig, readLedger, saveLedger, readHistory, saveHistory, getHistoryPath, getRuntimePaths } = require('./config-store.js');
 const { mapWithConcurrency } = require('./async-utils.js');
 const {
   normalizePublishedEntry,
@@ -373,10 +373,13 @@ function buildRichTopicDescription(description, tags = [], topics = []) {
 }
 
 function buildContentPublishForm(platformName, publishType, params) {
+  // covers 只视频/文章需要;图文(imageText)按蚁小二 v1.6 官方文档不应该有此字段
   const form = {
     formType: 'task',
-    covers: [],
   };
+  if (publishType === 'video' || publishType === 'article') {
+    form.covers = [];
+  }
 
   const normalizedDescription = params.normalizedDescription !== undefined
     ? params.normalizedDescription
@@ -390,6 +393,11 @@ function buildContentPublishForm(platformName, publishType, params) {
     form.visibleType = 0;
     form.allow_save = 1;
   } else if (publishType === 'imageText') {
+    // 注:declaration / type / visibleType 三个字段在蚁小二 v1.6 官方
+    // image-text/xiaohongshu.md & douyin.md 都没列出,理论上是非官方字段。
+    // 但 zhifa 历史上一直带这三个字段发布且持续成功,删除它们没有反证支持。
+    // 本次保留,仅顺便补齐 OldImage.format 与 contentPublishForm.images 两个
+    // 文档明确要求的必填项。等真有反证(蚁小二明确拒收这些字段)再清理。
     form.title = params.title || '';
     if (normalizedDescription) form.description = normalizedDescription;
     form.declaration = 0;
@@ -741,6 +749,17 @@ async function publishContent(params) {
   }
 
   if (publishType === 'imageText' && params.imagePaths?.length) {
+    // 蚁小二 v1.6 OldImage 必填字段:width / height / size / key / format
+    // 官方文档列举的 format 值:jpg / png / jpeg / gif
+    // whitelist 处理:只接受文档列出的 4 种,其他(bak / heic / webp / 无扩展名 URL 等)统一归 jpg
+    const ALLOWED_FORMATS = new Set(['jpg', 'png', 'gif']);
+    const inferFormat = (p) => {
+      const ext = path.extname(p || '').slice(1).toLowerCase();
+      if (!ext) return 'jpg';
+      if (ext === 'jpeg') return 'jpg';
+      if (ALLOWED_FORMATS.has(ext)) return ext;
+      return 'jpg'; // 未识别格式兜底,避免 OldImage.format 给蚁小二一个未知值
+    };
     const uploadConcurrency = Math.max(1, Number(params.rules?.uploadConcurrency) || 3);
     const imageObjects = await mapWithConcurrency(params.imagePaths, uploadConcurrency, async (imagePath) => {
       if (imagePath.startsWith('http')) {
@@ -749,6 +768,7 @@ async function publishContent(params) {
           width: params.coverWidth || 1080,
           height: params.coverHeight || 1920,
           size: params.coverSize || 0,
+          format: inferFormat(imagePath),
         };
       }
 
@@ -758,10 +778,14 @@ async function publishContent(params) {
         width: params.coverWidth || 1080,
         height: params.coverHeight || 1920,
         size: imageInfo.size,
+        format: inferFormat(imagePath),
       };
     });
 
+    // 外层保留(顶层 accountForm 由 index.md 1.4 节定义为必填)
     accountForm.images = imageObjects;
+    // 同时挂到 contentPublishForm.images(平台级,各平台 .md 文档定义为必填)
+    contentPublishForm.images = imageObjects;
     if (!accountForm.coverKey && imageObjects.length > 0) {
       const first = imageObjects[0];
       if (first.key) accountForm.coverKey = first.key;
@@ -771,6 +795,7 @@ async function publishContent(params) {
         width: first.width,
         height: first.height,
         size: first.size,
+        ...(first.format ? { format: first.format } : {}),
       };
     }
   }
@@ -791,7 +816,69 @@ async function publishContent(params) {
     },
   };
 
-  const data = await publishTaskApi(yixiaoerConfig, payload);
+  // 诊断日志:写到 ~/Library/Caches/Zhifa/logs/publisher-debug.log
+  // 自动封顶:文件超过 10MB 时自动清空(rotate 太复杂,这里走简单粗暴的 truncate),
+  // 防止后台跑久了塞满磁盘
+  const DEBUG_LOG_MAX_BYTES = 10 * 1024 * 1024;
+  const debugLogFile = (() => {
+    try {
+      const paths = getRuntimePaths();
+      if (!fs.existsSync(paths.logsDir)) fs.mkdirSync(paths.logsDir, { recursive: true });
+      return path.join(paths.logsDir, 'publisher-debug.log');
+    } catch (e) {
+      return null;
+    }
+  })();
+  const writeDebugLog = (label, obj) => {
+    if (!debugLogFile) return;
+    try {
+      // 写之前检查 size,超过 10MB 直接清空重来
+      if (fs.existsSync(debugLogFile)) {
+        const stat = fs.statSync(debugLogFile);
+        if (stat.size > DEBUG_LOG_MAX_BYTES) {
+          fs.writeFileSync(debugLogFile, `===== [${new Date().toISOString()}] 日志超过 ${Math.round(DEBUG_LOG_MAX_BYTES / 1024 / 1024)}MB,已自动清空 =====\n`, 'utf-8');
+        }
+      }
+      const line = `\n===== [${new Date().toISOString()}] ${label} =====\n${typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)}\n`;
+      fs.appendFileSync(debugLogFile, line, 'utf-8');
+    } catch (_) {}
+  };
+
+  writeDebugLog('蚁小二请求 payload 诊断 (shape)', {
+    publishType,
+    publishChannel: finalPublishChannel,
+    platforms: platformNames,
+    coverKey: payload.coverKey,
+    accountFormShape: {
+      hasOuterImages: Array.isArray(accountForm.images),
+      outerImageCount: accountForm.images?.length || 0,
+      cpfHasImages: Array.isArray(contentPublishForm.images),
+      cpfImageCount: contentPublishForm.images?.length || 0,
+      hasCover: !!accountForm.cover,
+      contentPublishFormKeys: Object.keys(contentPublishForm),
+      firstImageSample: accountForm.images?.[0] || null,
+      coverSample: accountForm.cover || null,
+    },
+    rawAccountFormKeys: Object.keys(accountForm),
+    rawPayloadKeys: Object.keys(payload),
+  });
+  writeDebugLog('完整 contentPublishForm', contentPublishForm);
+  writeDebugLog('完整 accountForm (含全部 images)', accountForm);
+  writeDebugLog('完整 payload (发往 /taskSets/v2)', payload);
+
+  let data;
+  try {
+    data = await publishTaskApi(yixiaoerConfig, payload);
+    writeDebugLog('蚁小二 API 成功响应', data);
+  } catch (apiErr) {
+    writeDebugLog('蚁小二 API 失败响应', {
+      message: apiErr?.message,
+      stack: apiErr?.stack,
+      response: apiErr?.response?.data,
+      status: apiErr?.response?.status,
+    });
+    throw apiErr;
+  }
   const finalized = finalPublishChannel !== 'cloud';
   return {
     success: true,
