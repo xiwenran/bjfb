@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const Scheduler = require('./scheduler.js');
 const publisher = require('./publisher.js');
 const FeishuClient = require('./feishu.js');
+const { parseAttachmentSortKey } = require('./feishu.js');
 const {
   updateYixiaoerAccountCache,
   autoMapAccountMappings,
@@ -462,11 +463,26 @@ const server = http.createServer(async (req, res) => {
         const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
         const videoExtensions = new Set(['.mp4', '.mov', '.avi', '.mkv']);
 
+        // 文件名排序键：优先按"纯数字编号 [+ 子序号]"解析，解析失败回退 localeCompare numeric。
+        // 这样 0.png / 0.1.png / 1.png / 1.1.png / 10.png / 1(1).png 都能正确排：
+        //   parseAttachmentSortKey 把 "0.png" → [0, -1]，"0.1.png" → [0, 1]，sub=-1 排在 sub=0/1/2 前面，
+        //   保证 0 < 0.1 < 1 < 1.1 < 10 这种用户直觉顺序。
+        function compareEntryNames(a, b) {
+          const ka = parseAttachmentSortKey(a);
+          const kb = parseAttachmentSortKey(b);
+          if (ka && kb) {
+            return ka[0] - kb[0] || ka[1] - kb[1];
+          }
+          if (ka) return -1;
+          if (kb) return 1;
+          return a.localeCompare(b, 'zh-CN', { numeric: true });
+        }
+
         // 从一个目录收集图片（包含直接的和子文件夹里的，extraDepth 控制再向下几层）
         function collectImagesFromDir(dirPath, extraDepth) {
           const entries = fs.readdirSync(dirPath, { withFileTypes: true })
             .filter(e => !e.name.startsWith('.'))
-            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+            .sort((a, b) => compareEntryNames(a.name, b.name));
           const images = [];
           let hasVideo = false;
           for (const entry of entries) {
@@ -487,61 +503,105 @@ const server = http.createServer(async (req, res) => {
           return { images, hasVideo };
         }
 
-        const topics = fs.readdirSync(folderPath, { withFileTypes: true })
+        function isLeafNoteDir(dirPath, allowedImageExtensions) {
+          const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.'));
+          return entries.some(entry => entry.isFile() && allowedImageExtensions.has(path.extname(entry.name).toLowerCase()));
+        }
+
+        function detectScanMode(rootPath, firstLevelDirs, allowedImageExtensions) {
+          if (firstLevelDirs.length === 0) return 'multi';
+          const leafDirCount = firstLevelDirs.reduce((count, entry) => {
+            const dirPath = path.join(rootPath, entry.name);
+            return count + (isLeafNoteDir(dirPath, allowedImageExtensions) ? 1 : 0);
+          }, 0);
+          return (leafDirCount / firstLevelDirs.length) >= 0.8 ? 'single' : 'multi';
+        }
+
+        const firstLevelDirs = fs.readdirSync(folderPath, { withFileTypes: true })
           .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
-          .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+          .sort((a, b) => compareEntryNames(a.name, b.name));
 
-        const result = topics.map(topicEntry => {
-          const topicPath = path.join(folderPath, topicEntry.name);
-          const topicChildren = fs.readdirSync(topicPath, { withFileTypes: true })
-            .filter(e => !e.name.startsWith('.'))
-            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }));
+        const scanMode = detectScanMode(folderPath, firstLevelDirs, imageExtensions);
+        let result;
 
-          const noteFolders = topicChildren.filter(e => e.isDirectory());
-          const directImages = topicChildren
-            .filter(e => e.isFile() && imageExtensions.has(path.extname(e.name).toLowerCase()))
-            .map(e => {
-              const p = path.join(topicPath, e.name);
-              return { name: e.name, path: p, size: fs.statSync(p).size };
-            });
-
-          let notes;
-
-          if (noteFolders.length > 0) {
-            // 有子文件夹 → 每个子文件夹是一篇笔记
-            // 笔记内图片可能直接在里面，也可能在再下一层子文件夹（extraDepth=1 兼容两种情况）
-            notes = noteFolders.map(noteEntry => {
-              const noteFolderPath = path.join(topicPath, noteEntry.name);
-              const { images, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
-              const warnings = hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [];
-              return {
-                noteKey: `${topicEntry.name}/${noteEntry.name}`,
-                folderName: noteEntry.name,
-                folderPath: noteFolderPath,
-                images,
-                imageCount: images.length,
-                firstImagePath: images[0]?.path || '',
-                hasVideo,
-                warnings,
-              };
-            });
-          } else {
-            // 没有子文件夹 → 主题文件夹本身当作一篇笔记，图片直接在里面
-            const hasVideo = topicChildren.some(e => e.isFile() && videoExtensions.has(path.extname(e.name).toLowerCase()));
-            notes = directImages.length > 0 ? [{
-              noteKey: `${topicEntry.name}/${topicEntry.name}`,
-              folderName: topicEntry.name,
-              folderPath: topicPath,
-              images: directImages,
-              imageCount: directImages.length,
-              firstImagePath: directImages[0]?.path || '',
+        if (scanMode === 'single') {
+          const topicName = path.basename(folderPath);
+          const notes = firstLevelDirs.map(noteEntry => {
+            const noteFolderPath = path.join(folderPath, noteEntry.name);
+            const { images, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
+            const warnings = hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [];
+            return {
+              noteKey: `${topicName}/${noteEntry.name}`,
+              folderName: noteEntry.name,
+              folderPath: noteFolderPath,
+              images,
+              imageCount: images.length,
+              firstImagePath: images[0]?.path || '',
               hasVideo,
-              warnings: hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [],
-            }] : [];
-          }
+              warnings,
+            };
+          });
 
-          return { topic: topicEntry.name, notes };
-        });
+          result = [{
+            topic: topicName,
+            path: folderPath,
+            notes,
+            scanMode,
+          }];
+        } else {
+          result = firstLevelDirs.map(topicEntry => {
+            const topicPath = path.join(folderPath, topicEntry.name);
+            const topicChildren = fs.readdirSync(topicPath, { withFileTypes: true })
+              .filter(e => !e.name.startsWith('.'))
+              .sort((a, b) => compareEntryNames(a.name, b.name));
+
+            const noteFolders = topicChildren.filter(e => e.isDirectory());
+            const directImages = topicChildren
+              .filter(e => e.isFile() && imageExtensions.has(path.extname(e.name).toLowerCase()))
+              .map(e => {
+                const p = path.join(topicPath, e.name);
+                return { name: e.name, path: p, size: fs.statSync(p).size };
+              });
+
+            let notes;
+
+            if (noteFolders.length > 0) {
+              // 有子文件夹 → 每个子文件夹是一篇笔记
+              // 笔记内图片可能直接在里面，也可能在再下一层子文件夹（extraDepth=1 兼容两种情况）
+              notes = noteFolders.map(noteEntry => {
+                const noteFolderPath = path.join(topicPath, noteEntry.name);
+                const { images, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
+                const warnings = hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [];
+                return {
+                  noteKey: `${topicEntry.name}/${noteEntry.name}`,
+                  folderName: noteEntry.name,
+                  folderPath: noteFolderPath,
+                  images,
+                  imageCount: images.length,
+                  firstImagePath: images[0]?.path || '',
+                  hasVideo,
+                  warnings,
+                };
+              });
+            } else {
+              // 没有子文件夹 → 主题文件夹本身当作一篇笔记，图片直接在里面
+              const hasVideo = topicChildren.some(e => e.isFile() && videoExtensions.has(path.extname(e.name).toLowerCase()));
+              notes = directImages.length > 0 ? [{
+                noteKey: `${topicEntry.name}/${topicEntry.name}`,
+                folderName: topicEntry.name,
+                folderPath: topicPath,
+                images: directImages,
+                imageCount: directImages.length,
+                firstImagePath: directImages[0]?.path || '',
+                hasVideo,
+                warnings: hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [],
+              }] : [];
+            }
+
+            return { topic: topicEntry.name, notes, scanMode };
+          });
+        }
 
         return sendJson(res, result);
       } catch (e) {

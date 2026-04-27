@@ -1373,6 +1373,15 @@
     opacity: .35;
     cursor: not-allowed;
   }
+  .import-batch-group {
+    background: #faf9f6;
+    border: 1px dashed var(--line);
+    border-radius: 16px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
   .import-batch-section-title {
     display: flex;
     align-items: baseline;
@@ -3668,15 +3677,17 @@ function renderImportScanResult() {
     <div class="import-batch-section-title">
       <span class="import-batch-section-icon">📦</span>
       <span class="import-batch-section-text">批量配置 · 当前主题 ${activeNotesCount} 篇笔记</span>
-      <span class="import-batch-section-hint">下方设置会一次性应用到这组所有笔记</span>
+      <span class="import-batch-section-hint">主题/账号池/时间窗口都会一次性应用到这组所有笔记</span>
     </div>`;
   scanEl.innerHTML = `
     <div class="import-table-shell">
       ${navHtml}
       <div class="import-table-tabs">${tabHtml}</div>
-      ${batchTitleHtml}
-      ${renderImportPoolPanel(activeGroup, groupState, xhsAccounts, dyAccounts)}
-      ${renderImportTimeWindowPanel(activeGroup, groupState, notes)}
+      <div class="import-batch-group">
+        ${batchTitleHtml}
+        ${renderImportPoolPanel(activeGroup, groupState, xhsAccounts, dyAccounts)}
+        ${renderImportTimeWindowPanel(activeGroup, groupState, notes)}
+      </div>
       ${renderImportTablePanel(activeGroup, notes, groupState)}
     </div>`;
 }
@@ -3853,10 +3864,10 @@ function renderImportPoolPanel(topicGroup, groupState, xhsAccounts, dyAccounts) 
         </div>
       </div>
       <div class="import-pool-topic-override">
-        <div class="import-pool-label">覆盖描述（可选）</div>
-        <input class="import-pool-topic-input" type="text" value="${escapeAttr(groupState.topicOverride || '')}"
-          placeholder="${escapeAttr(topicGroup.topic || '')}" onchange="importUpdateTopicOverride(${groupIdx}, this.value)">
-        <div class="import-pool-topic-help">留空则用文件夹名给 AI；填写后 AI 用这个文字</div>
+        <div class="import-pool-label">AI 写作主题（可选）</div>
+        <input class="import-pool-topic-input" type="text" placeholder="例如：周末户外野餐 OOTD" value="${escapeAttr(groupState.topicOverride || '')}"
+          onchange="importUpdateTopicOverride(${groupIdx}, this.value)">
+        <div class="import-pool-topic-help">AI 会根据这个主题生成笔记的标题、正文和标签；留空则用文件夹名当主题</div>
       </div>
       <div class="import-pool-grid">
         <div class="import-pool-field">
@@ -3889,7 +3900,7 @@ function renderImportPoolPanel(topicGroup, groupState, xhsAccounts, dyAccounts) 
       </div>
       <div class="import-pool-actions">
         <div class="import-pool-hint">🎲 只覆盖未手动改过的笔记；右侧标"手动改过"的不会被动。</div>
-        <button class="import-pool-rr-btn" onclick="importApplyRoundRobin()">🎲 round-robin 分配</button>
+        <button class="import-pool-rr-btn" onclick="importApplyRoundRobin()">🎲 自动分配账号到笔记</button>
       </div>
     </div>`;
 }
@@ -3984,7 +3995,7 @@ function renderImportBatchMenu(field, accounts) {
   return `<div class="import-table-header-menu">
     ${accountButtons || '<button type="button" onclick="event.stopPropagation()">池内暂无账号</button>'}
     <button type="button" onclick="event.stopPropagation(); importApplyColumnBatch('${field}', 'clear')">清空该列</button>
-    <button type="button" onclick="event.stopPropagation(); importApplyColumnBatch('${field}', 'roundRobin')">重新 round-robin</button>
+    <button type="button" onclick="event.stopPropagation(); importApplyColumnBatch('${field}', 'roundRobin')">重新自动分配</button>
   </div>`;
 }
 
@@ -4079,12 +4090,19 @@ function importClosePoolPicker() {
 }
 
 function importTogglePoolPickerItem(account) {
+  // 保存 popover 列表当前滚动位置，重渲后恢复，避免每次勾选都滚回顶部
+  const list = document.querySelector('.import-pool-picker-list');
+  const savedScrollTop = list ? list.scrollTop : 0;
   if (_importPickerSelection.has(account)) {
     _importPickerSelection.delete(account);
   } else {
     _importPickerSelection.add(account);
   }
   renderImportScanResult();
+  requestAnimationFrame(() => {
+    const newList = document.querySelector('.import-pool-picker-list');
+    if (newList) newList.scrollTop = savedScrollTop;
+  });
 }
 
 function importApplyPoolPicker() {
@@ -4229,7 +4247,7 @@ function importApplyColumnBatch(field, action, value = '') {
   importUpdateButtonState();
   renderImportScanResult();
   renderContextPreview();
-  const actionLabel = action === 'assign' ? `改为 ${value}` : (action === 'clear' ? '清空' : '重新 round-robin');
+  const actionLabel = action === 'assign' ? `改为 ${value}` : (action === 'clear' ? '清空' : '重新自动分配');
   importShowToast(`${field === 'xhs' ? '小红书' : '抖音'}列已${actionLabel}，影响 ${changed} 行`);
 }
 
