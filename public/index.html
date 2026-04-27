@@ -801,6 +801,11 @@
     display: flex;
     flex-direction: column;
   }
+  /* 导入页 active 时的特殊布局：撑满 + 防溢出（之前用 inline style 但优先级太高，导致切到其他 section 时不能被隐藏）*/
+  #section-import.active {
+    padding: 0;
+    overflow: hidden;
+  }
 
   .workspace-stack {
     display: flex;
@@ -1373,6 +1378,72 @@
     opacity: .35;
     cursor: not-allowed;
   }
+  .import-next-action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 20px 0 12px;
+  }
+  .import-next-action-btn {
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 14px;
+    padding: 14px 36px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(7, 193, 96, 0.25);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+  }
+  .import-next-action-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(7, 193, 96, 0.32);
+  }
+  .import-next-action-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  .import-next-action-btn:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .import-next-action-hint {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    max-width: 420px;
+    line-height: 1.5;
+  }
+  .import-batch-apply-btn {
+    border: none;
+    background: linear-gradient(135deg, var(--accent), #06ad55);
+    color: #fff;
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(7, 193, 96, 0.22);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    margin-top: 4px;
+  }
+  .import-batch-apply-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(7, 193, 96, 0.3);
+  }
+  .import-batch-apply-btn:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .import-batch-apply-hint {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 6px;
+  }
   .import-batch-group {
     background: #faf9f6;
     border: 1px dashed var(--line);
@@ -1512,6 +1583,9 @@
     color: var(--accent);
     font-size: 12px;
     font-weight: 500;
+    white-space: nowrap;
+    height: 26px;
+    line-height: 1;
   }
   .import-pool-tag button {
     border: none;
@@ -1567,6 +1641,39 @@
     max-width: 280px;
     display: flex;
     flex-direction: column;
+  }
+  .import-pool-picker-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .import-pool-picker-count {
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .import-pool-picker-toolbar-btns {
+    display: flex;
+    gap: 4px;
+  }
+  .import-pool-picker-tool {
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--accent);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .import-pool-picker-tool:hover:not(:disabled) {
+    background: var(--accent-soft);
+  }
+  .import-pool-picker-tool:disabled {
+    opacity: .35;
+    cursor: not-allowed;
+    color: var(--muted);
   }
   .import-pool-picker-list {
     max-height: 280px;
@@ -2323,7 +2430,7 @@
         </div>
       </section>
 
-      <section class="workspace-view" id="section-import" style="display:flex;flex-direction:column;padding:0;overflow:hidden;">
+      <section class="workspace-view" id="section-import">
         <!-- 顶部选择栏 -->
         <div class="import-header-bar">
           <button class="btn btn-sm btn-secondary" onclick="importSelectFolder()">📁 选择根目录</button>
@@ -2698,9 +2805,12 @@ let importReportData = [];       // 正式导入的结果数组
 let importProgressCurrent = 0;   // P4.1 当前进度
 let importProgressTotal = 0;
 let importProgressNoteKey = '';
+// 图片级进度:同一篇笔记上传 N/M 张时实时刷新,避免一篇 16 张图传几十秒看起来卡死
+let importImageProgress = { noteKey: '', done: 0, total: 0, fileName: '' };
 let _importActiveTopicIdx = 0;
 let _importPickerOpen = null;
 let _importPickerSelection = new Set();
+let _importPickerAvailableNames = [];      // 当前 popover 内可选账号名快照，给"全选"按钮用
 let _importPickerOutsideHandler = null;
 let _importPickerKeyHandler = null;
 let _importSelectedNoteKey = null;
@@ -3677,7 +3787,6 @@ function renderImportScanResult() {
     <div class="import-batch-section-title">
       <span class="import-batch-section-icon">📦</span>
       <span class="import-batch-section-text">批量配置 · 当前主题 ${activeNotesCount} 篇笔记</span>
-      <span class="import-batch-section-hint">主题/账号池/时间窗口都会一次性应用到这组所有笔记</span>
     </div>`;
   scanEl.innerHTML = `
     <div class="import-table-shell">
@@ -3687,8 +3796,13 @@ function renderImportScanResult() {
         ${batchTitleHtml}
         ${renderImportPoolPanel(activeGroup, groupState, xhsAccounts, dyAccounts)}
         ${renderImportTimeWindowPanel(activeGroup, groupState, notes)}
+        <button class="import-batch-apply-btn" type="button" onclick="importApplyAllBatch(${_importActiveTopicIdx})" ${(notes.length && ((groupState.xhsAccounts || []).length || (groupState.dyAccounts || []).length || (groupState.timeWindows || []).length)) ? '' : 'disabled'}>🚀 一键自动分配（账号 + 时间）</button>
+        <div class="import-batch-apply-hint">同平台一篇笔记只发一个账号；标「手动改过」的笔记不会被批量覆盖</div>
       </div>
       ${renderImportTablePanel(activeGroup, notes, groupState)}
+      <div class="import-next-action">
+        <button id="btnImportPreview" class="import-next-action-btn" onclick="importStartPreview()">💡 主题撰写并预览 →</button>
+      </div>
     </div>`;
 }
 
@@ -3859,15 +3973,13 @@ function renderImportPoolPanel(topicGroup, groupState, xhsAccounts, dyAccounts) 
       <div class="import-pool-head">
         <div>
           <div class="import-pool-title">${escapeHtml(topicGroup.topic || '未命名主题')}</div>
-          <div class="import-pool-meta">当前主题 ${importGetNotesForGroup(topicGroup).length} 篇笔记 · 切换上方主题切换其他组</div>
-          <div class="import-pool-meta-sub">池里多账号 → 🎲 后轮流分配，每篇只发一个账号</div>
         </div>
       </div>
       <div class="import-pool-topic-override">
         <div class="import-pool-label">AI 写作主题（可选）</div>
         <input class="import-pool-topic-input" type="text" placeholder="例如：周末户外野餐 OOTD" value="${escapeAttr(groupState.topicOverride || '')}"
           onchange="importUpdateTopicOverride(${groupIdx}, this.value)">
-        <div class="import-pool-topic-help">AI 会根据这个主题生成笔记的标题、正文和标签；留空则用文件夹名当主题</div>
+        <div class="import-pool-topic-help">留空则用文件夹名当主题</div>
       </div>
       <div class="import-pool-grid">
         <div class="import-pool-field">
@@ -3898,10 +4010,6 @@ function renderImportPoolPanel(topicGroup, groupState, xhsAccounts, dyAccounts) 
           </select>
         </div>
       </div>
-      <div class="import-pool-actions">
-        <div class="import-pool-hint">🎲 只覆盖未手动改过的笔记；右侧标"手动改过"的不会被动。</div>
-        <button class="import-pool-rr-btn" onclick="importApplyRoundRobin()">🎲 自动分配账号到笔记</button>
-      </div>
     </div>`;
 }
 
@@ -3922,7 +4030,6 @@ function renderImportTimeWindowPanel(topicGroup, groupState, notes) {
       <div class="import-pool-head">
         <div>
           <div class="import-pool-title">⏰ 时间窗口</div>
-          <div class="import-pool-meta">为当前主题统一维护发布时间窗口；算法会按窗口顺序填槽，排满后自动顺延到下一天。</div>
         </div>
       </div>
       ${windowRows}
@@ -3941,7 +4048,6 @@ function renderImportTimeWindowPanel(topicGroup, groupState, notes) {
           <div class="import-pool-topic-help">${importGetCapacityPreview(groupIdx)}</div>
         </div>
       </div>
-      <button class="import-tw-apply-btn" type="button" onclick="importApplyTimesByWindows(${groupIdx})" ${notes.length ? '' : 'disabled'}>📅 按窗口重新分配时间</button>
     </div>`;
 }
 
@@ -4118,6 +4224,9 @@ function importApplyPoolPicker() {
 
 function importRenderPoolPicker(platform, groupIdx, allAccounts, currentPool) {
   const available = allAccounts.filter(a => !currentPool.includes(a.accountName));
+  // 把可选账号名快照存全局变量，避免在 onclick inline 字符串里嵌 JSON.stringify
+  // （账号名含 ' 时会破坏 HTML 属性引号边界，引发 XSS / 解析错误）
+  _importPickerAvailableNames = available.map(a => a.accountName);
   if (available.length === 0) {
     return `<div class="import-pool-picker-popover" onclick="event.stopPropagation()"><div class="import-pool-picker-empty">所有账号都已加入池</div></div>`;
   }
@@ -4129,14 +4238,46 @@ function importRenderPoolPicker(platform, groupIdx, allAccounts, currentPool) {
     </label>
   `).join('');
   const count = _importPickerSelection.size;
+  const total = available.length;
+  const allSelected = count === total && total > 0;
   return `
     <div class="import-pool-picker-popover" onclick="event.stopPropagation()">
+      <div class="import-pool-picker-toolbar">
+        <span class="import-pool-picker-count">已选 ${count} / ${total}</span>
+        <div class="import-pool-picker-toolbar-btns">
+          <button type="button" class="import-pool-picker-tool" onclick="importPickerSelectAll()" ${allSelected ? 'disabled' : ''}>全选</button>
+          <button type="button" class="import-pool-picker-tool" onclick="importPickerClearSelection()" ${count === 0 ? 'disabled' : ''}>取消全选</button>
+        </div>
+      </div>
       <div class="import-pool-picker-list">${items}</div>
       <div class="import-pool-picker-actions">
         <button class="import-pool-picker-cancel" onclick="importClosePoolPicker()">取消</button>
         <button class="import-pool-picker-apply" ${count === 0 ? 'disabled' : ''} onclick="importApplyPoolPicker()">应用 (${count})</button>
       </div>
     </div>`;
+}
+
+function importPickerSelectAll() {
+  if (!Array.isArray(_importPickerAvailableNames)) return;
+  const list = document.querySelector('.import-pool-picker-list');
+  const savedScrollTop = list ? list.scrollTop : 0;
+  for (const name of _importPickerAvailableNames) _importPickerSelection.add(name);
+  renderImportScanResult();
+  requestAnimationFrame(() => {
+    const newList = document.querySelector('.import-pool-picker-list');
+    if (newList) newList.scrollTop = savedScrollTop;
+  });
+}
+
+function importPickerClearSelection() {
+  const list = document.querySelector('.import-pool-picker-list');
+  const savedScrollTop = list ? list.scrollTop : 0;
+  _importPickerSelection = new Set();
+  renderImportScanResult();
+  requestAnimationFrame(() => {
+    const newList = document.querySelector('.import-pool-picker-list');
+    if (newList) newList.scrollTop = savedScrollTop;
+  });
 }
 
 function importAddPoolAccount(platform, accountName) {
@@ -4210,6 +4351,66 @@ function importApplyRoundRobin() {
   renderImportScanResult();
   renderContextPreview();
   importShowToast(`已批量分配：小红书 ${xhsCount} 篇，抖音 ${dyCount} 篇`);
+}
+
+// 一键合并：先分配账号，再分配时间，最后统一弹一个 toast
+function importApplyAllBatch(groupIdx) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const key = importGroupKey(topicGroup);
+  const groupState = normalizeImportGroupState(importGroupState.get(key));
+  const notes = importGetNotesForGroup(topicGroup);
+  const hasXhs = (groupState.xhsAccounts || []).length > 0;
+  const hasDy = (groupState.dyAccounts || []).length > 0;
+  const hasWindows = Array.isArray(groupState.timeWindows) && groupState.timeWindows.length > 0;
+  if (!hasXhs && !hasDy && !hasWindows) {
+    importShowToast('请先添加账号或时间窗口');
+    return;
+  }
+  // 账号分配
+  let xhsCount = 0;
+  let dyCount = 0;
+  let xhsCursor = 0;
+  let dyCursor = 0;
+  // 时间分配
+  const allocated = hasWindows
+    ? allocateTimesByWindows(notes.length, groupState.timeWindows, groupState.intervalMin, groupState.startDate)
+    : [];
+  let timeCount = 0;
+  let skippedDirty = 0;
+  notes.forEach((note, idx) => {
+    const state = importGetNoteState(note.noteKey);
+    if (state.dirty) {
+      skippedDirty += 1;
+      return;
+    }
+    if (hasXhs) {
+      state.xhsAccount = groupState.xhsAccounts[xhsCursor % groupState.xhsAccounts.length] || '';
+      xhsCursor += 1;
+      xhsCount += 1;
+    }
+    if (hasDy) {
+      state.dyAccount = groupState.dyAccounts[dyCursor % groupState.dyAccounts.length] || '';
+      dyCursor += 1;
+      dyCount += 1;
+    }
+    if (hasWindows && allocated[idx]) {
+      state.publishTime = allocated[idx].replace(' ', 'T');
+      timeCount += 1;
+    }
+    state.source = 'batch';
+    state.dirty = false;
+    importNoteState.set(note.noteKey, state);
+  });
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+  const parts = [];
+  if (hasXhs) parts.push(`小红书 ${xhsCount} 篇`);
+  if (hasDy) parts.push(`抖音 ${dyCount} 篇`);
+  if (hasWindows) parts.push(`时间 ${timeCount} 篇`);
+  const skipMsg = skippedDirty > 0 ? `；跳过 ${skippedDirty} 篇手动改过的` : '';
+  importShowToast(`已分配：${parts.join('、')}${skipMsg}`);
 }
 
 function importApplyColumnBatch(field, action, value = '') {
@@ -4344,17 +4545,23 @@ function renderImportPreview() {
   }
   if (!importRootPaths.length) {
     return `<div style="padding:28px 20px">
-      <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:12px">目录结构说明</div>
-      <div style="font-size:12px;color:var(--muted);line-height:1.8">
-        <p style="margin:0 0 8px">选择一个根目录，结构如下：</p>
-        <pre style="background:var(--accent-soft);padding:12px;border-radius:8px;font-size:11px;margin:0 0 10px;line-height:1.7;white-space:pre-wrap">根目录/
-  主题A/        ← 第一级：笔记主题
-    1/          ← 第二级：一篇笔记
-      1.jpg
-      2.jpg
-    2/
-      cover.jpg</pre>
-        <p style="margin:0">每个二级文件夹 = 一篇笔记，图片按文件名排序，第一张为封面。</p>
+      <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:12px">使用步骤</div>
+      <ol style="font-size:12px;color:var(--ink);line-height:1.9;padding-left:20px;margin:0 0 16px">
+        <li>左侧点「📁 选择根目录」选素材文件夹</li>
+        <li>在「批量配置」里填账号池、时间窗口、AI 写作主题</li>
+        <li>点「🚀 一键自动分配（账号 + 时间）」按钮</li>
+        <li>点「💡 主题撰写并预览 →」让 AI 生成内容并预览</li>
+        <li>检查无误后点「确认导入」写入飞书</li>
+      </ol>
+      <div style="font-size:12px;color:var(--muted);line-height:1.7">
+        <div style="font-weight:600;color:var(--ink);margin-bottom:6px">支持两种目录结构</div>
+        <pre style="background:var(--accent-soft);padding:10px;border-radius:8px;font-size:11px;margin:0 0 8px;line-height:1.6;white-space:pre-wrap">单主题（根目录就是主题）
+美食日记/         ← 主题
+  1/  2/  3/...   ← 笔记</pre>
+        <pre style="background:var(--accent-soft);padding:10px;border-radius:8px;font-size:11px;margin:0;line-height:1.6;white-space:pre-wrap">多主题（一个根目录多个主题）
+根目录/
+  美食/   1/  2/  ...
+  穿搭/   1/  2/  ...</pre>
       </div>
     </div>`;
   }
@@ -4402,8 +4609,8 @@ function renderImportPreviewSimulation() {
   }).join('');
   return `<div class="import-preview-empty">
     <div>
-      <div class="import-preview-heading">账号视角分配预演</div>
-      <div class="import-preview-subtitle">按当前表格里的分配结果聚合，每个账号会收到哪些笔记一眼可见。</div>
+      <div class="import-preview-heading">📋 笔记发布安排</div>
+      <div class="import-preview-subtitle">按账号分组，列出每个账号收到的笔记和时间</div>
     </div>
     <div class="import-preview-account-list">
       ${accountCards || '<div class="import-preview-account-card"><div class="import-preview-note-list">当前还没有任何账号分配，先在左侧表格里指定账号。</div></div>'}
@@ -4772,6 +4979,7 @@ async function importConfirm() {
   importProgressCurrent = 0;
   importProgressTotal = records.length;
   importProgressNoteKey = '';
+  importImageProgress = { noteKey: '', done: 0, total: 0, fileName: '' };
   importReportData = [];
   renderContextPreview();
 
@@ -4805,28 +5013,53 @@ async function importConfirm() {
 
 // ===== P4.1 实时进度更新（SSE 回调）=====
 
+// 把笔记级 + 图片级两条进度合并渲染成一个进度面板
+function importRenderProgressPanel() {
+  const progressEl = document.getElementById('importProgressBar');
+  if (!progressEl) {
+    renderContextPreview();
+    return;
+  }
+  const pct = importProgressTotal > 0 ? Math.round(importProgressCurrent / importProgressTotal * 100) : 0;
+  // 仅当当前笔记还在传图时显示图片细进度(noteKey 一致 + done < total)
+  const imgInProgress = importImageProgress.noteKey === importProgressNoteKey
+    && importImageProgress.total > 0
+    && importImageProgress.done < importImageProgress.total;
+  const imgLine = imgInProgress
+    ? `<div style="font-size:11px;color:#1e6cb6;margin-top:4px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📤 正在传图 ${importImageProgress.done}/${importImageProgress.total}${importImageProgress.fileName ? ' · ' + escapeHtml(importImageProgress.fileName) : ''}</div>`
+    : '';
+  progressEl.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span style="font-size:13px;font-weight:600;color:var(--accent);">正在导入第 ${importProgressCurrent} / ${importProgressTotal} 条</span>
+      <span style="font-size:12px;color:var(--accent);">${pct}%</span>
+    </div>
+    <div style="background:#d1fae5;border-radius:4px;height:4px;overflow:hidden;">
+      <div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s;"></div>
+    </div>
+    ${importProgressNoteKey ? `<div style="font-size:11px;color:var(--muted);margin-top:5px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(importProgressNoteKey)}</div>` : ''}
+    ${imgLine}`;
+}
+
 function importProgressUpdate(data) {
   if (importPhase !== 'importing') return;
   importProgressCurrent = data.current || importProgressCurrent;
   importProgressTotal = data.total || importProgressTotal;
   importProgressNoteKey = data.noteKey || '';
-  // 局部更新进度条，避免整个右栏重渲（会丢失输入框焦点等状态）
-  const progressEl = document.getElementById('importProgressBar');
-  if (progressEl) {
-    const pct = importProgressTotal > 0 ? Math.round(importProgressCurrent / importProgressTotal * 100) : 0;
-    progressEl.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-        <span style="font-size:13px;font-weight:600;color:var(--accent);">正在导入第 ${importProgressCurrent} / ${importProgressTotal} 条</span>
-        <span style="font-size:12px;color:var(--accent);">${pct}%</span>
-      </div>
-      <div style="background:#d1fae5;border-radius:4px;height:4px;overflow:hidden;">
-        <div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.3s;"></div>
-      </div>
-      ${importProgressNoteKey ? `<div style="font-size:11px;color:var(--muted);margin-top:5px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(importProgressNoteKey)}</div>` : ''}`;
-  } else {
-    // 进度条元素不存在（首次或页面刚渲染），完整重渲
-    renderContextPreview();
-  }
+  // 笔记切换时清空图片进度,避免上一篇笔记的「12/16」残留到新笔记
+  importImageProgress = { noteKey: '', done: 0, total: 0, fileName: '' };
+  importRenderProgressPanel();
+}
+
+// 图片级进度更新:每张图传完后触发,只刷新进度面板,不切换笔记
+function importImageProgressUpdate(data) {
+  if (importPhase !== 'importing') return;
+  importImageProgress = {
+    noteKey: data.noteKey || '',
+    done: data.done || 0,
+    total: data.total || 0,
+    fileName: data.fileName || '',
+  };
+  importRenderProgressPanel();
 }
 
 // ===== P3.2 导入报告 =====
@@ -4842,10 +5075,18 @@ function renderImportReport() {
     if (r.status === 'success') {
       const shortId = r.recordId ? r.recordId.slice(-8) : '-';
       const badge = r.overwritten ? '<span style="margin-left:6px;font-size:10px;color:#888;background:#f0f0f0;padding:1px 5px;border-radius:4px;">已覆盖</span>' : '';
+      // AI 降级警告(橙色):标题正文为空,需手动补
+      const aiDegradedBadge = r.aiDegraded
+        ? `<span style="margin-left:6px;font-size:10px;color:#b54708;background:#fff3e0;padding:1px 5px;border-radius:4px;" title="${escapeHtml(r.aiError || '')}">⚠ AI 失败 · 请手动补内容</span>`
+        : '';
+      // AI 图片截断提示(蓝色):仅参考前 N 张
+      const truncBadge = (r.aiImagesTruncated && r.aiImagesTruncated.truncated)
+        ? `<span style="margin-left:6px;font-size:10px;color:#1e6cb6;background:#e8f3ff;padding:1px 5px;border-radius:4px;">ℹ AI 仅参考前 ${r.aiImagesTruncated.sentToAi}/${r.aiImagesTruncated.totalImages} 张</span>`
+        : '';
       return `<div class="import-report-item">
         <span style="color:var(--accent);">✅</span>
         <div class="import-report-info">
-          <span class="import-report-key">${escapeHtml(recordLabel)}${badge}</span>
+          <span class="import-report-key">${escapeHtml(recordLabel)}${badge}${aiDegradedBadge}${truncBadge}</span>
           <span class="import-report-sub">recordId: …${escapeHtml(shortId)}</span>
         </div>
       </div>`;
@@ -4976,6 +5217,7 @@ function importResetFull() {
   importProgressCurrent = 0;
   importProgressTotal = 0;
   importProgressNoteKey = '';
+  importImageProgress = { noteKey: '', done: 0, total: 0, fileName: '' };
   _importActiveTopicIdx = 0;
   _importSelectedNoteKey = null;
   _importSelectedImageIdx = 0;
@@ -6051,6 +6293,7 @@ function connectSSE() {
   eventSource.onmessage = (e) => { try { const log = JSON.parse(e.data); addLog(log.level, log.message); } catch (err) {} };
   eventSource.addEventListener('progress', (e) => { try { renderProgress(JSON.parse(e.data)); } catch (err) {} });
   eventSource.addEventListener('import_progress', (e) => { try { importProgressUpdate(JSON.parse(e.data)); } catch (err) {} });
+  eventSource.addEventListener('import_image_progress', (e) => { try { importImageProgressUpdate(JSON.parse(e.data)); } catch (err) {} });
   eventSource.onerror = () => {
     if (eventSource) { eventSource.close(); eventSource = null; }
     if (reconnectTimer) clearTimeout(reconnectTimer);

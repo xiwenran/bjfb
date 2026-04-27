@@ -643,7 +643,13 @@ const server = http.createServer(async (req, res) => {
       const total = records.length;
       let current = 0;
       // 同主题 AI 结果缓存：topic → {title, description, tags}
+      // key 用归一化后的字符串(全角空格→半角、连续空白合并、去首尾空白),
+      // 防止「主题A 」「主题A」「主题A 」(尾随全角空格)被当成不同 key 重复调 AI
       const topicAiCache = new Map();
+      const normalizeTopicKey = (s) => String(s || '')
+        .replace(/　/g, ' ')   // 全角空格 → 半角
+        .replace(/\s+/g, ' ')      // 连续空白合并
+        .trim();
 
       // SSE 进度推送辅助函数（仅 dryRun=false 时使用）
       const pushImportProgress = (noteKey, status) => {
@@ -651,6 +657,19 @@ const server = http.createServer(async (req, res) => {
         const data = JSON.stringify({ type: 'import_progress', current, total, noteKey, status });
         for (const sseRes of sseClients) {
           sseRes.write(`event: import_progress\ndata: ${data}\n\n`);
+        }
+      };
+      // 图片级别进度(每张图传完一次),给 UI 显示「N/M 张」,避免一篇笔记 16 张图传几十秒看起来卡死
+      const pushImageProgress = (noteKey, done, totalImages, fileName) => {
+        const data = JSON.stringify({
+          type: 'import_image_progress',
+          noteKey,
+          done,
+          total: totalImages,
+          fileName: fileName || '',
+        });
+        for (const sseRes of sseClients) {
+          sseRes.write(`event: import_image_progress\ndata: ${data}\n\n`);
         }
       };
 
@@ -768,10 +787,11 @@ const server = http.createServer(async (req, res) => {
         if (!aiTitle) {
           const aiConfig = config.aiWriting;
           if (aiConfig && aiConfig.enabled && aiConfig.apiKey) {
+            const cacheKey = normalizeTopicKey(topicForAi);
             try {
-              if (topicAiCache.has(topicForAi)) {
+              if (cacheKey && topicAiCache.has(cacheKey)) {
                 // 同主题已生成过，直接复用
-                const cached = topicAiCache.get(topicForAi);
+                const cached = topicAiCache.get(cacheKey);
                 aiTitle = cached.title;
                 aiDescription = cached.description;
                 aiTags = cached.tags;
@@ -787,32 +807,59 @@ const server = http.createServer(async (req, res) => {
                 aiTitle = aiResult.title || '';
                 aiDescription = aiResult.description || '';
                 aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
-                topicAiCache.set(topicForAi, { title: aiTitle, description: aiDescription, tags: aiTags });
+                // AI 多模态截断信息(IMAGE_MAX_COUNT=8 时,16 张图只送 8 张),记到 record 上,
+                // 后续 results 会带上,前端可展示「AI 仅参考前 N 张图」提示
+                if (aiResult._meta && aiResult._meta.truncated) {
+                  record.__aiImagesTruncated = aiResult._meta;
+                }
+                if (cacheKey) topicAiCache.set(cacheKey, { title: aiTitle, description: aiDescription, tags: aiTags });
               }
             } catch (aiErr) {
-              results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message });
-              if (!dryRun) pushImportProgress(noteKey, 'failed');
-              continue;
+              // AI 生成失败：dryRun 阶段把错误信息回传给前端展示「跳过/空建/重试」选项；
+              // 真正导入阶段（dryRun=false）降级为"空内容继续上传"——账号、时间、图片正常处理，
+              // 只是标题/正文/标签为空，用户可以在飞书里手动补内容。这样 AI 偶发失败不会卡住整批。
+              if (dryRun) {
+                results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message });
+                continue;
+              }
+              // 非 dryRun：降级处理，记 warning 但继续走完图片上传 + 写飞书
+              aiTitle = '';
+              aiDescription = '';
+              aiTags = [];
+              // record.__aiFailureWarning 是临时局部属性,前端拿不到;
+              // 真正暴露给前端:在 results 里用专门字段(下面 success 分支会把它带上)
+              record.__aiFailureWarning = aiErr.message;
             }
           }
         }
 
         // dryRun: 只返回 AI 生成内容，不写飞书
         if (dryRun) {
+          const previewMeta = record.__aiImagesTruncated;
           results.push({
             noteKey,
             status: 'preview',
             title: aiTitle,
             description: aiDescription,
             tags: aiTags,
+            ...(previewMeta ? { aiImagesTruncated: previewMeta } : {}),
           });
           continue;
         }
 
         // Step 4: 图片上传（B-3）
+        // 并发 3 路 + 每张完成后推 SSE,UI 能看到「正在传 5/16 张」之类的实时进度
         let uploadedTokens = [];
         try {
-          const uploaded = await feishu.uploadLocalImagesToFeishu(images.map(i => i.path));
+          const uploaded = await feishu.uploadLocalImagesToFeishu(
+            images.map(i => i.path),
+            {
+              concurrency: 3,
+              onProgress: (done, totalImages, fileName) => {
+                pushImageProgress(noteKey, done, totalImages, fileName);
+              },
+            }
+          );
           uploadedTokens = uploaded.map(u => ({ file_token: u.fileToken }));
         } catch (uploadErr) {
           results.push({ noteKey, status: 'failed', reason: 'upload_error', message: uploadErr.message });
@@ -858,13 +905,32 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // 把 AI 失败降级 warning + 多模态截断信息一并带上,前端可以展示
+        // 「这条 AI 生成失败,标题/正文已留空,请到飞书手动补」/「AI 只参考了前 N 张图」
+        const aiWarning = record.__aiFailureWarning || null;
+        const aiTruncMeta = record.__aiImagesTruncated || null;
+        const extraMeta = {
+          ...(aiWarning ? { aiDegraded: true, aiError: aiWarning } : {}),
+          ...(aiTruncMeta ? { aiImagesTruncated: aiTruncMeta } : {}),
+        };
         try {
           if (isOverwrite) {
             await feishu.updateRecord(overwriteId, fields);
-            results.push({ noteKey, status: 'success', recordId: overwriteId, overwritten: true });
+            results.push({
+              noteKey,
+              status: 'success',
+              recordId: overwriteId,
+              overwritten: true,
+              ...extraMeta,
+            });
           } else {
             const { recordId } = await feishu.createRecord(fields);
-            results.push({ noteKey, status: 'success', recordId });
+            results.push({
+              noteKey,
+              status: 'success',
+              recordId,
+              ...extraMeta,
+            });
           }
           pushImportProgress(noteKey, 'success');
         } catch (feishuErr) {

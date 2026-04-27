@@ -181,16 +181,87 @@ function loadImages(imagePaths) {
     });
 }
 
-function parseAiResponse(text) {
-  // 尝试从响应中提取 JSON，兼容 AI 有时多余换行或 markdown 代码块
-  let cleaned = text.trim();
-  // 去掉可能的 ```json ... ``` 包裹
-  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-  const result = JSON.parse(cleaned);
+// 从混杂文本里抽出第一个完整的 JSON 对象。
+// 用括号栈匹配，跳过字符串内的 {/}，处理转义字符。
+function extractFirstJsonObject(text) {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function validateAiResult(result) {
+  if (!result || typeof result !== 'object') {
+    throw new Error('AI 返回不是 JSON 对象');
+  }
   if (!result.title || !result.description || !Array.isArray(result.tags)) {
     throw new Error('AI 返回格式不完整，缺少 title/description/tags');
   }
   return result;
+}
+
+function parseAiResponse(text) {
+  let cleaned = String(text || '').trim();
+  // 1. 去掉 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+  // 2. 直接 JSON.parse（理想路径：模型完全按 prompt 输出纯 JSON）
+  try {
+    return validateAiResult(JSON.parse(cleaned));
+  } catch (e) {
+    // 解析失败 → 进入容错路径
+  }
+
+  // 3. 从混杂文本中抽出第一个完整 {...}（应对 AI 带 markdown 标题/解释文字的情况）
+  const extracted = extractFirstJsonObject(cleaned);
+  if (extracted) {
+    try {
+      return validateAiResult(JSON.parse(extracted));
+    } catch (e) {
+      // 抽取的也解析失败 → 进入兜底
+    }
+  }
+
+  // 4. 兜底：抛错，前端走"跳过/手填"分支，并把模型实际返回的前 300 字给用户看
+  const preview = cleaned.slice(0, 300).replace(/\s+/g, ' ');
+  throw new Error('AI 未按要求输出 JSON。模型实际返回（截取）：' + preview);
+}
+
+// ─────────────────────────────────────────────
+// 重试 helper:仅对超时/网络抖动/网关错误重试 1 次,2 秒间隔
+// 不针对认证错误(401/403)、参数错误(400/422)等业务错误重试,避免浪费 quota
+// ─────────────────────────────────────────────
+async function callAiWithRetry(callFn) {
+  try {
+    return await callFn();
+  } catch (err) {
+    const status = err.response?.status;
+    const code = err.code;
+    const isRetryable =
+      code === 'ECONNABORTED' ||  // axios timeout (超时上限达到)
+      code === 'ECONNRESET' ||     // 连接被重置
+      code === 'ETIMEDOUT' ||      // 系统级网络超时
+      status === 408 || status === 429 ||
+      status === 502 || status === 503 || status === 504;
+    if (!isRetryable) throw err;
+    // 等 2 秒重试 1 次,失败就抛出
+    await new Promise((r) => setTimeout(r, 2000));
+    return await callFn();
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -209,25 +280,41 @@ async function callOpenAI(aiConfig, userMessage, images) {
         })),
       ]
     : userMessage;
-  const resp = await axios.post(
-    `${baseUrl}/chat/completions`,
-    {
-      model: aiConfig.model || 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0.7,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      timeout: 120000,
-    }
-  );
-  return resp.data.choices[0].message.content;
+  // 优先用 response_format: json_object 强制 JSON 输出（OpenAI 官方支持，
+  // 大多数中转站也兼容）。如果模型/中转站不支持会返回 400，降级重试一次不带这个参数。
+  const baseBody = {
+    model: aiConfig.model || 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userContent },
+    ],
+    temperature: 0.7,
+  };
+  const headers = {
+    Authorization: `Bearer ${aiConfig.apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  try {
+    const resp = await axios.post(
+      `${baseUrl}/chat/completions`,
+      { ...baseBody, response_format: { type: 'json_object' } },
+      { headers, timeout: 120000 }
+    );
+    return resp.data.choices[0].message.content;
+  } catch (err) {
+    // 中转站/模型不支持 response_format 时降级重试（典型 400 错误信息含 "response_format" 关键字）
+    const status = err.response?.status;
+    const errMsg = String(err.response?.data?.error?.message || err.message || '');
+    const isFormatNotSupported = (status === 400 || status === 422) &&
+      /response_format|json_object|invalid.*parameter|unrecognized/i.test(errMsg);
+    if (!isFormatNotSupported) throw err;
+    const fallback = await axios.post(
+      `${baseUrl}/chat/completions`,
+      baseBody,
+      { headers, timeout: 120000 }
+    );
+    return fallback.data.choices[0].message.content;
+  }
 }
 
 async function callAnthropic(aiConfig, userMessage, images) {
@@ -298,19 +385,33 @@ async function generateContent(aiConfig, record) {
 
   const userMessage = buildUserMessage(record);
   // 读取本地图片（record.imagePaths 由导入流程传入，飞书自动扫描流程为空）
+  const totalImages = (record.imagePaths || []).length;
   const images = loadImages(record.imagePaths || []);
+  const sentToAi = images.length;
   let rawText;
 
   const provider = aiConfig.provider || 'openai';
+  // 用 callAiWithRetry 包一层,超时/网络抖动/5xx 时重试 1 次,
+  // 三个 provider 都共用这一套重试逻辑(callOpenAI 内部已有的 response_format 降级与本层重试不冲突)
   if (provider === 'anthropic') {
-    rawText = await callAnthropic(aiConfig, userMessage, images);
+    rawText = await callAiWithRetry(() => callAnthropic(aiConfig, userMessage, images));
   } else if (provider === 'gemini') {
-    rawText = await callGemini(aiConfig, userMessage, images);
+    rawText = await callAiWithRetry(() => callGemini(aiConfig, userMessage, images));
   } else {
-    rawText = await callOpenAI(aiConfig, userMessage, images);
+    rawText = await callAiWithRetry(() => callOpenAI(aiConfig, userMessage, images));
   }
 
-  return parseAiResponse(rawText);
+  const parsed = parseAiResponse(rawText);
+  // _meta 字段供调用方判断"AI 实际看到了多少张图",用户素材超过 IMAGE_MAX_COUNT 时
+  // 调用方可以据此提示「AI 仅参考了前 N 张」
+  return {
+    ...parsed,
+    _meta: {
+      totalImages,
+      sentToAi,
+      truncated: totalImages > sentToAi,
+    },
+  };
 }
 
 // 测试连接：发一个最简短的请求验证 key 是否有效

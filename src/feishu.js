@@ -1,6 +1,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { mapWithConcurrency } = require('./async-utils.js');
 
 function parseAttachmentSortKey(name) {
   const normalizedName = String(name || '')
@@ -67,13 +68,29 @@ class FeishuClient {
     return this.accessToken;
   }
 
-  // 自动处理 401：token 失效时强制刷新后重试一次
+  // 自动重试机制:
+  // - 401 → token 失效,force refresh 后重试一次
+  // - 408/429/502/503/504 → 限流/网关问题,2 秒后重试一次(不刷 token)
+  // - ECONNRESET/ETIMEDOUT/ECONNABORTED → 网络抖动,2 秒后重试一次
+  // 其他错误直接抛给调用方
   async requestWithRetry(fn) {
     try {
       return await fn(await this.getAccessToken());
     } catch (e) {
-      if (e.response?.status === 401) {
+      const status = e.response?.status;
+      const code = e.code;
+      // 1) Token 失效 → 强制刷新后重试
+      if (status === 401) {
         return await fn(await this.getAccessToken(true));
+      }
+      // 2) 限流/网关/网络抖动 → 等 2 秒,带原 token 重试 1 次
+      const isTransient =
+        status === 408 || status === 429 ||
+        status === 502 || status === 503 || status === 504 ||
+        code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNABORTED';
+      if (isTransient) {
+        await new Promise(r => setTimeout(r, 2000));
+        return await fn(await this.getAccessToken());
       }
       throw e;
     }
@@ -538,12 +555,22 @@ class FeishuClient {
     return { recordId: resp.data.data?.record?.record_id || '' };
   }
 
-  async uploadLocalImagesToFeishu(imagePaths) {
+  // imagePaths: string[] - 待上传的本地图片绝对路径
+  // options.concurrency: 并发数,默认 3(飞书 medias/upload_all 默认 QPS 50,3 路远低于阈值)
+  // options.onProgress: (done, total, currentItem) => void  每张完成后回调,供 SSE 推进度
+  // 返回值顺序与 imagePaths 输入顺序严格一致(mapWithConcurrency 按 index 写回)
+  async uploadLocalImagesToFeishu(imagePaths, options = {}) {
     const crypto = require('crypto');
     const FormData = require('form-data');
-    const results = [];
+    const list = Array.isArray(imagePaths) ? imagePaths : [];
+    if (list.length === 0) return [];
 
-    for (const imagePath of imagePaths || []) {
+    const concurrency = Math.max(1, Number(options.concurrency) || 3);
+    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+    let doneCount = 0;
+    const total = list.length;
+
+    const uploadOne = async (imagePath) => {
       const originalName = path.basename(imagePath);
       const form = new FormData();
       form.append('file_name', `${crypto.randomBytes(6).toString('hex')}_${originalName}`);
@@ -565,13 +592,20 @@ class FeishuClient {
         )
       );
 
-      results.push({
+      return {
         originalName,
         fileToken: resp.data.data?.file_token || '',
-      });
-    }
+      };
+    };
 
-    return results;
+    return await mapWithConcurrency(list, concurrency, async (imagePath) => {
+      const result = await uploadOne(imagePath);
+      doneCount += 1;
+      if (onProgress) {
+        try { onProgress(doneCount, total, result.originalName); } catch (_) {}
+      }
+      return result;
+    });
   }
 
   async findRecordByFingerprint(fingerprint) {
