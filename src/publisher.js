@@ -277,16 +277,22 @@ function normalizePublishType(input) {
 }
 
 function escapeHtml(text) {
+  // 文本内容只需转义 & < >，双引号和单引号在文本节点中无需转义
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeHtmlAttr(text) {
+  // 属性值需要转义 & < > " ' `
   return String(text || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function escapeHtmlAttr(text) {
-  return escapeHtml(text).replace(/`/g, '&#96;');
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
 }
 
 function buildTopicRawAttr(topic) {
@@ -1109,8 +1115,23 @@ async function findRecentTaskByTitleAndAccount(yixiaoerConfig, platformName, tit
 
 function normalizeTags(tags) {
   const seen = new Set();
-  return (tags || [])
-    .map(tag => String(tag || '').replace(/^#+/, '').trim())
+  // 飞书标签字段可能存成多种格式，全部容错拆分：
+  //   "#tag1 #tag2 #tag3"（# 间有空格）
+  //   "#tag1#tag2#tag3"（# 间无空格）
+  //   "tag1\ntag2\ntag3"（换行分隔，无 #）
+  //   ["#tag1", "#tag2"]（正常数组，已是单个标签）
+  const flat = (tags || []).flatMap(tag => {
+    const s = String(tag || '').trim();
+    if (!s) return [];
+    if (s.includes('#')) {
+      // 按 # 拆分，同时处理 "#t1 #t2" 和 "#t1#t2" 两种情况
+      return s.split('#').map(t => t.trim()).filter(Boolean);
+    }
+    // 无 # 时按换行或逗号拆分
+    return s.split(/[\n,]+/).map(t => t.trim()).filter(Boolean);
+  });
+  return flat
+    .map(tag => tag.replace(/^#+/, '').trim()) // 兜底去掉残余 #
     .filter(Boolean)
     .filter(tag => {
       const key = tag.toLowerCase();
