@@ -5311,6 +5311,7 @@ async function importRetryFailed() {
   importProgressNoteKey = '';
   importImageProgress = { noteKey: '', done: 0, total: 0, fileName: '' };
   // 先从报告里摘掉失败条目，保留成功和跳过
+  const failedItems = importReportData.filter(r => r.status === 'failed');
   importReportData = importReportData.filter(r => r.status !== 'failed');
   renderContextPreview();
 
@@ -5328,6 +5329,8 @@ async function importRetryFailed() {
     });
     importReportData = importReportData.concat(newResults);
   } catch (err) {
+    // 网络异常时把之前摘掉的失败条目恢复回报告，避免凭空消失
+    importReportData = importReportData.concat(failedItems);
     alert('重试失败：' + err.message);
   }
 

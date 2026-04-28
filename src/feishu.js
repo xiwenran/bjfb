@@ -120,6 +120,16 @@ class FeishuClient {
         await new Promise(r => setTimeout(r, 2000));
         return await fn(await this.getAccessToken());
       }
+      // 3) 其他 HTTP 错误 → 把飞书返回的响应体附到错误信息里，方便排查
+      if (e.response?.data && status) {
+        const body = typeof e.response.data === 'object'
+          ? JSON.stringify(e.response.data)
+          : String(e.response.data).slice(0, 300);
+        const enriched = new Error(`HTTP ${status}: ${body}`);
+        enriched.feishuCode = e.response.data?.code;
+        enriched.response = e.response;
+        throw enriched;
+      }
       throw e;
     }
   }
