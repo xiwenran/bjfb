@@ -347,11 +347,21 @@ class FeishuClient {
   }
 
   async markFailed(recordId, reason) {
-    await this.updateRecord(recordId, { '备注': reason });
+    try {
+      await this.updateRecord(recordId, { '备注': reason });
+    } catch (e) {
+      if (e.feishuCode === 1254045) return; // 备注字段不存在，跳过
+      throw e;
+    }
   }
 
   async setNote(recordId, note) {
-    await this.updateRecord(recordId, { '备注': note || '' });
+    try {
+      await this.updateRecord(recordId, { '备注': note || '' });
+    } catch (e) {
+      if (e.feishuCode === 1254045) return; // 备注字段不存在，跳过
+      throw e;
+    }
   }
 
   async downloadAttachment(fileToken, destDir) {

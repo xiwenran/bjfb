@@ -1608,11 +1608,15 @@ const server = http.createServer(async (req, res) => {
         if (!config.aiWriting?.apiKey) return sendJson(res, { success: false, error: 'AI 写作未配置 API Key' }, 400);
         const result = await generateContent(config.aiWriting, record);
         const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
-        await feishu.updateRecord(recordId, {
-          '标题': result.title,
-          '正文': result.description,
-          '标签': tagsStr,
-        });
+        const aiFieldNames = await feishu.getTableFields().catch(() => []);
+        const aiFieldSet = new Set(Array.isArray(aiFieldNames) ? aiFieldNames : []);
+        const aiFields = {};
+        if (!aiFieldSet.size || aiFieldSet.has('标题')) aiFields['标题'] = result.title;
+        if (!aiFieldSet.size || aiFieldSet.has('正文')) aiFields['正文'] = result.description;
+        if (!aiFieldSet.size || aiFieldSet.has('标签')) aiFields['标签'] = tagsStr;
+        if (Object.keys(aiFields).length > 0) {
+          await feishu.updateRecord(recordId, aiFields);
+        }
         // 更新缓存，防止下轮自动扫描重复覆盖
         try {
           const cache = readAiWritingCache();

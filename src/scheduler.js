@@ -195,15 +195,24 @@ class Scheduler {
     this.log('info', `✍️ AI 写作：发现 ${candidates.length} 条待生成记录`);
     const aiConfig = this.config.aiWriting;
 
+    // 预取字段列表，只写实际存在的字段，避免 FieldNameNotFound
+    let tableFieldSet = new Set();
+    try {
+      const fieldNames = await this.feishu.getTableFields();
+      tableFieldSet = new Set(Array.isArray(fieldNames) ? fieldNames : []);
+    } catch (_) { /* 获取失败则跳过字段过滤，让 updateRecord 自行报错 */ }
+
     for (const record of candidates) {
       try {
         const result = await generateContent(aiConfig, record);
         const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
-        await this.feishu.updateRecord(record.recordId, {
-          '标题': result.title,
-          '正文': result.description,
-          '标签': tagsStr,
-        });
+        const fields = {};
+        if (!tableFieldSet.size || tableFieldSet.has('标题')) fields['标题'] = result.title;
+        if (!tableFieldSet.size || tableFieldSet.has('正文')) fields['正文'] = result.description;
+        if (!tableFieldSet.size || tableFieldSet.has('标签')) fields['标签'] = tagsStr;
+        if (Object.keys(fields).length > 0) {
+          await this.feishu.updateRecord(record.recordId, fields);
+        }
         // 就地更新内存对象，使本轮 recordHasContent 检查能看到新生成的标题
         record.title = result.title;
         record.description = result.description;
