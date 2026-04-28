@@ -832,10 +832,13 @@ const server = http.createServer(async (req, res) => {
         if (!aiTitle) {
           const aiConfig = config.aiWriting;
           if (aiConfig && aiConfig.enabled && aiConfig.apiKey) {
-            const cacheKey = normalizeTopicKey(topicForAi);
+            // 缓存 key 用 noteKey（文件夹维度），而不是 topic
+            // 原因：同一主题下多个文件夹应各自生成独立内容，不能复用；
+            // 但同一文件夹的重试（同 noteKey）可以复用上次结果，避免重复调 API
+            const cacheKey = noteKey || normalizeTopicKey(topicForAi);
             try {
               if (cacheKey && topicAiCache.has(cacheKey)) {
-                // 同主题已生成过，直接复用
+                // 同一文件夹已生成过（重试场景），直接复用
                 const cached = topicAiCache.get(cacheKey);
                 aiTitle = cached.title;
                 aiDescription = cached.description;
