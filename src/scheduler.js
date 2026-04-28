@@ -212,6 +212,8 @@ class Scheduler {
         if (!tableFieldSet.size || tableFieldSet.has('标签')) fields['标签'] = tagsStr;
         if (Object.keys(fields).length > 0) {
           await this.feishu.updateRecord(record.recordId, fields);
+        } else if (tableFieldSet.size > 0) {
+          this.log('warn', `⚠️ AI 写作：飞书表格中未找到「标题/正文/标签」字段，生成内容无法回写，已跳过（${record.recordId}）`);
         }
         // 就地更新内存对象，使本轮 recordHasContent 检查能看到新生成的标题
         record.title = result.title;

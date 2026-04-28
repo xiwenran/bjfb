@@ -342,7 +342,9 @@ async function resolveTopicsForPlatform(config, platformName, platformAccountId,
           { keyWord: tag }
         );
         topicList = result?.dataList || result?.data?.dataList || [];
-      } catch (_) { }
+      } catch (e) {
+        console.warn(`⚠️ ${platformName}话题搜索失败(${tag}): ${e.message}`);
+      }
 
       const matchedTopic = selectBestTopic(tag, topicList);
       if (matchedTopic) {
