@@ -336,8 +336,11 @@ async function resolveTopicsForPlatform(config, platformName, platformAccountId,
         `/platform-accounts/${platformAccountId}/topics`,
         { keyWord: tag }
       );
-      const topics = result?.dataList || result?.data?.dataList || [];
+      console.log(`[话题搜索] ${platformName} 标签="${tag}" result keys=${Object.keys(result || {}).join(',')} 原始=${JSON.stringify(result).slice(0, 300)}`);
+      const topics = result?.dataList || result?.data?.dataList || (Array.isArray(result) ? result : []);
+      console.log(`[话题搜索] 候选话题数=${topics.length}${topics[0] ? ` 首条keys=${Object.keys(topics[0]).join(',')}` : ''}`);
       const matchedTopic = selectBestTopic(tag, topics);
+      console.log(`[话题搜索] matchedTopic=${matchedTopic ? JSON.stringify(matchedTopic).slice(0, 200) : 'null'}`);
       if (matchedTopic) {
         resolvedTopics.push(matchedTopic);
       }
@@ -368,7 +371,7 @@ function buildRichTopicDescription(description, tags = [], topics = []) {
         const rawSegment = rawAttr ? ` raw='${escapeHtmlAttr(rawAttr)}'` : '';
         return `<topic text='${escapeHtmlAttr(tag)}'${rawSegment}>#${escapeHtml(tag)}</topic>`;
       })
-      .join(' ');
+      .join('');
     paragraphs.push(`<p>${topicHtml}</p>`);
   }
 
