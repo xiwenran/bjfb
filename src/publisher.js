@@ -332,9 +332,19 @@ async function resolveTopicsForPlatform(config, platformName, platformAccountId,
 
   for (const tag of selectedTags) {
     try {
-      const result = await getAccountTopicsApi(config, platformAccountId, tag);
-      const topics = result?.dataList || result?.data?.dataList || [];
-      const matchedTopic = selectBestTopic(tag, topics);
+      // 用关键词搜索话题（旧 /topics?keyWord=tag），404 时降级到 /categories 全量拉取后本地匹配
+      let topicList = [];
+      try {
+        const result = await requestApiWithFallback(
+          config, 'GET',
+          `/platform-accounts/${platformAccountId}/topics`,
+          `/platform-accounts/${platformAccountId}/categories`,
+          { keyWord: tag }
+        );
+        topicList = result?.dataList || result?.data?.dataList || [];
+      } catch (_) { }
+
+      const matchedTopic = selectBestTopic(tag, topicList);
       if (matchedTopic) {
         resolvedTopics.push(matchedTopic);
       }
