@@ -327,7 +327,12 @@ class FeishuClient {
   }
 
   async markPublished(recordId) {
-    await this.updateRecord(recordId, { '发布状态': '已发布' });
+    try {
+      await this.updateRecord(recordId, { '发布状态': '已发布' });
+    } catch (e) {
+      if (e.feishuCode === 1254045) return; // 发布状态字段不存在，跳过
+      throw e;
+    }
   }
 
   async markPlatformStatus(recordId, platform, status) {
