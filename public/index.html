@@ -1794,6 +1794,32 @@
     opacity: .5;
     cursor: not-allowed;
   }
+  .import-tw-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .import-tw-preset-btn {
+    border: 1px solid #bedbc8;
+    border-radius: 20px;
+    background: #f8fcfa;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .import-tw-preset-btn:hover:not(:disabled) {
+    background: var(--accent-soft);
+  }
+  .import-tw-preset-btn.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    opacity: 0.5;
+    cursor: default;
+  }
   .import-tw-add-btn {
     width: 100%;
     border: 1px dashed #bedbc8;
@@ -2825,8 +2851,31 @@ function getTodayDateString() {
   return `${year}-${month}-${day}`;
 }
 
+const IMPORT_TW_PRESETS = [
+  { label: '6–8点',     start: '06:00', end: '08:00' },
+  { label: '10–12点',   start: '10:00', end: '12:00' },
+  { label: '13–14:30',  start: '13:00', end: '14:30' },
+  { label: '18–20点',   start: '18:00', end: '20:00' },
+  { label: '21–22点',   start: '21:00', end: '22:00' },
+];
+
+function saveImportTimeWindows(timeWindows) {
+  try { localStorage.setItem('import_tw_last', JSON.stringify(timeWindows)); } catch (_) {}
+}
+
+function loadImportTimeWindows() {
+  try {
+    const saved = localStorage.getItem('import_tw_last');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  return null;
+}
+
 function createDefaultImportTimeWindows() {
-  return [
+  return loadImportTimeWindows() || [
     { start: '10:00', end: '12:00' },
     { start: '14:00', end: '18:00' },
   ];
@@ -3829,6 +3878,7 @@ function importAddTimeWindow(groupIdx) {
   const state = normalizeImportGroupState(importGroupState.get(key));
   state.timeWindows = [...(state.timeWindows || []), { start: '20:00', end: '22:00' }];
   importGroupState.set(key, state);
+  saveImportTimeWindows(state.timeWindows);
   renderImportScanResult();
 }
 
@@ -3840,6 +3890,7 @@ function importRemoveTimeWindow(groupIdx, winIdx) {
   if ((state.timeWindows || []).length <= 1) return;
   state.timeWindows = state.timeWindows.filter((_, idx) => idx !== winIdx);
   importGroupState.set(key, state);
+  saveImportTimeWindows(state.timeWindows);
   renderImportScanResult();
 }
 
@@ -3852,6 +3903,22 @@ function importUpdateTimeWindow(groupIdx, winIdx, field, value) {
     idx === winIdx ? { ...window, [field]: value || '' } : window
   ));
   importGroupState.set(key, state);
+  saveImportTimeWindows(state.timeWindows);
+  renderImportScanResult();
+}
+
+function importApplyTwPreset(groupIdx, presetIdx) {
+  const topicGroup = importGetGroupByIdx(groupIdx);
+  if (!topicGroup) return;
+  const preset = IMPORT_TW_PRESETS[presetIdx];
+  if (!preset) return;
+  const key = importGroupKey(topicGroup);
+  const state = normalizeImportGroupState(importGroupState.get(key));
+  const already = (state.timeWindows || []).some(w => w.start === preset.start && w.end === preset.end);
+  if (already) return;
+  state.timeWindows = [...(state.timeWindows || []), { start: preset.start, end: preset.end }];
+  importGroupState.set(key, state);
+  saveImportTimeWindows(state.timeWindows);
   renderImportScanResult();
 }
 
@@ -4033,7 +4100,13 @@ function renderImportTimeWindowPanel(topicGroup, groupState, notes) {
         </div>
       </div>
       ${windowRows}
-      <button class="import-tw-add-btn" type="button" onclick="importAddTimeWindow(${groupIdx})">+ 添加时间窗口</button>
+      <div class="import-tw-presets">
+        ${IMPORT_TW_PRESETS.map((p, i) => {
+          const active = (groupState.timeWindows || []).some(w => w.start === p.start && w.end === p.end);
+          return `<button type="button" class="import-tw-preset-btn${active ? ' active' : ''}" onclick="importApplyTwPreset(${groupIdx}, ${i})" ${active ? 'disabled' : ''}>${p.label}</button>`;
+        }).join('')}
+      </div>
+      <button class="import-tw-add-btn" type="button" onclick="importAddTimeWindow(${groupIdx})">+ 自定义时间段</button>
       <div class="import-tw-meta">
         <div class="import-pool-field">
           <div class="import-pool-label">发布间隔</div>
