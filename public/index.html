@@ -5194,16 +5194,15 @@ function renderImportReport() {
     // failed
     const reason = r.reason || 'unknown';
     const msg = r.message || '';
-    return `<details class="import-report-item import-report-item--fail">
-      <summary style="list-style:none;display:flex;align-items:center;gap:8px;cursor:pointer;">
-        <span style="color:#e53e3e;">❌</span>
-        <div class="import-report-info">
-          <span class="import-report-key">${escapeHtml(recordLabel)}</span>
-          <span class="import-report-sub">${escapeHtml(reason)} · 点击展开</span>
-        </div>
-      </summary>
-      <div style="padding:8px 12px 4px 28px;font-size:11px;color:#e53e3e;word-break:break-all;">${escapeHtml(msg)}</div>
-    </details>`;
+    // 错误原因直接展示，不需要展开
+    const errorLine = msg ? `<span class="import-report-sub" style="color:#e53e3e;">${escapeHtml(msg.slice(0, 120))}${msg.length > 120 ? '…' : ''}</span>` : `<span class="import-report-sub" style="color:#e53e3e;">${escapeHtml(reason)}</span>`;
+    return `<div class="import-report-item import-report-item--fail">
+      <span style="color:#e53e3e;">❌</span>
+      <div class="import-report-info">
+        <span class="import-report-key">${escapeHtml(recordLabel)}</span>
+        ${errorLine}
+      </div>
+    </div>`;
   }).join('');
 
   return `
@@ -5228,7 +5227,9 @@ function renderImportReport() {
       <div style="flex:1;overflow-y:auto;padding:10px 16px;">
         ${itemsHtml || '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">无记录</div>'}
       </div>
-      <div style="padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0;">
+      <div style="padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0;display:flex;flex-direction:column;gap:8px;">
+        ${failed > 0 ? `<button class="btn btn-secondary" style="width:100%;padding:10px;font-size:14px;"
+          onclick="importRetryFailed()">🔄 重试失败的 ${failed} 条</button>` : ''}
         <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;"
           onclick="importResetFull()">关闭报告，继续导入</button>
       </div>
@@ -5287,6 +5288,51 @@ async function importOverwriteRecord(recordKey, overwriteId, existingStatus) {
   } catch (err) {
     alert('请求失败：' + err.message);
   }
+}
+
+// 重试失败的条目
+async function importRetryFailed() {
+  const failedKeys = new Set(
+    importReportData.filter(r => r.status === 'failed').map(r => r.__recordKey || importMakeRecordKey(r))
+  );
+  if (!failedKeys.size) return;
+
+  // 从原始导入数据中找回对应的记录
+  const allRecords = importCollectRecords();
+  const retryRecords = allRecords.filter(r => failedKeys.has(importMakeRecordKey(r)));
+  if (!retryRecords.length) {
+    alert('找不到失败记录的原始数据，请关闭报告后重新导入');
+    return;
+  }
+
+  importPhase = 'importing';
+  importProgressCurrent = 0;
+  importProgressTotal = retryRecords.length;
+  importProgressNoteKey = '';
+  importImageProgress = { noteKey: '', done: 0, total: 0, fileName: '' };
+  // 先从报告里摘掉失败条目，保留成功和跳过
+  importReportData = importReportData.filter(r => r.status !== 'failed');
+  renderContextPreview();
+
+  try {
+    const resp = await fetch('/api/import/create-records', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, records: retryRecords }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '重试失败');
+    const newResults = (data.results || []).map((item, idx) => {
+      const baseRecord = retryRecords[idx] || {};
+      return { ...baseRecord, ...item, __recordKey: importMakeRecordKey(baseRecord || item) };
+    });
+    importReportData = importReportData.concat(newResults);
+  } catch (err) {
+    alert('重试失败：' + err.message);
+  }
+
+  importPhase = 'done';
+  renderContextPreview();
 }
 
 // 完全重置导入页状态（关闭报告后可开始新一轮）
