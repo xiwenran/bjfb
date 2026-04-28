@@ -4382,6 +4382,14 @@ function importRemovePoolAccount(platform, accountName) {
   const gc = getImportGlobalConfig();
   const listField = platform === 'xhs' ? 'xhsAccounts' : 'dyAccounts';
   gc[listField] = (gc[listField] || []).filter(item => item !== accountName);
+  // 同步清掉所有「批量分配」给该账号的笔记（手动改过的 dirty=true 不动）
+  const noteField = platform === 'xhs' ? 'xhsAccount' : 'dyAccount';
+  for (const [key, state] of importNoteState) {
+    if (state[noteField] === accountName && !state.dirty) {
+      state[noteField] = '';
+      importNoteState.set(key, state);
+    }
+  }
   importUpdateButtonState();
   renderImportScanResult();
   renderContextPreview();
