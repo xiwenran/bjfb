@@ -1378,6 +1378,15 @@
     opacity: .35;
     cursor: not-allowed;
   }
+  .import-topic-nav-delete {
+    color: #e53e3e;
+    border-color: #fed7d7;
+  }
+  .import-topic-nav-delete:hover:not(:disabled) {
+    background: #fff5f5;
+    border-color: #e53e3e;
+    color: #c53030;
+  }
   .import-next-action {
     display: flex;
     flex-direction: column;
@@ -2819,6 +2828,7 @@ const MAX_LOG_ENTRIES = 200;
 let importRootPaths = [];
 let importScanData = [];
 let importGroupState = new Map();
+let importGlobalConfig = null;
 // key: noteKey → { publishTime, xhsAccount, dyAccount, dirty, source }
 let importNoteState = new Map();
 // P3.0 预览状态
@@ -2917,6 +2927,22 @@ function normalizeImportGroupState(state) {
   next.intervalMin = Number.isFinite(Number(next.intervalMin)) ? Number(next.intervalMin) : 30;
   next.startDate = typeof next.startDate === 'string' && next.startDate ? next.startDate : getTodayDateString();
   return next;
+}
+
+function createDefaultImportGlobalConfig() {
+  return {
+    xhsAccounts: [],
+    dyAccounts: [],
+    channel: '蚁小二',
+    timeWindows: createDefaultImportTimeWindows(),
+    intervalMin: 30,
+    startDate: getTodayDateString(),
+  };
+}
+
+function getImportGlobalConfig() {
+  if (!importGlobalConfig) importGlobalConfig = createDefaultImportGlobalConfig();
+  return importGlobalConfig;
 }
 
 function normalizeImportNoteState(state) {
@@ -3723,6 +3749,7 @@ async function importScanFolder(folderPath, append = false) {
   if (!append) {
     importScanData = [];
     importGroupState = new Map();
+    importGlobalConfig = null;
     importNoteState = new Map();
     importRootPaths = folderPath ? [folderPath] : [];
     _importActiveTopicIdx = 0;
@@ -3809,8 +3836,7 @@ function renderImportScanResult() {
   const notes = (activeGroup.notes || []).filter(note => note.imageCount > 0);
   const xhsAccounts = importGetXhsAccounts();
   const dyAccounts = importGetDouyinAccounts();
-  const xhsPool = Array.isArray(groupState.xhsAccounts) ? groupState.xhsAccounts : [];
-  const dyPool = Array.isArray(groupState.dyAccounts) ? groupState.dyAccounts : [];
+  const gc = getImportGlobalConfig();
   const tabHtml = groups.map((topicGroup, idx) => {
     return `<button class="import-table-tab ${idx === _importActiveTopicIdx ? 'active' : ''}"
       onclick="importSwitchTopic(${idx})">${escapeHtml(topicGroup.topic || `主题 ${idx + 1}`)}</button>`;
@@ -3818,7 +3844,9 @@ function renderImportScanResult() {
   const totalGroups = groups.length;
   const activeIdx = _importActiveTopicIdx;
   const activeName = escapeHtml(activeGroup.topic || `主题 ${activeIdx + 1}`);
+  const activeNameRaw = (activeGroup.topic || `主题 ${activeIdx + 1}`).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   const activeNotesCount = (activeGroup.notes || []).filter(n => n.imageCount > 0).length;
+  const totalGroupNotes = groups.reduce((sum, g) => sum + (g.notes || []).filter(n => n.imageCount > 0).length, 0);
   const prevDisabled = activeIdx <= 0 ? 'disabled' : '';
   const nextDisabled = activeIdx >= totalGroups - 1 ? 'disabled' : '';
   const navHtml = totalGroups > 0 ? `
@@ -3830,25 +3858,36 @@ function renderImportScanResult() {
       <div class="import-topic-nav-actions">
         <button class="import-topic-nav-btn" ${prevDisabled} onclick="importSwitchTopic(${activeIdx - 1})">← 上一组</button>
         <button class="import-topic-nav-btn" ${nextDisabled} onclick="importSwitchTopic(${activeIdx + 1})">下一组 →</button>
+        <button class="import-topic-nav-btn import-topic-nav-delete" onclick="if(confirm('确认删除「${activeNameRaw}」组？此操作不可撤销。')) importDeleteGroup(${activeIdx})">🗑 删除此组</button>
       </div>
     </div>` : '';
-  const batchTitleHtml = `
-    <div class="import-batch-section-title">
-      <span class="import-batch-section-icon">📦</span>
-      <span class="import-batch-section-text">批量配置 · 当前主题 ${activeNotesCount} 篇笔记</span>
+  const globalBatchHtml = `
+    <div class="import-batch-group">
+      <div class="import-batch-section-title">
+        <span class="import-batch-section-icon">📦</span>
+        <span class="import-batch-section-text">批量配置 · 全部 ${groups.length} 组 ${totalGroupNotes} 篇笔记</span>
+      </div>
+      ${renderImportPoolPanel(gc, xhsAccounts, dyAccounts)}
+      ${renderImportTimeWindowPanel(gc)}
+      <button class="import-batch-apply-btn" type="button" onclick="importApplyAllBatch()" ${(totalGroupNotes && ((gc.xhsAccounts || []).length || (gc.dyAccounts || []).length || (gc.timeWindows || []).length)) ? '' : 'disabled'}>🚀 一键自动分配（账号 + 时间）</button>
+      <div class="import-batch-apply-hint">跨组轮流分配：G1第1篇→G2第1篇→G3第1篇→G1第2篇…；标「手动改过」的笔记不被覆盖</div>
+    </div>`;
+  const perGroupHtml = `
+    <div class="import-pool-panel" style="margin-bottom:0">
+      <div class="import-pool-topic-override">
+        <div class="import-pool-label">AI 写作主题（可选）</div>
+        <input class="import-pool-topic-input" type="text" placeholder="例如：周末户外野餐 OOTD" value="${escapeAttr(groupState.topicOverride || '')}"
+          onchange="importUpdateTopicOverride(${_importActiveTopicIdx}, this.value)">
+        <div class="import-pool-topic-help">留空则用文件夹名当主题</div>
+      </div>
     </div>`;
   scanEl.innerHTML = `
     <div class="import-table-shell">
+      ${globalBatchHtml}
       ${navHtml}
       <div class="import-table-tabs">${tabHtml}</div>
-      <div class="import-batch-group">
-        ${batchTitleHtml}
-        ${renderImportPoolPanel(activeGroup, groupState, xhsAccounts, dyAccounts)}
-        ${renderImportTimeWindowPanel(activeGroup, groupState, notes)}
-        <button class="import-batch-apply-btn" type="button" onclick="importApplyAllBatch(${_importActiveTopicIdx})" ${(notes.length && ((groupState.xhsAccounts || []).length || (groupState.dyAccounts || []).length || (groupState.timeWindows || []).length)) ? '' : 'disabled'}>🚀 一键自动分配（账号 + 时间）</button>
-        <div class="import-batch-apply-hint">同平台一篇笔记只发一个账号；标「手动改过」的笔记不会被批量覆盖</div>
-      </div>
-      ${renderImportTablePanel(activeGroup, notes, groupState)}
+      ${perGroupHtml}
+      ${renderImportTablePanel(activeGroup, notes, gc)}
       <div class="import-next-action">
         <button id="btnImportPreview" class="import-next-action-btn" onclick="importStartPreview()">💡 主题撰写并预览 →</button>
       </div>
@@ -3871,75 +3910,52 @@ function importGetGroupByIdx(groupIdx) {
   return groupIdx >= 0 && groupIdx < groups.length ? groups[groupIdx] : null;
 }
 
-function importAddTimeWindow(groupIdx) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  state.timeWindows = [...(state.timeWindows || []), { start: '20:00', end: '22:00' }];
-  importGroupState.set(key, state);
-  saveImportTimeWindows(state.timeWindows);
+function importAddTimeWindow() {
+  const gc = getImportGlobalConfig();
+  gc.timeWindows = [...(gc.timeWindows || []), { start: '20:00', end: '22:00' }];
+  saveImportTimeWindows(gc.timeWindows);
   renderImportScanResult();
 }
 
-function importRemoveTimeWindow(groupIdx, winIdx) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  if ((state.timeWindows || []).length <= 1) return;
-  state.timeWindows = state.timeWindows.filter((_, idx) => idx !== winIdx);
-  importGroupState.set(key, state);
-  saveImportTimeWindows(state.timeWindows);
+function importRemoveTimeWindow(winIdx) {
+  const gc = getImportGlobalConfig();
+  if ((gc.timeWindows || []).length <= 1) return;
+  gc.timeWindows = gc.timeWindows.filter((_, idx) => idx !== winIdx);
+  saveImportTimeWindows(gc.timeWindows);
   renderImportScanResult();
 }
 
-function importUpdateTimeWindow(groupIdx, winIdx, field, value) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup || !['start', 'end'].includes(field)) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  state.timeWindows = (state.timeWindows || []).map((window, idx) => (
+function importUpdateTimeWindow(winIdx, field, value) {
+  if (!['start', 'end'].includes(field)) return;
+  const gc = getImportGlobalConfig();
+  gc.timeWindows = (gc.timeWindows || []).map((window, idx) => (
     idx === winIdx ? { ...window, [field]: value || '' } : window
   ));
-  importGroupState.set(key, state);
-  saveImportTimeWindows(state.timeWindows);
+  saveImportTimeWindows(gc.timeWindows);
   renderImportScanResult();
 }
 
-function importApplyTwPreset(groupIdx, presetIdx) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return;
+function importApplyTwPreset(presetIdx) {
   const preset = IMPORT_TW_PRESETS[presetIdx];
   if (!preset) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  const already = (state.timeWindows || []).some(w => w.start === preset.start && w.end === preset.end);
+  const gc = getImportGlobalConfig();
+  const already = (gc.timeWindows || []).some(w => w.start === preset.start && w.end === preset.end);
   if (already) return;
-  state.timeWindows = [...(state.timeWindows || []), { start: preset.start, end: preset.end }];
-  importGroupState.set(key, state);
-  saveImportTimeWindows(state.timeWindows);
+  gc.timeWindows = [...(gc.timeWindows || []), { start: preset.start, end: preset.end }];
+  saveImportTimeWindows(gc.timeWindows);
   renderImportScanResult();
 }
 
-function importUpdateInterval(groupIdx, value) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
+function importUpdateInterval(value) {
+  const gc = getImportGlobalConfig();
   const nextValue = Number(value);
-  state.intervalMin = Number.isFinite(nextValue) && nextValue > 0 ? nextValue : 30;
-  importGroupState.set(key, state);
+  gc.intervalMin = Number.isFinite(nextValue) && nextValue > 0 ? nextValue : 30;
   renderImportScanResult();
 }
 
-function importUpdateStartDate(groupIdx, value) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  state.startDate = value || getTodayDateString();
-  importGroupState.set(key, state);
+function importUpdateStartDate(value) {
+  const gc = getImportGlobalConfig();
+  gc.startDate = value || getTodayDateString();
   renderImportScanResult();
 }
 
@@ -3952,15 +3968,12 @@ function importUpdateTopicOverride(groupIdx, value) {
   importGroupState.set(key, state);
 }
 
-function importGetCapacityPreview(groupIdx) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return '0 槽位/天 · 共 0 篇 → 跨 0 天';
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  const dailyCapacity = calcDailyCapacity(state.timeWindows, state.intervalMin);
-  const totalNotes = importGetNotesForGroup(topicGroup).length;
+function importGetCapacityPreview() {
+  const gc = getImportGlobalConfig();
+  const dailyCapacity = calcDailyCapacity(gc.timeWindows, gc.intervalMin);
+  const totalNotes = importGetTopicGroups().reduce((sum, g) => sum + importGetNotesForGroup(g).length, 0);
   const totalDays = dailyCapacity > 0 ? Math.ceil(totalNotes / dailyCapacity) : '—';
-  return `${dailyCapacity} 槽位/天 · 共 ${totalNotes} 篇 → 跨 ${totalDays} 天`;
+  return `${dailyCapacity} 槽位/天 · 全部 ${totalNotes} 篇 → 跨 ${totalDays} 天`;
 }
 
 function importApplyTimesByWindows(groupIdx) {
@@ -4026,6 +4039,21 @@ function importSwitchTopic(idx) {
   renderContextPreview();
 }
 
+function importDeleteGroup(idx) {
+  const groups = importGetTopicGroups();
+  const tg = groups[idx];
+  if (!tg) return;
+  (tg.notes || []).forEach(note => importNoteState.delete(note.noteKey));
+  importGroupState.delete(importGroupKey(tg));
+  importScanData = importScanData.filter((_, i) => i !== idx);
+  if (_importActiveTopicIdx >= importScanData.length) {
+    _importActiveTopicIdx = Math.max(0, importScanData.length - 1);
+  }
+  importUpdateButtonState();
+  renderImportScanResult();
+  renderContextPreview();
+}
+
 function importSelectNoteRow(noteKey) {
   _importSelectedNoteKey = noteKey;
   _importSelectedImageIdx = 0;
@@ -4033,64 +4061,51 @@ function importSelectNoteRow(noteKey) {
   renderContextPreview();
 }
 
-function renderImportPoolPanel(topicGroup, groupState, xhsAccounts, dyAccounts) {
-  const groupIdx = importGetTopicGroups().findIndex(item => item === topicGroup);
+function renderImportPoolPanel(gc, xhsAccounts, dyAccounts) {
   return `
     <div class="import-pool-panel">
-      <div class="import-pool-head">
-        <div>
-          <div class="import-pool-title">${escapeHtml(topicGroup.topic || '未命名主题')}</div>
-        </div>
-      </div>
-      <div class="import-pool-topic-override">
-        <div class="import-pool-label">AI 写作主题（可选）</div>
-        <input class="import-pool-topic-input" type="text" placeholder="例如：周末户外野餐 OOTD" value="${escapeAttr(groupState.topicOverride || '')}"
-          onchange="importUpdateTopicOverride(${groupIdx}, this.value)">
-        <div class="import-pool-topic-help">留空则用文件夹名当主题</div>
-      </div>
       <div class="import-pool-grid">
         <div class="import-pool-field">
           <div class="import-pool-label">小红书账号池</div>
           <div class="import-pool-line">
-            ${renderImportPoolTags(groupState.xhsAccounts, 'xhs', groupIdx)}
+            ${renderImportPoolTags(gc.xhsAccounts, 'xhs')}
             <div class="import-pool-picker-wrap">
-              <button class="import-pool-picker-trigger" onclick="event.stopPropagation(); importOpenPoolPicker('xhs', ${groupIdx})">+ 添加 ▾</button>
-              ${_importPickerOpen === 'xhs:' + groupIdx ? importRenderPoolPicker('xhs', groupIdx, xhsAccounts, groupState.xhsAccounts || []) : ''}
+              <button class="import-pool-picker-trigger" onclick="event.stopPropagation(); importOpenPoolPicker('xhs', -1)">+ 添加 ▾</button>
+              ${_importPickerOpen === 'xhs:-1' ? importRenderPoolPicker('xhs', -1, xhsAccounts, gc.xhsAccounts || []) : ''}
             </div>
           </div>
         </div>
         <div class="import-pool-field">
           <div class="import-pool-label">抖音账号池</div>
           <div class="import-pool-line">
-            ${renderImportPoolTags(groupState.dyAccounts, 'dy', groupIdx)}
+            ${renderImportPoolTags(gc.dyAccounts, 'dy')}
             <div class="import-pool-picker-wrap">
-              <button class="import-pool-picker-trigger" onclick="event.stopPropagation(); importOpenPoolPicker('dy', ${groupIdx})">+ 添加 ▾</button>
-              ${_importPickerOpen === 'dy:' + groupIdx ? importRenderPoolPicker('dy', groupIdx, dyAccounts, groupState.dyAccounts || []) : ''}
+              <button class="import-pool-picker-trigger" onclick="event.stopPropagation(); importOpenPoolPicker('dy', -1)">+ 添加 ▾</button>
+              ${_importPickerOpen === 'dy:-1' ? importRenderPoolPicker('dy', -1, dyAccounts, gc.dyAccounts || []) : ''}
             </div>
           </div>
         </div>
         <div class="import-pool-field">
           <div class="import-pool-label">小红书渠道</div>
           <select class="import-pool-channel" onchange="importSetPoolChannel(this.value)">
-            <option value="蚁小二" ${groupState.channel === '蚁小二' ? 'selected' : ''}>蚁小二</option>
-            <option value="比特浏览器" ${groupState.channel === '比特浏览器' ? 'selected' : ''}>比特浏览器</option>
+            <option value="蚁小二" ${gc.channel === '蚁小二' ? 'selected' : ''}>蚁小二</option>
+            <option value="比特浏览器" ${gc.channel === '比特浏览器' ? 'selected' : ''}>比特浏览器</option>
           </select>
         </div>
       </div>
     </div>`;
 }
 
-function renderImportTimeWindowPanel(topicGroup, groupState, notes) {
-  const groupIdx = importGetTopicGroups().findIndex(item => item === topicGroup);
+function renderImportTimeWindowPanel(gc) {
   const intervalOptions = [5, 10, 15, 20, 30, 45, 60, 90, 120]
-    .map(value => `<option value="${value}" ${Number(groupState.intervalMin) === value ? 'selected' : ''}>${value} 分钟</option>`)
+    .map(value => `<option value="${value}" ${Number(gc.intervalMin) === value ? 'selected' : ''}>${value} 分钟</option>`)
     .join('');
-  const windowRows = (groupState.timeWindows || []).map((window, idx, arr) => `
+  const windowRows = (gc.timeWindows || []).map((window, idx, arr) => `
     <div class="import-tw-row">
-      <input type="time" value="${escapeAttr(window.start || '')}" onchange="importUpdateTimeWindow(${groupIdx}, ${idx}, 'start', this.value)">
+      <input type="time" value="${escapeAttr(window.start || '')}" onchange="importUpdateTimeWindow(${idx}, 'start', this.value)">
       <span>—</span>
-      <input type="time" value="${escapeAttr(window.end || '')}" onchange="importUpdateTimeWindow(${groupIdx}, ${idx}, 'end', this.value)">
-      <button type="button" onclick="importRemoveTimeWindow(${groupIdx}, ${idx})" ${arr.length <= 1 ? 'disabled' : ''}>×</button>
+      <input type="time" value="${escapeAttr(window.end || '')}" onchange="importUpdateTimeWindow(${idx}, 'end', this.value)">
+      <button type="button" onclick="importRemoveTimeWindow(${idx})" ${arr.length <= 1 ? 'disabled' : ''}>×</button>
     </div>`).join('');
   return `
     <div class="import-tw-panel">
@@ -4102,40 +4117,40 @@ function renderImportTimeWindowPanel(topicGroup, groupState, notes) {
       ${windowRows}
       <div class="import-tw-presets">
         ${IMPORT_TW_PRESETS.map((p, i) => {
-          const active = (groupState.timeWindows || []).some(w => w.start === p.start && w.end === p.end);
-          return `<button type="button" class="import-tw-preset-btn${active ? ' active' : ''}" onclick="importApplyTwPreset(${groupIdx}, ${i})" ${active ? 'disabled' : ''}>${p.label}</button>`;
+          const active = (gc.timeWindows || []).some(w => w.start === p.start && w.end === p.end);
+          return `<button type="button" class="import-tw-preset-btn${active ? ' active' : ''}" onclick="importApplyTwPreset(${i})" ${active ? 'disabled' : ''}>${p.label}</button>`;
         }).join('')}
       </div>
-      <button class="import-tw-add-btn" type="button" onclick="importAddTimeWindow(${groupIdx})">+ 自定义时间段</button>
+      <button class="import-tw-add-btn" type="button" onclick="importAddTimeWindow()">+ 自定义时间段</button>
       <div class="import-tw-meta">
         <div class="import-pool-field">
           <div class="import-pool-label">发布间隔</div>
-          <select onchange="importUpdateInterval(${groupIdx}, this.value)">${intervalOptions}</select>
+          <select onchange="importUpdateInterval(this.value)">${intervalOptions}</select>
         </div>
         <div class="import-pool-field">
           <div class="import-pool-label">起始日期</div>
-          <input type="date" value="${escapeAttr(groupState.startDate || getTodayDateString())}" onchange="importUpdateStartDate(${groupIdx}, this.value)">
+          <input type="date" value="${escapeAttr(gc.startDate || getTodayDateString())}" onchange="importUpdateStartDate(this.value)">
         </div>
         <div class="import-pool-field">
           <div class="import-pool-label">容量预览</div>
-          <div class="import-pool-topic-help">${importGetCapacityPreview(groupIdx)}</div>
+          <div class="import-pool-topic-help">${importGetCapacityPreview()}</div>
         </div>
       </div>
     </div>`;
 }
 
-function renderImportPoolTags(accounts, platform, groupIdx) {
+function renderImportPoolTags(accounts, platform) {
   if (!Array.isArray(accounts) || !accounts.length) {
     return '<span class="import-pool-empty">未添加候选账号</span>';
   }
   return accounts.map(account => `
     <span class="import-pool-tag">
       ${escapeHtml(account)}
-      <button type="button" onclick="event.stopPropagation(); importRemovePoolAccount('${platform}', '${escapeJsSingleQuotedString(account)}', ${groupIdx})">×</button>
+      <button type="button" onclick="event.stopPropagation(); importRemovePoolAccount('${platform}', '${escapeJsSingleQuotedString(account)}')">×</button>
     </span>`).join('');
 }
 
-function renderImportTablePanel(topicGroup, notes, groupState) {
+function renderImportTablePanel(topicGroup, notes, gc) {
   if (!notes.length) {
     return '<div class="import-table-panel"><div class="import-table-empty">当前主题下没有可导入的图片笔记</div></div>';
   }
@@ -4147,13 +4162,13 @@ function renderImportTablePanel(topicGroup, notes, groupState) {
             <tr>
               <th class="import-table-index">序号</th>
               <th class="import-table-thumb-col">缩略图</th>
-              <th>${renderImportBatchHeader('xhs', '小红书', groupState.xhsAccounts || [])}</th>
-              <th>${renderImportBatchHeader('dy', '抖音', groupState.dyAccounts || [])}</th>
+              <th>${renderImportBatchHeader('xhs', '小红书', gc.xhsAccounts || [])}</th>
+              <th>${renderImportBatchHeader('dy', '抖音', gc.dyAccounts || [])}</th>
               <th>时间</th>
             </tr>
           </thead>
           <tbody>
-            ${notes.map((note, idx) => renderImportTableRow(note, idx, groupState)).join('')}
+            ${notes.map((note, idx) => renderImportTableRow(note, idx, gc)).join('')}
           </tbody>
         </table>
       </div>
@@ -4178,7 +4193,7 @@ function renderImportBatchMenu(field, accounts) {
   </div>`;
 }
 
-function renderImportTableRow(note, idx, groupState) {
+function renderImportTableRow(note, idx, gc) {
   const state = importGetNoteState(note.noteKey);
   const warning = Array.isArray(note.warnings) && note.warnings.length
     ? `<span class="import-table-note-warn" title="${escapeAttr(note.warnings.join('\n'))}">⚠️</span>`
@@ -4199,12 +4214,12 @@ function renderImportTableRow(note, idx, groupState) {
         ${warning}
       </div>
       <div style="margin-top:8px;">
-        ${renderImportAccountSelect('xhs', note.noteKey, state.xhsAccount, groupState.xhsAccounts || [])}
+        ${renderImportAccountSelect('xhs', note.noteKey, state.xhsAccount, gc.xhsAccounts || [])}
       </div>
     </td>
     <td>
       <div style="margin-top:24px;">
-        ${renderImportAccountSelect('dy', note.noteKey, state.dyAccount, groupState.dyAccounts || [])}
+        ${renderImportAccountSelect('dy', note.noteKey, state.dyAccount, gc.dyAccounts || [])}
       </div>
     </td>
     <td>
@@ -4355,38 +4370,26 @@ function importPickerClearSelection() {
 
 function importAddPoolAccount(platform, accountName) {
   if (!accountName) return;
-  const topicGroup = importGetActiveTopicGroup();
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
+  const gc = getImportGlobalConfig();
   const listField = platform === 'xhs' ? 'xhsAccounts' : 'dyAccounts';
-  if (!state[listField].includes(accountName)) state[listField].push(accountName);
-  importGroupState.set(key, state);
+  if (!gc[listField].includes(accountName)) gc[listField].push(accountName);
   importUpdateButtonState();
   renderImportScanResult();
   renderContextPreview();
 }
 
-function importRemovePoolAccount(platform, accountName, groupIdx) {
-  const topicGroup = importGetTopicGroups()[groupIdx];
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
+function importRemovePoolAccount(platform, accountName) {
+  const gc = getImportGlobalConfig();
   const listField = platform === 'xhs' ? 'xhsAccounts' : 'dyAccounts';
-  state[listField] = (state[listField] || []).filter(item => item !== accountName);
-  importGroupState.set(key, state);
+  gc[listField] = (gc[listField] || []).filter(item => item !== accountName);
   importUpdateButtonState();
   renderImportScanResult();
   renderContextPreview();
 }
 
 function importSetPoolChannel(value) {
-  const topicGroup = importGetActiveTopicGroup();
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const state = normalizeImportGroupState(importGroupState.get(key));
-  state.channel = value || '蚁小二';
-  importGroupState.set(key, state);
+  const gc = getImportGlobalConfig();
+  gc.channel = value || '蚁小二';
   renderImportScanResult();
   renderContextPreview();
 }
@@ -4394,8 +4397,7 @@ function importSetPoolChannel(value) {
 function importApplyRoundRobin() {
   const topicGroup = importGetActiveTopicGroup();
   if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const groupState = normalizeImportGroupState(importGroupState.get(key));
+  const gc = getImportGlobalConfig();
   const notes = importGetNotesForGroup(topicGroup);
   let xhsCount = 0;
   let dyCount = 0;
@@ -4403,16 +4405,16 @@ function importApplyRoundRobin() {
   let dyCursor = 0;
   notes.forEach(note => {
     const state = importGetNoteState(note.noteKey);
-    if (!state.dirty && (groupState.xhsAccounts || []).length) {
-      state.xhsAccount = groupState.xhsAccounts[xhsCursor % groupState.xhsAccounts.length] || '';
+    if (!state.dirty && (gc.xhsAccounts || []).length) {
+      state.xhsAccount = gc.xhsAccounts[xhsCursor % gc.xhsAccounts.length] || '';
       state.source = 'batch';
       state.dirty = false;
       importNoteState.set(note.noteKey, state);
       xhsCursor += 1;
       xhsCount += 1;
     }
-    if (!state.dirty && (groupState.dyAccounts || []).length) {
-      state.dyAccount = groupState.dyAccounts[dyCursor % groupState.dyAccounts.length] || '';
+    if (!state.dirty && (gc.dyAccounts || []).length) {
+      state.dyAccount = gc.dyAccounts[dyCursor % gc.dyAccounts.length] || '';
       state.source = 'batch';
       state.dirty = false;
       importNoteState.set(note.noteKey, state);
@@ -4426,50 +4428,53 @@ function importApplyRoundRobin() {
   importShowToast(`已批量分配：小红书 ${xhsCount} 篇，抖音 ${dyCount} 篇`);
 }
 
-// 一键合并：先分配账号，再分配时间，最后统一弹一个 toast
-function importApplyAllBatch(groupIdx) {
-  const topicGroup = importGetGroupByIdx(groupIdx);
-  if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const groupState = normalizeImportGroupState(importGroupState.get(key));
-  const notes = importGetNotesForGroup(topicGroup);
-  const hasXhs = (groupState.xhsAccounts || []).length > 0;
-  const hasDy = (groupState.dyAccounts || []).length > 0;
-  const hasWindows = Array.isArray(groupState.timeWindows) && groupState.timeWindows.length > 0;
+// 一键合并：跨组轮流分配账号 + 时间（G1N1→G2N1→G3N1→G1N2→...）
+function importApplyAllBatch() {
+  const gc = getImportGlobalConfig();
+  const hasXhs = (gc.xhsAccounts || []).length > 0;
+  const hasDy = (gc.dyAccounts || []).length > 0;
+  const hasWindows = Array.isArray(gc.timeWindows) && gc.timeWindows.length > 0;
   if (!hasXhs && !hasDy && !hasWindows) {
-    importShowToast('请先添加账号或时间窗口');
+    importShowToast('请先在批量配置中添加账号或时间窗口');
     return;
   }
-  // 账号分配
-  let xhsCount = 0;
-  let dyCount = 0;
-  let xhsCursor = 0;
-  let dyCursor = 0;
-  // 时间分配
-  const allocated = hasWindows
-    ? allocateTimesByWindows(notes.length, groupState.timeWindows, groupState.intervalMin, groupState.startDate)
-    : [];
-  let timeCount = 0;
-  let skippedDirty = 0;
-  notes.forEach((note, idx) => {
-    const state = importGetNoteState(note.noteKey);
-    if (state.dirty) {
-      skippedDirty += 1;
-      return;
+  // 构建跨组交错队列（跳过已手动改过的笔记）
+  const groups = importGetTopicGroups();
+  const groupNotes = groups.map(g =>
+    importGetNotesForGroup(g).filter(n => !importGetNoteState(n.noteKey).dirty)
+  );
+  const maxLen = Math.max(...groupNotes.map(ns => ns.length), 0);
+  const interleaved = [];
+  for (let round = 0; round < maxLen; round++) {
+    for (const notes of groupNotes) {
+      if (round < notes.length) interleaved.push(notes[round]);
     }
+  }
+  // 统计跳过的手动改过笔记数
+  const skippedDirty = groups.reduce(
+    (sum, g) => sum + importGetNotesForGroup(g).filter(n => importGetNoteState(n.noteKey).dirty).length,
+    0
+  );
+  // 分配时间
+  const allocated = hasWindows
+    ? allocateTimesByWindows(interleaved.length, gc.timeWindows, gc.intervalMin, gc.startDate)
+    : [];
+  let xhsCursor = 0, dyCursor = 0, xhsCount = 0, dyCount = 0, timeCount = 0;
+  interleaved.forEach((note, idx) => {
+    const state = importGetNoteState(note.noteKey);
     if (hasXhs) {
-      state.xhsAccount = groupState.xhsAccounts[xhsCursor % groupState.xhsAccounts.length] || '';
-      xhsCursor += 1;
-      xhsCount += 1;
+      state.xhsAccount = gc.xhsAccounts[xhsCursor % gc.xhsAccounts.length] || '';
+      xhsCursor++;
+      xhsCount++;
     }
     if (hasDy) {
-      state.dyAccount = groupState.dyAccounts[dyCursor % groupState.dyAccounts.length] || '';
-      dyCursor += 1;
-      dyCount += 1;
+      state.dyAccount = gc.dyAccounts[dyCursor % gc.dyAccounts.length] || '';
+      dyCursor++;
+      dyCount++;
     }
     if (hasWindows && allocated[idx]) {
       state.publishTime = allocated[idx].replace(' ', 'T');
-      timeCount += 1;
+      timeCount++;
     }
     state.source = 'batch';
     state.dirty = false;
@@ -4483,17 +4488,16 @@ function importApplyAllBatch(groupIdx) {
   if (hasDy) parts.push(`抖音 ${dyCount} 篇`);
   if (hasWindows) parts.push(`时间 ${timeCount} 篇`);
   const skipMsg = skippedDirty > 0 ? `；跳过 ${skippedDirty} 篇手动改过的` : '';
-  importShowToast(`已分配：${parts.join('、')}${skipMsg}`);
+  importShowToast(`已跨组分配 ${interleaved.length} 篇：${parts.join('、')}${skipMsg}`);
 }
 
 function importApplyColumnBatch(field, action, value = '') {
   const topicGroup = importGetActiveTopicGroup();
   if (!topicGroup) return;
-  const key = importGroupKey(topicGroup);
-  const groupState = normalizeImportGroupState(importGroupState.get(key));
   const notes = importGetNotesForGroup(topicGroup);
   const accountField = field === 'xhs' ? 'xhsAccount' : 'dyAccount';
-  const pool = field === 'xhs' ? (groupState.xhsAccounts || []) : (groupState.dyAccounts || []);
+  const gc = getImportGlobalConfig();
+  const pool = field === 'xhs' ? (gc.xhsAccounts || []) : (gc.dyAccounts || []);
   let changed = 0;
   let cursor = 0;
   notes.forEach(note => {
@@ -5283,6 +5287,7 @@ function importResetFull() {
   importRootPaths = [];
   importScanData = [];
   importGroupState = new Map();
+  importGlobalConfig = null;
   importNoteState = new Map();
   importPreviewData = [];
   importCardDecisions = new Map();
