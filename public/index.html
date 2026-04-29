@@ -5322,14 +5322,27 @@ async function importRetryFailed() {
       body: JSON.stringify({ dryRun: false, records: retryRecords }),
     });
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || '重试失败');
-    const newResults = (data.results || []).map((item, idx) => {
-      const baseRecord = retryRecords[idx] || {};
-      return { ...baseRecord, ...item, __recordKey: importMakeRecordKey(baseRecord || item) };
-    });
-    importReportData = importReportData.concat(newResults);
+    // 服务端返回了 results（即使非 2xx），按实际结果合并，避免把已成功的条目误标为失败
+    if (Array.isArray(data.results) && data.results.length > 0) {
+      const newResults = data.results.map((item, idx) => {
+        const baseRecord = retryRecords[idx] || {};
+        return { ...baseRecord, ...item, __recordKey: importMakeRecordKey(baseRecord || item) };
+      });
+      importReportData = importReportData.concat(newResults);
+      if (!resp.ok) {
+        // 服务端报错但已有部分结果，提示用户核查
+        alert(`服务端返回错误但已处理部分记录，请检查飞书确认实际结果。错误：${data.error || '未知'}`);
+      }
+    } else if (!resp.ok) {
+      // 服务端完全失败（无任何 results）→ 恢复失败条目
+      importReportData = importReportData.concat(failedItems);
+      alert('重试失败：' + (data.error || '服务端返回错误'));
+    } else {
+      // 正常成功但 results 为空（不应出现，防御兜底）
+      importReportData = importReportData.concat(failedItems);
+    }
   } catch (err) {
-    // 网络异常时把之前摘掉的失败条目恢复回报告，避免凭空消失
+    // fetch 本身抛异常（网络完全断开），服务端肯定没处理，恢复失败条目
     importReportData = importReportData.concat(failedItems);
     alert('重试失败：' + err.message);
   }

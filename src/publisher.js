@@ -133,10 +133,12 @@ function isTransientNetworkError(error) {
   if (error.response) return false; // 有 HTTP 响应就不是 transient（是业务错误）
   const msg = String(error.message || '');
   const code = String(error.code || '');
-  return /socket hang up|EPIPE|write EPIPE|ECONNRESET|ETIMEDOUT|ECONNABORTED|ECONNREFUSED/i.test(msg + ' ' + code);
+  // ECONNREFUSED 不重试：服务端没开时重试必定再失败，只是浪费 2 秒
+  return /socket hang up|EPIPE|write EPIPE|ECONNRESET|ETIMEDOUT|ECONNABORTED/i.test(msg + ' ' + code);
 }
 
-async function requestApi(config, method, endpoint, data) {
+// noRetry=true：非幂等接口（如发布 POST）必须传 true，禁止重试，避免重复发布
+async function requestApi(config, method, endpoint, data, { noRetry = false } = {}) {
   const client = createHttpClient(config);
   const doRequest = () => client.request({
     method,
@@ -150,7 +152,8 @@ async function requestApi(config, method, endpoint, data) {
     response = await doRequest();
   } catch (error) {
     // transient 网络错误（socket hang up / EPIPE / ECONNRESET 等）重试一次
-    if (isTransientNetworkError(error)) {
+    // ⚠️ noRetry=true 时跳过：非幂等 POST（如提交发布任务）不能重试，否则会双发
+    if (!noRetry && isTransientNetworkError(error)) {
       console.warn(`⚠️ ${method} ${endpoint} 网络抖动 (${error.message})，2 秒后重试...`);
       await new Promise(r => setTimeout(r, 2000));
       try {
@@ -286,7 +289,8 @@ async function getAccountCategoriesApi(config, platformAccountId, publishType = 
 const getAccountTopicsApi = getAccountCategoriesApi;
 
 async function publishTaskApi(config, payload) {
-  return requestApi(config, 'POST', '/taskSets/v2', payload);
+  // noRetry=true：发布 POST 非幂等，绝对禁止重试，否则同一条笔记会被发两次
+  return requestApi(config, 'POST', '/taskSets/v2', payload, { noRetry: true });
 }
 
 function normalizePlatform(input) {
