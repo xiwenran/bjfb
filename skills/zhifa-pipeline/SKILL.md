@@ -1,0 +1,132 @@
+---
+name: zhifa-pipeline
+description: PPT一键发布：PPT转图片+融景合成+知发上传，三段全链路自动完成。触发词：PPT一键发布、PPT做成笔记发布、PPT转笔记上传、全链路发布、做完直接发、一次做完发布、做好发到小红书。
+---
+
+# PPT → 融景合成 → 知发发布 三段全链路 Skill
+
+三步合一：PPT 批量转图片 → 融景合成笔记图 → 知发上传飞书定时发布。
+全程自动，用户只在中途确认一次 Claude 生成的文案内容。
+
+## 依赖 CLI
+
+```bash
+python3 /Users/xili/ppt-batch-tool/pipeline.py   # PPT→图片+融景合成
+python3 /Users/xili/zhifa/scripts/skill_upload.py # 上传知发
+```
+
+## 工作流程
+
+### Step 0：一次性收集所有参数
+
+用户在**一条消息**里提供以下所有内容，之后只停一次（Step 3 确认文案）：
+
+**标准输入格式：**
+
+```
+PPT文件夹：/Users/xili/Desktop/课件
+输出目录：/Users/xili/Desktop/笔记制作输出（可选，默认 PPT文件夹/../笔记制作输出/）
+模板：全部（或 1 2 3 指定）
+导出页数：17（默认）
+账号：小红书-测试账号
+发布时间：后天 15:00
+
+组1：@草船借箭封面.jpg
+主题：草船借箭的历史背景与战争智慧
+
+组2：@赤壁之战封面.jpg
+主题：赤壁之战：以少胜多的经典战例
+```
+
+- **PPT文件夹**：含 PPT/PPTX 文件的目录（递归扫描）；也可以是单个 PPT 文件路径
+- **封面图**：每个 PPT 对应一张封面，@ 发送或文件路径，顺序与 PPT 文件夹里的 PPT 一一对应
+- **主题**：每组一句话，Claude 用于写文案
+- **账号/发布时间**：同 zhifa-upload Skill
+
+### Step 1：PPT 导出图片 + 融景合成
+
+```bash
+cd /Users/xili/ppt-batch-tool && python3 pipeline.py run \
+  --input <PPT文件夹> \
+  --output <输出目录> \
+  [--templates 1 2 3 ...] \
+  [--max-slides 17] \
+  --format JPEG
+```
+
+- 不指定 `--templates` 时自动用全部可用模板
+- 输出结构：
+  ```
+  输出目录/
+    PPT图片/      ← 中间产物
+    合成图/       ← 上传知发用的最终产物
+  ```
+
+等待完成后，确认 `合成图/` 目录存在且有内容，再继续。
+
+### Step 2：检查知发服务
+
+```bash
+curl -sf http://localhost:3210/api/import/preflight
+```
+
+失败 → 提醒用户打开知发 App，等确认后继续。
+
+### Step 3：扫描合成图 + 放置封面
+
+```bash
+python3 /Users/xili/zhifa/scripts/skill_upload.py scan <输出目录>/合成图
+```
+
+扫描结果会列出发现的主题组。将用户提供的封面图（按顺序）分别复制为每个笔记子文件夹的 `0.jpg`：
+
+```bash
+cp "<封面图路径>" "<笔记子文件夹>/0.jpg"
+```
+
+每个主题的所有模板子文件夹（`1/`、`2/`、`3/`…）放同一张封面图。
+
+若发现的组数与封面/主题数量不一致，停下确认。
+
+### Step 4：Claude 生成文案 → 用户确认
+
+为每个主题组生成小红书文案：
+- **标题**：≤20 字，吸引人，口语化，结尾可带 ❓💡✨，**不带** `#话题`
+- **正文**：200–400 字，有实质干货，口语化，结尾 3–5 个 `#话题标签`
+- **标签**：3–5 个关键词（不带 `#`）
+
+展示预览，等用户说「确认」后才继续。
+
+### Step 5：上传到知发
+
+把扫描结果 + 封面 + 文案组装成 records JSON（写入 `/tmp/zhifa_records.json`），再上传：
+
+```bash
+python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
+```
+
+### Step 6：报告结果
+
+```
+✅ 全链路完成
+
+PPT 处理：X 个文件，每个导出 N 页
+融景合成：X 组 × Y 个模板 = Z 篇笔记
+知发上传：Z 篇成功导入飞书，定时 YYYY-MM-DD HH:mm 发布
+
+合成图目录：<输出目录>/合成图（可单独拿来用）
+PPT图片目录：<输出目录>/PPT图片（中间产物保留）
+```
+
+## 与 zhifa-upload Skill 的关系
+
+- **zhifa-upload**：只做「上传」这一步，适合已有融景合成图时直接用
+- **zhifa-pipeline**：三段全链路，从 PPT 开始，内部串联了 ppt-notes-pipeline + zhifa-upload
+
+## 注意事项
+
+- macOS 上 PowerPoint 首次运行会弹授权窗口，告知用户点「允许」
+- 单文件模式不会触发额外授权（直接在原始目录操作）
+- 融景模板需要提前在融景 App 里创建好（标注背景图角点）
+- 知发服务必须运行（macOS 菜单栏可见）
+- 查重：相同内容二次上传知发自动跳过
