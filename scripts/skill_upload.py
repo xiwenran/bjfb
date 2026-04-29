@@ -107,11 +107,14 @@ def cmd_create(records_json_file: str) -> None:
     result = zhifa_post("/api/import/create-records", payload, timeout=300)
 
     # 统计结果
-    if not isinstance(result, list):
-        # 可能是 {"results": [...]} 结构
-        result_list = result.get("results", []) if isinstance(result, dict) else []
+    # API 返回 {"results": [...]}，取 results 字段；若格式异常则报错而非静默返回空列表
+    if isinstance(result, dict) and "results" in result:
+        result_list = result["results"]
+    elif isinstance(result, list):
+        result_list = result  # 兼容旧版本直接返回数组的情况
     else:
-        result_list = result
+        print(f"API 返回格式异常，原始响应：{json.dumps(result, ensure_ascii=False)}", file=sys.stderr)
+        sys.exit(1)
 
     success = [r for r in result_list if r.get("status") == "success"]
     skipped = [r for r in result_list if r.get("status") == "skipped"]

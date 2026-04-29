@@ -31,17 +31,19 @@ PPT文件夹：/Users/xili/Desktop/课件
 账号：小红书-测试账号
 发布时间：后天 15:00
 
-组1：@草船借箭封面.jpg
+组1：/Users/xili/Desktop/草船借箭封面.jpg
 主题：草船借箭的历史背景与战争智慧
 
-组2：@赤壁之战封面.jpg
+组2：/Users/xili/Desktop/赤壁之战封面.jpg
 主题：赤壁之战：以少胜多的经典战例
 ```
 
 - **PPT文件夹**：含 PPT/PPTX 文件的目录（递归扫描）；也可以是单个 PPT 文件路径
-- **封面图**：每个 PPT 对应一张封面，@ 发送或文件路径，顺序与 PPT 文件夹里的 PPT 一一对应
+- **封面图**：每个 PPT 对应一张封面，请提供**完整磁盘路径**；顺序与 PPT 文件名排序一致（Step 1 完成后先列出发现的主题组，再与封面匹配确认）
 - **主题**：每组一句话，Claude 用于写文案
-- **账号/发布时间**：同 zhifa-upload Skill
+- **账号**：小红书账号名 和/或 抖音账号名
+- **发布渠道**：可选，默认 `蚁小二`；如用其他渠道需显式说明
+- **发布时间**：支持自然语言（「后天 15:00」），先执行 `date "+%Y-%m-%d"` 拿今天日期再推算，填入格式 `YYYY-MM-DD HH:mm`
 
 ### Step 1：PPT 导出图片 + 融景合成
 
@@ -78,15 +80,18 @@ curl -sf http://localhost:3210/api/import/preflight
 python3 /Users/xili/zhifa/scripts/skill_upload.py scan <输出目录>/合成图
 ```
 
-扫描结果会列出发现的主题组。将用户提供的封面图（按顺序）分别复制为每个笔记子文件夹的 `0.jpg`：
+脚本扫描结果会写入 `/tmp/zhifa_scan_result.json`（含每个笔记的 `folderPath` 绝对路径和 `images` 数组）。
+
+列出发现的主题组，与用户提供的封面逐一确认对应关系。若数量不一致，停下询问用户：
+> 「扫描发现 N 个主题组：[列出名称]，但你提供了 M 张封面。请告诉我哪张封面对应哪组。」
+
+确认后，从 `/tmp/zhifa_scan_result.json` 取每条 note 的 `folderPath`，把对应封面复制为 `0.jpg`：
 
 ```bash
-cp "<封面图路径>" "<笔记子文件夹>/0.jpg"
+cp "<封面图磁盘路径>" "<folderPath>/0.jpg"
 ```
 
-每个主题的所有模板子文件夹（`1/`、`2/`、`3/`…）放同一张封面图。
-
-若发现的组数与封面/主题数量不一致，停下确认。
+每个主题的所有模板子文件夹（`1/`、`2/`、`3/`…）放同一张封面图。放完后重新运行 `scan` 确认所有笔记都显示"含 0.jpg ✓"。
 
 ### Step 4：Claude 生成文案 → 用户确认
 
@@ -99,11 +104,13 @@ cp "<封面图路径>" "<笔记子文件夹>/0.jpg"
 
 ### Step 5：上传到知发
 
-把扫描结果 + 封面 + 文案组装成 records JSON（写入 `/tmp/zhifa_records.json`），再上传：
+从 `/tmp/zhifa_scan_result.json` 读取扫描结果（含 `images` 数组和 `folderPath`），结合文案和用户参数构建 records JSON，写入 `/tmp/zhifa_records.json`，再上传：
 
 ```bash
 python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 ```
+
+字段来源同 zhifa-upload SKILL.md「字段来源说明」表，其中 `images` 数组直接从 scan JSON 复用（含 size），`xiaohongshuChannel` 未指定时固定填 `"蚁小二"`。
 
 ### Step 6：报告结果
 
