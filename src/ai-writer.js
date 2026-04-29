@@ -204,10 +204,14 @@ function buildUserMessage(record) {
     platformHint = '发布平台：未指定，默认按小红书风格生成';
   }
 
-  return [
+  const lines = [
     `笔记主题：${topic}`,
     platformHint,
-  ].join('\n');
+  ];
+  if (record.folderName) {
+    lines.push(`本篇是同主题系列中的第 ${record.folderName} 篇，请生成一个与其他篇标题句式和切入角度不同的独特版本`);
+  }
+  return lines.join('\n');
 }
 
 // 读取本地图片为 base64

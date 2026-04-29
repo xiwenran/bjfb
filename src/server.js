@@ -844,12 +844,14 @@ const server = http.createServer(async (req, res) => {
                 aiDescription = cached.description;
                 aiTags = cached.tags;
               } else {
+                const folderName = noteKey ? noteKey.split('/').pop() : '';
                 const aiRecord = {
                   topic: topicForAi,
+                  folderName,
                   attachments: images.map(i => ({ name: i.name })),
                   xiaohongshuAccount,
                   douyinAccount,
-                  imagePaths: images.map(i => i.path), // 传实际路径供 AI 视觉识别
+                  imagePaths: images.map(i => i.path),
                 };
                 const aiResult = await generateContent(aiConfig, aiRecord);
                 aiTitle = aiResult.title || '';
