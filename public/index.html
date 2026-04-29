@@ -1850,6 +1850,38 @@
     align-self: stretch;
     justify-content: end;
   }
+  .import-pool-field--full {
+    grid-column: 1 / -1;
+  }
+  .import-dist-mode-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .import-dist-mode-opt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1.5px solid var(--line);
+    cursor: pointer;
+    font-size: 13px;
+    background: var(--panel);
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .import-dist-mode-opt.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .import-dist-mode-opt input[type="radio"] {
+    display: none;
+  }
+  .import-dist-mode-desc {
+    font-size: 11px;
+    opacity: 0.6;
+  }
   .import-tw-apply-btn {
     border: 1px solid var(--accent);
     background: var(--accent-soft);
@@ -2937,6 +2969,7 @@ function createDefaultImportGlobalConfig() {
     timeWindows: createDefaultImportTimeWindows(),
     intervalMin: 30,
     startDate: getTodayDateString(),
+    distributionMode: 'interval',
   };
 }
 
@@ -3009,6 +3042,59 @@ function allocateTimesByWindows(noteCount, windows, intervalMin, startDate) {
       }
     }
     dayOffset++;
+  }
+  return results;
+}
+
+function calcAutoInterval(noteCount, windows) {
+  const totalMinutes = (windows || []).reduce((sum, w) => {
+    const [sh, sm] = (w.start || '').split(':').map(Number);
+    const [eh, em] = (w.end || '').split(':').map(Number);
+    const s = sh * 60 + sm, e = eh * 60 + em;
+    return s <= e ? sum + (e - s) : sum;
+  }, 0);
+  if (noteCount <= 1 || totalMinutes <= 0) return 0;
+  return Math.max(1, Math.floor(totalMinutes / (noteCount - 1)));
+}
+
+function allocateTimesFitInDay(noteCount, windows, startDate) {
+  if (noteCount <= 0) return [];
+  const normalizedWindows = (windows || []).map(w => {
+    const [sh, sm] = (w.start || '').split(':').map(Number);
+    const [eh, em] = (w.end || '').split(':').map(Number);
+    const s = sh * 60 + sm, e = eh * 60 + em;
+    return s <= e ? { s, e } : null;
+  }).filter(Boolean);
+  if (!normalizedWindows.length) return Array(noteCount).fill('');
+  const totalMinutes = normalizedWindows.reduce((sum, w) => sum + (w.e - w.s), 0);
+  const autoInterval = noteCount === 1 ? 0 : Math.max(1, Math.floor(totalMinutes / (noteCount - 1)));
+  const day = new Date(`${startDate}T00:00:00`);
+  if (Number.isNaN(day.getTime())) return Array(noteCount).fill('');
+  const yyyy = day.getFullYear();
+  const mm = String(day.getMonth() + 1).padStart(2, '0');
+  const dd = String(day.getDate()).padStart(2, '0');
+  const results = [];
+  for (let i = 0; i < noteCount; i++) {
+    const targetMinute = i * autoInterval;
+    let consumed = 0, placed = false;
+    for (const w of normalizedWindows) {
+      const wLen = w.e - w.s;
+      if (targetMinute <= consumed + wLen) {
+        const minuteInWindow = w.s + (targetMinute - consumed);
+        const h = String(Math.floor(minuteInWindow / 60)).padStart(2, '0');
+        const m = String(minuteInWindow % 60).padStart(2, '0');
+        results.push(`${yyyy}-${mm}-${dd} ${h}:${m}`);
+        placed = true;
+        break;
+      }
+      consumed += wLen;
+    }
+    if (!placed) {
+      const lastW = normalizedWindows[normalizedWindows.length - 1];
+      const h = String(Math.floor(lastW.e / 60)).padStart(2, '0');
+      const m = String(lastW.e % 60).padStart(2, '0');
+      results.push(`${yyyy}-${mm}-${dd} ${h}:${m}`);
+    }
   }
   return results;
 }
@@ -3970,10 +4056,22 @@ function importUpdateTopicOverride(groupIdx, value) {
 
 function importGetCapacityPreview() {
   const gc = getImportGlobalConfig();
-  const dailyCapacity = calcDailyCapacity(gc.timeWindows, gc.intervalMin);
   const totalNotes = importGetTopicGroups().reduce((sum, g) => sum + importGetNotesForGroup(g).length, 0);
+  if (gc.distributionMode === 'fitday') {
+    if (totalNotes === 0) return '—';
+    const autoInterval = calcAutoInterval(totalNotes, gc.timeWindows);
+    if (autoInterval === 0) return `${totalNotes} 篇 · 全在 ${gc.startDate} 集中发`;
+    return `${totalNotes} 篇 · 全在 ${gc.startDate} 发完 · 间隔约 ${autoInterval} 分钟`;
+  }
+  const dailyCapacity = calcDailyCapacity(gc.timeWindows, gc.intervalMin);
   const totalDays = dailyCapacity > 0 ? Math.ceil(totalNotes / dailyCapacity) : '—';
   return `${dailyCapacity} 槽位/天 · 全部 ${totalNotes} 篇 → 跨 ${totalDays} 天`;
+}
+
+function importUpdateDistributionMode(value) {
+  const gc = getImportGlobalConfig();
+  gc.distributionMode = value === 'fitday' ? 'fitday' : 'interval';
+  renderImportScanResult();
 }
 
 function importApplyTimesByWindows(groupIdx) {
@@ -4123,10 +4221,29 @@ function renderImportTimeWindowPanel(gc) {
       </div>
       <button class="import-tw-add-btn" type="button" onclick="importAddTimeWindow()">+ 自定义时间段</button>
       <div class="import-tw-meta">
-        <div class="import-pool-field">
+        <div class="import-pool-field import-pool-field--full">
+          <div class="import-pool-label">分配模式</div>
+          <div class="import-dist-mode-group">
+            <label class="import-dist-mode-opt${gc.distributionMode !== 'fitday' ? ' active' : ''}">
+              <input type="radio" name="importDistMode" value="interval"
+                ${gc.distributionMode !== 'fitday' ? 'checked' : ''}
+                onchange="importUpdateDistributionMode(this.value)">
+              按间隔分配
+              <span class="import-dist-mode-desc">笔记多时自动跨天</span>
+            </label>
+            <label class="import-dist-mode-opt${gc.distributionMode === 'fitday' ? ' active' : ''}">
+              <input type="radio" name="importDistMode" value="fitday"
+                ${gc.distributionMode === 'fitday' ? 'checked' : ''}
+                onchange="importUpdateDistributionMode(this.value)">
+              一天发完
+              <span class="import-dist-mode-desc">自动反算间隔</span>
+            </label>
+          </div>
+        </div>
+        ${gc.distributionMode !== 'fitday' ? `<div class="import-pool-field">
           <div class="import-pool-label">发布间隔</div>
           <select onchange="importUpdateInterval(this.value)">${intervalOptions}</select>
-        </div>
+        </div>` : ''}
         <div class="import-pool-field">
           <div class="import-pool-label">起始日期</div>
           <input type="date" value="${escapeAttr(gc.startDate || getTodayDateString())}" onchange="importUpdateStartDate(this.value)">
@@ -4465,7 +4582,9 @@ function importApplyAllBatch() {
   );
   // 分配时间
   const allocated = hasWindows
-    ? allocateTimesByWindows(interleaved.length, gc.timeWindows, gc.intervalMin, gc.startDate)
+    ? (gc.distributionMode === 'fitday'
+        ? allocateTimesFitInDay(interleaved.length, gc.timeWindows, gc.startDate)
+        : allocateTimesByWindows(interleaved.length, gc.timeWindows, gc.intervalMin, gc.startDate))
     : [];
   let xhsCursor = 0, dyCursor = 0, xhsCount = 0, dyCount = 0, timeCount = 0;
   interleaved.forEach((note, idx) => {
