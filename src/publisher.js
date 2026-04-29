@@ -128,22 +128,47 @@ function createHttpClient(config) {
   return client;
 }
 
+// transient 错误判断：socket hang up / EPIPE / 连接重置 / 超时
+function isTransientNetworkError(error) {
+  if (error.response) return false; // 有 HTTP 响应就不是 transient（是业务错误）
+  const msg = String(error.message || '');
+  const code = String(error.code || '');
+  return /socket hang up|EPIPE|write EPIPE|ECONNRESET|ETIMEDOUT|ECONNABORTED|ECONNREFUSED/i.test(msg + ' ' + code);
+}
+
 async function requestApi(config, method, endpoint, data) {
   const client = createHttpClient(config);
+  const doRequest = () => client.request({
+    method,
+    url: endpoint,
+    params: method === 'GET' ? data : undefined,
+    data: method === 'GET' ? undefined : data,
+  });
+
+  let response;
   try {
-    const response = await client.request({
-      method,
-      url: endpoint,
-      params: method === 'GET' ? data : undefined,
-      data: method === 'GET' ? undefined : data,
-    });
-    return response.data?.data !== undefined ? response.data.data : response.data;
+    response = await doRequest();
   } catch (error) {
-    const message = error.response?.data?.message || error.message;
-    const err = new Error(`蚁小二API错误: ${message}`);
-    err.response = error.response;
-    throw err;
+    // transient 网络错误（socket hang up / EPIPE / ECONNRESET 等）重试一次
+    if (isTransientNetworkError(error)) {
+      console.warn(`⚠️ ${method} ${endpoint} 网络抖动 (${error.message})，2 秒后重试...`);
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        response = await doRequest();
+      } catch (retryError) {
+        const message = retryError.response?.data?.message || retryError.message;
+        const err = new Error(`蚁小二API错误: ${message}`);
+        err.response = retryError.response;
+        throw err;
+      }
+    } else {
+      const message = error.response?.data?.message || error.message;
+      const err = new Error(`蚁小二API错误: ${message}`);
+      err.response = error.response;
+      throw err;
+    }
   }
+  return response.data?.data !== undefined ? response.data.data : response.data;
 }
 
 // 自动降级：先用新路径，404 时降级到旧路径
@@ -1578,7 +1603,7 @@ async function publishRecord(record, config, accountMapping, options = {}) {
         // axios 超时 / ECONNRESET / 网络错误时，蚁小二服务端可能已经接收并执行了请求，
         // 等 5 秒后再查 /taskSets，如果命中，回写为成功（避免下次重发造成重复）。
         const errMsg = String(publishErr?.message || '');
-        const looksLikeNetworkErr = /timeout|ETIMEDOUT|ECONNRESET|ECONNABORTED|ECONNREFUSED|socket hang up|network/i.test(errMsg);
+        const looksLikeNetworkErr = /timeout|ETIMEDOUT|ECONNRESET|ECONNABORTED|ECONNREFUSED|socket hang up|EPIPE|write EPIPE|network/i.test(errMsg);
         if (looksLikeNetworkErr) {
           console.warn(`  ⚠️ ${platformName}(${accountName}) 网络异常 (${errMsg})，5 秒后做二次确认...`);
           await new Promise(r => setTimeout(r, 5000));

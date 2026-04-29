@@ -304,7 +304,8 @@ function extractFieldsLenient(text) {
   let m;
   while ((m = tagRe.exec(tagsBlock[1])) !== null) tags.push(m[1]);
 
-  if (!title || !description || tags.length === 0) return null;
+  // description 允许为空字符串，只检查 title 和 tags
+  if (!title || tags.length === 0) return null;
   return { title, description, tags };
 }
 
@@ -312,8 +313,9 @@ function validateAiResult(result) {
   if (!result || typeof result !== 'object') {
     throw new Error('AI 返回不是 JSON 对象');
   }
-  if (!result.title || !result.description || !Array.isArray(result.tags)) {
-    throw new Error('AI 返回格式不完整，缺少 title/description/tags');
+  // description 允许为空字符串，只要求 title 和 tags 有实质内容
+  if (!result.title || !Array.isArray(result.tags) || result.tags.length === 0) {
+    throw new Error('AI 返回格式不完整，缺少 title/tags 或 tags 为空数组');
   }
   return result;
 }
