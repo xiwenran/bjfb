@@ -118,13 +118,13 @@ cp "<第3张>" "<folderPath>/0(2).jpg"
 
 ### Step 5：上传到知发
 
-从 `/tmp/zhifa_scan_result.json` 读取扫描结果（含 `images` 数组和 `folderPath`），结合文案和用户参数构建 records 列表，**写入文件前先随机打乱整个列表顺序**（`random.shuffle`），再写入 `/tmp/zhifa_records.json` 并上传：
+从 `/tmp/zhifa_scan_result.json` 读取扫描结果（含 `images` 数组和 `folderPath`），结合文案和用户参数构建 records 列表，**写入文件前做带约束的随机排列**，再写入 `/tmp/zhifa_records.json` 并上传：
 
 ```bash
 python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 ```
 
-打乱顺序的目的：避免同一账号按模板编号或主题顺序规律性发布，减少被平台识别为模板化内容的风险。
+排列规则同 zhifa-upload SKILL.md「排列约束规则」：同一模板不相邻、同一课题最多连续 2 条，用贪心算法实现。
 
 字段来源同 zhifa-upload SKILL.md「字段来源说明」表，其中 `images` 数组直接从 scan JSON 复用（含 size），`xiaohongshuChannel` 未指定时固定填 `"蚁小二"`。
 

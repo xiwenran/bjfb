@@ -140,9 +140,48 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 
 ### Step 5：构建 records JSON 并上传
 
-从 `/tmp/zhifa_scan_result.json` 中读取扫描结果，结合用户输入和 Claude 生成的文案，构建完整 records 列表后，**在写入文件前随机打乱整个列表顺序**（`random.shuffle`），再写入 `/tmp/zhifa_records.json` 并上传。
+从 `/tmp/zhifa_scan_result.json` 中读取扫描结果，结合用户输入和 Claude 生成的文案，构建完整 records 列表后，**在写入文件前做带约束的随机排列**，再写入 `/tmp/zhifa_records.json` 并上传。
 
-打乱顺序的目的：避免同一账号按模板编号或主题顺序规律性发布，减少被平台识别为模板化内容的风险。
+**排列约束规则**（防平台识别模板化，两条必须同时满足）：
+
+1. **同一模板不得相邻**：`noteKey` 末段（模板编号）与紧邻的上一条不能相同
+2. **同一课题最多连续 2 条**：`topic` 与紧邻的上两条不能完全相同
+
+**实现方式**（Python 贪心算法）：
+
+```python
+import random
+
+def constrained_order(records):
+    pool = list(records)
+    random.shuffle(pool)   # 先随机打底，保证非决定性
+    result = []
+
+    while pool:
+        for i, r in enumerate(pool):
+            tmpl = r["noteKey"].split("/")[-1]
+            topic = r["topic"]
+
+            # 约束1：模板不相邻
+            if result and result[-1]["noteKey"].split("/")[-1] == tmpl:
+                continue
+            # 约束2：同课题最多连续2条
+            if (len(result) >= 2
+                    and result[-1]["topic"] == topic
+                    and result[-2]["topic"] == topic):
+                continue
+
+            result.append(pool.pop(i))
+            break
+        else:
+            # 无法满足约束时（极少情况），追加剩余
+            result.extend(pool)
+            break
+
+    return result
+```
+
+用此函数排列完成后再写入 `records` 数组。
 
 ```bash
 python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
