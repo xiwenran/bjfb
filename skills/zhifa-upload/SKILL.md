@@ -140,7 +140,9 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 
 ### Step 5：构建 records JSON 并上传
 
-从 `/tmp/zhifa_scan_result.json` 中读取扫描结果，结合用户输入和 Claude 生成的文案，构建完整 records，写入 `/tmp/zhifa_records.json`，再上传：
+从 `/tmp/zhifa_scan_result.json` 中读取扫描结果，结合用户输入和 Claude 生成的文案，构建完整 records 列表后，**在写入文件前随机打乱整个列表顺序**（`random.shuffle`），再写入 `/tmp/zhifa_records.json` 并上传。
+
+打乱顺序的目的：避免同一账号按模板编号或主题顺序规律性发布，减少被平台识别为模板化内容的风险。
 
 ```bash
 python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
