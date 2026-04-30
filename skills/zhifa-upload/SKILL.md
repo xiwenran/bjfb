@@ -86,14 +86,34 @@ python3 /Users/xili/zhifa/scripts/skill_upload.py scan <合成图文件夹>
 
 ### Step 3：放置封面图
 
-读取 `/tmp/zhifa_scan_result.json`，取出每个 topic group 下所有笔记的 `folderPath` 字段（已是绝对路径），对每个笔记子文件夹执行：
+读取 `/tmp/zhifa_scan_result.json`，取出每个 topic group 下所有笔记的 `folderPath` 字段（已是绝对路径）。
+
+**单张封面**（该组只提供一张图）：
 
 ```bash
-cp "<封面图磁盘路径>" "<folderPath>/0.jpg"
+cp "<封面图路径>" "<folderPath>/0.jpg"
 ```
 
-- `0.jpg` 排序键最小（0 < 1 < 2…），保证封面始终排第一
-- 同一主题组的多个模板子文件夹（`1/`、`2/`、`3/`）放**同一张**封面图
+**多张封面**（该组提供了多张图）：
+
+按用户发送的文件名顺序排列（不要按文件系统排序，以用户列出的顺序为准），依次重命名为：
+
+```
+第1张 → 0.jpg
+第2张 → 0(1).jpg
+第3张 → 0(2).jpg
+……以此类推
+```
+
+```bash
+cp "<第1张路径>" "<folderPath>/0.jpg"
+cp "<第2张路径>" "<folderPath>/0(1).jpg"
+cp "<第3张路径>" "<folderPath>/0(2).jpg"
+```
+
+排序规则保证 `0 < 0(1) < 0(2) < 1 < 2…`，所有封面图始终排在内容图前面。
+
+- 同一主题组的多个模板子文件夹（`1/`、`2/`、`3/`）放**完全相同**的封面组合
 - 放完后再运行一次 `scan`，确认所有笔记都显示"含 0.jpg ✓"
 
 ### Step 4：Claude 生成文案
