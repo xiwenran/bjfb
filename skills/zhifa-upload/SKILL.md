@@ -37,8 +37,9 @@ python3 /Users/xili/zhifa/scripts/skill_upload.py
 
 ```
 合成图文件夹：/Users/xili/笔记制作输出/合成图
-账号：小红书-测试账号
-发布时间：后天 15:00
+账号：小红书-账号A、小红书-账号B、小红书-账号C
+每账号发几条：2
+发布时间：后天 15:00 / 17:00 / 20:00
 
 组1：/Users/xili/Desktop/草船借箭封面.jpg
 主题：草船借箭的历史背景与战争智慧
@@ -51,9 +52,10 @@ python3 /Users/xili/zhifa/scripts/skill_upload.py
 - **合成图文件夹**：融景输出的 `合成图/` 目录路径
 - **封面图**：每个主题组一张，请提供**完整磁盘路径**；文件名无所谓，Skill 统一存为 `0.jpg`
 - **主题**：每组一句话，Claude 用于写小红书文案
-- **账号**：小红书账号名 和/或 抖音账号名（可同时写两个）
+- **账号**：支持一个或多个小红书/抖音账号，多个账号用顿号、逗号或换行分隔；Skill 会轮转分配笔记
+- **每账号发几条**：可选，用户说明；不说则 Claude 根据笔记总数和账号数均匀推算，上限不超过3条
 - **发布渠道（xiaohongshuChannel）**：可选，默认 `蚁小二`；如果用其他渠道，用户需显式说明
-- **发布时间**：支持自然语言（「后天 15:00」），Claude 需要先执行 `date "+%Y-%m-%d"` 拿到今天日期再推算绝对时间，最终填入格式 `YYYY-MM-DD HH:mm`
+- **发布时间**：支持自然语言（「后天 15:00」），Claude 需要先执行 `date "+%Y-%m-%d"` 拿到今天日期再推算绝对时间，最终填入格式 `YYYY-MM-DD HH:mm`；支持多个时间槽（「15:00 / 17:00 / 20:00」），多时间槽时在账号之间轮转分配
 
 **关于封面图的附件（@ 拖入）**：如果用户通过 @ 或拖拽发送封面图，先运行：
 ```bash
@@ -138,50 +140,21 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 …
 ```
 
-### Step 5：构建 records JSON 并上传
+### Step 5：分配账号与时间，构建 records JSON 并上传
 
-从 `/tmp/zhifa_scan_result.json` 中读取扫描结果，结合用户输入和 Claude 生成的文案，构建完整 records 列表后，**在写入文件前做带约束的随机排列**，再写入 `/tmp/zhifa_records.json` 并上传。
+从 `/tmp/zhifa_scan_result.json` 中读取扫描结果，结合用户输入和 Claude 生成的文案，按以下原则分配后写入 `/tmp/zhifa_records.json` 并上传。
 
-**排列约束规则**（防平台识别模板化，两条必须同时满足）：
+#### 分配原则（核心规则，按优先级排列）
 
-1. **同一模板不得相邻**：`noteKey` 末段（模板编号）与紧邻的上一条不能相同
-2. **同一课题最多连续 2 条**：`topic` 与紧邻的上两条不能完全相同
+**① 账号轮转分配**：笔记在随机打散后，依次分配给账号列表，循环填满每个账号的配额。目标是每个账号拿到的笔记在主题和模板上尽量多样，不集中在同一风格。
 
-**实现方式**（Python 贪心算法）：
+**② 同一账号内模板尽量不重复**：同一账号拿到的多条笔记，尽量不是同一个模板编号做出来的。这是软约束，账号数量少而笔记多时可以放宽。
 
-```python
-import random
+**③ 同一主题在同一账号适度出现**：同一课题的笔记发到同一账号，尽量不超过 2 条。不是硬性卡死，看整体数量灵活处理。
 
-def constrained_order(records):
-    pool = list(records)
-    random.shuffle(pool)   # 先随机打底，保证非决定性
-    result = []
+**④ 时间槽轮转**：若用户提供多个时间槽，在账号之间依次循环分配，同一批次内不同账号落在不同时间点。若只有一个时间，所有笔记使用同一时间。
 
-    while pool:
-        for i, r in enumerate(pool):
-            tmpl = r["noteKey"].split("/")[-1]
-            topic = r["topic"]
-
-            # 约束1：模板不相邻
-            if result and result[-1]["noteKey"].split("/")[-1] == tmpl:
-                continue
-            # 约束2：同课题最多连续2条
-            if (len(result) >= 2
-                    and result[-1]["topic"] == topic
-                    and result[-2]["topic"] == topic):
-                continue
-
-            result.append(pool.pop(i))
-            break
-        else:
-            # 无法满足约束时（极少情况），追加剩余
-            result.extend(pool)
-            break
-
-    return result
-```
-
-用此函数排列完成后再写入 `records` 数组。
+**实现思路**：先对全部笔记做一次随机打散（保证非确定性），再按账号顺序逐条分配，同时兼顾上述约束。约束满足不了时优先保证均匀分配，不要为了满足约束让某个账号拿到过多或过少的笔记。
 
 ```bash
 python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
@@ -196,9 +169,9 @@ python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 | `noteKey` | scan JSON 里每条 note 的 `noteKey` 字段 |
 | `folderPath` | scan JSON 里每条 note 的 `folderPath` 字段（绝对路径） |
 | `images` | scan JSON 里每条 note 的 `images` 数组（已含 name/path/size，**直接复用，不要重新构建**） |
-| `xiaohongshuAccount` | 用户提供的小红书账号名，没有则留空 `""` |
+| `xiaohongshuAccount` | 按分配原则确定的该条笔记对应账号，没有小红书账号则留空 `""` |
 | `douyinAccount` | 用户提供的抖音账号名，没有则留空 `""` |
-| `publishTime` | 由 Step 0 推算的 `YYYY-MM-DD HH:mm` 格式绝对时间 |
+| `publishTime` | 按分配原则确定的该条笔记对应时间槽，格式 `YYYY-MM-DD HH:mm` |
 | `xiaohongshuChannel` | 用户指定的渠道，**未指定时固定填 `"蚁小二"`** |
 | `title` | Claude 生成的标题 |
 | `description` | Claude 生成的正文 |

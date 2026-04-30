@@ -28,8 +28,9 @@ PPT文件夹：/Users/xili/Desktop/课件
 输出目录：/Users/xili/Desktop/笔记制作输出（可选，默认 PPT文件夹/../笔记制作输出/）
 模板：全部（或 1 2 3 指定）
 导出页数：17（默认）
-账号：小红书-测试账号
-发布时间：后天 15:00
+账号：小红书-账号A、小红书-账号B、小红书-账号C
+每账号发几条：2
+发布时间：后天 15:00 / 17:00 / 20:00
 
 组1：/Users/xili/Desktop/草船借箭封面.jpg
 主题：草船借箭的历史背景与战争智慧
@@ -41,9 +42,10 @@ PPT文件夹：/Users/xili/Desktop/课件
 - **PPT文件夹**：含 PPT/PPTX 文件的目录（递归扫描）；也可以是单个 PPT 文件路径
 - **封面图**：每个 PPT 对应一张封面，请提供**完整磁盘路径**；顺序与 PPT 文件名排序一致（Step 1 完成后先列出发现的主题组，再与封面匹配确认）
 - **主题**：每组一句话，Claude 用于写文案
-- **账号**：小红书账号名 和/或 抖音账号名
+- **账号**：支持一个或多个小红书/抖音账号，多个账号用顿号、逗号或换行分隔；Skill 会轮转分配笔记
+- **每账号发几条**：可选，用户说明；不说则 Claude 根据笔记总数和账号数均匀推算，上限不超过3条
 - **发布渠道**：可选，默认 `蚁小二`；如用其他渠道需显式说明
-- **发布时间**：支持自然语言（「后天 15:00」），先执行 `date "+%Y-%m-%d"` 拿今天日期再推算，填入格式 `YYYY-MM-DD HH:mm`
+- **发布时间**：支持自然语言（「后天 15:00」），先执行 `date "+%Y-%m-%d"` 拿今天日期再推算，填入格式 `YYYY-MM-DD HH:mm`；支持多个时间槽（「15:00 / 17:00 / 20:00」），在账号之间轮转分配
 - **模板**：支持三种写法：
   - `全部`：使用所有可用模板（默认，不传 `--templates`）
   - `1 3 5`：指定具体模板编号
@@ -157,15 +159,13 @@ cp "<第3张>" "<folderPath>/0(2).jpg"
 
 ### Step 5：上传到知发
 
-从 `/tmp/zhifa_scan_result.json` 读取扫描结果（含 `images` 数组和 `folderPath`），结合文案和用户参数构建 records 列表，**写入文件前做带约束的随机排列**，再写入 `/tmp/zhifa_records.json` 并上传：
+从 `/tmp/zhifa_scan_result.json` 读取扫描结果（含 `images` 数组和 `folderPath`），结合文案和用户参数，按 zhifa-upload SKILL.md「分配原则」分配账号与时间槽后写入 `/tmp/zhifa_records.json` 并上传：
 
 ```bash
 python3 /Users/xili/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 ```
 
-排列规则同 zhifa-upload SKILL.md「排列约束规则」：同一模板不相邻、同一课题最多连续 2 条，用贪心算法实现。
-
-字段来源同 zhifa-upload SKILL.md「字段来源说明」表，其中 `images` 数组直接从 scan JSON 复用（含 size），`xiaohongshuChannel` 未指定时固定填 `"蚁小二"`。
+分配原则、字段来源均同 zhifa-upload SKILL.md 对应章节；`images` 数组直接从 scan JSON 复用（含 size），`xiaohongshuChannel` 未指定时固定填 `"蚁小二"`。
 
 ### Step 6：报告结果
 
