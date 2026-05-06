@@ -939,25 +939,26 @@ const server = http.createServer(async (req, res) => {
           if (!isNaN(ts)) fields['发布时间'] = ts;
         }
 
-        // 【Fix 问题1】平台字段组装：
-        // 普通建单：只写本次有值的平台字段（飞书侧其余字段为空）
-        // 覆盖模式：所有平台字段都显式写入，无账号的平台置空，防止旧字段残留
+        // 【Fix 问题1 + 2026-05-06 调整】平台字段组装：
+        // 上传只建档不触发自动发布——发布状态字段一律不写（保持空），
+        // 由人工在飞书侧手动改成"待发布"才进入调度链路。
+        // 覆盖模式：账号/渠道字段还需要显式重置，防止旧账号残留。
         if (isOverwrite) {
-          // 显式重置所有平台字段，避免旧账号/状态继续进入调度链路
+          // 显式重置账号/渠道，避免旧账号继续进入调度链路；状态保持空
           fields['小红书账号'] = xiaohongshuAccount || '';
-          fields['小红书发布状态'] = xiaohongshuAccount ? '待发布' : '';
+          fields['小红书发布状态'] = '';
           fields['小红书发布渠道'] = xiaohongshuAccount ? (xiaohongshuChannel || '蚁小二') : '';
           fields['抖音账号'] = douyinAccount || '';
-          fields['抖音发布状态'] = douyinAccount ? '待发布' : '';
+          fields['抖音发布状态'] = '';
         } else {
           if (xiaohongshuAccount) {
             fields['小红书账号'] = xiaohongshuAccount;
-            fields['小红书发布状态'] = '待发布';
             fields['小红书发布渠道'] = xiaohongshuChannel || '蚁小二';
+            // 不写小红书发布状态——让人工手动设"待发布"才触发调度
           }
           if (douyinAccount) {
             fields['抖音账号'] = douyinAccount;
-            fields['抖音发布状态'] = '待发布';
+            // 不写抖音发布状态——让人工手动设"待发布"才触发调度
           }
         }
 
