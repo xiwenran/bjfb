@@ -137,7 +137,11 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 
 分配原则、字段来源均同 zhifa-upload SKILL.md 对应章节；`images` 数组直接从 scan JSON 复用（含 size），`xiaohongshuChannel` 未指定时固定填 `"蚁小二"`。
 
-### Step 6：报告结果
+### Step 6：归档未安排的笔记
+
+上传完成后对照计划检查："制作了但没排进发布"或"用户备注不发"的笔记**复制**到 `<输出目录>/合成图/_未安排备用/`，命名 `{主题简称}-{原编号}-模板{融景模板号}/`，根目录写 README 说明。详见 zhifa-upload SKILL.md 同名步骤。
+
+### Step 7：报告结果
 
 ```
 ✅ 全链路完成
@@ -145,6 +149,7 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 PPT 处理：X 个文件，每个导出 N 页
 融景合成：X 组 × Y 个模板 = Z 篇笔记
 知发上传：Z 篇成功导入飞书（发布状态留空，需人工改"待发布"才发）
+未安排归档：N 篇 → <输出目录>/合成图/_未安排备用/
 
 合成图目录：<输出目录>/合成图（可单独拿来用）
 PPT图片目录：<输出目录>/PPT图片（中间产物保留）
