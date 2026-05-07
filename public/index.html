@@ -5769,49 +5769,68 @@ async function stopScheduler() {
 
 let publishNowInFlight = false;
 async function publishNow() {
-  addLog('info', '正在补发已到时间的笔记...');
-  renderProgress({ active: true, stage: 'checking', title: '', detail: '正在检查并补发已到时间的笔记', updatedAt: new Date().toLocaleString('zh-CN') });
-  try {
-    const result = await fetchApi('/api/publish/now', 'POST', {});
-    if (result.success) {
-      if (result.inProgress) {
-        addLog('info', `当前已有任务在执行，已追加 ${result.queued ?? 0} 条到队列`);
-      } else {
-        const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
-        addLog('success', `已到时间笔记补发完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
-      }
-    } else {
-      addLog('error', `发布失败: ${result.error}`);
-    }
-  } catch (e) {
-    addLog('error', `请求失败: ${e.message}`);
-    renderProgress({ active: false, stage: 'failed', title: '', detail: `手动发布失败: ${e.message}`, updatedAt: new Date().toLocaleString('zh-CN') });
+  if (publishNowInFlight) {
+    addLog('info', '⏳ 已有补发任务在执行，请稍后再试');
+    return;
   }
-  refreshStatus();
-  refreshRecords(true);
+  publishNowInFlight = true;
+  try {
+    addLog('info', '正在补发已到时间的笔记...');
+    renderProgress({ active: true, stage: 'checking', title: '', detail: '正在检查并补发已到时间的笔记', updatedAt: new Date().toLocaleString('zh-CN') });
+    try {
+      const result = await fetchApi('/api/publish/now', 'POST', {});
+      if (result.success) {
+        if (result.inProgress) {
+          addLog('info', `当前已有任务在执行，已追加 ${result.queued ?? 0} 条到队列`);
+        } else {
+          const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
+          addLog('success', `已到时间笔记补发完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+        }
+      } else {
+        addLog('error', `发布失败: ${result.error}`);
+      }
+    } catch (e) {
+      addLog('error', `请求失败: ${e.message}`);
+      renderProgress({ active: false, stage: 'failed', title: '', detail: `手动发布失败: ${e.message}`, updatedAt: new Date().toLocaleString('zh-CN') });
+    }
+    refreshStatus();
+    refreshRecords(true);
+  } finally {
+    publishNowInFlight = false;
+  }
 }
 
+const publishRecordInFlight = new Set();
 async function publishRecord(recordId) {
-  addLog('info', `正在立即发布记录 ${recordId}...`);
-  renderProgress({ active: true, stage: 'checking', title: '', detail: '正在执行立即发布', updatedAt: new Date().toLocaleString('zh-CN') });
-  try {
-    const result = await fetchApi('/api/publish/record', 'POST', { recordId });
-    if (result.success) {
-      if (result.inProgress) {
-        addLog('info', `已有任务正在执行，这条记录已加入队列 (${result.queued ?? 0})`);
-      } else {
-        const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
-        addLog('success', `立即发布完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
-      }
-    } else {
-      addLog('error', `发布失败: ${result.error}`);
-    }
-  } catch (e) {
-    addLog('error', `请求失败: ${e.message}`);
-    renderProgress({ active: false, stage: 'failed', title: '', detail: `立即发布失败: ${e.message}`, updatedAt: new Date().toLocaleString('zh-CN') });
+  if (publishRecordInFlight.has(recordId)) {
+    addLog('info', `⏳ 记录 ${recordId} 已有发布请求在执行`);
+    return;
   }
-  refreshStatus();
-  refreshRecords(true);
+  publishRecordInFlight.add(recordId);
+  try {
+    addLog('info', `正在立即发布记录 ${recordId}...`);
+    renderProgress({ active: true, stage: 'checking', title: '', detail: '正在执行立即发布', updatedAt: new Date().toLocaleString('zh-CN') });
+    try {
+      const result = await fetchApi('/api/publish/record', 'POST', { recordId });
+      if (result.success) {
+        if (result.inProgress) {
+          addLog('info', `已有任务正在执行，这条记录已加入队列 (${result.queued ?? 0})`);
+        } else {
+          const submittedText = result.submitted ? `, 提交中 ${result.submitted}` : '';
+          addLog('success', `立即发布完成: 成功 ${result.published ?? 0}${submittedText}, 失败 ${result.failed ?? 0}`);
+        }
+      } else {
+        addLog('error', `发布失败: ${result.error}`);
+      }
+    } catch (e) {
+      addLog('error', `请求失败: ${e.message}`);
+      renderProgress({ active: false, stage: 'failed', title: '', detail: `立即发布失败: ${e.message}`, updatedAt: new Date().toLocaleString('zh-CN') });
+    }
+    refreshStatus();
+    refreshRecords(true);
+  } finally {
+    publishRecordInFlight.delete(recordId);
+  }
 }
 
 // Legacy toggle functions → redirect to switchTab

@@ -10,7 +10,7 @@ const {
 } = require('./account-mapping.js');
 const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache } = require('./config-store.js');
 const { generateContent } = require('./ai-writer.js');
-const DEFAULT_RECENT_RECORD_GUARD_MS = 2 * 60 * 1000;
+const DEFAULT_RECENT_RECORD_GUARD_MS = 24 * 60 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
 class Scheduler {
@@ -398,6 +398,29 @@ class Scheduler {
     });
     this.log('info', `📝 处理: "${record.title}"`);
 
+    // P0.3 处理前预检本地账本：所有待发布平台都已在账本中 → 直接跳过，避免下载素材+调 publisher 浪费
+    const pendingPlatforms = [];
+    if (record.xiaohongshuAccount && this.isPlatformPending(record.xiaohongshuStatus)) {
+      pendingPlatforms.push('小红书');
+    }
+    if (record.douyinAccount && this.isPlatformPending(record.douyinStatus)) {
+      pendingPlatforms.push('抖音');
+    }
+    if (pendingPlatforms.length > 0
+        && pendingPlatforms.every(p => publisher.isAlreadyPublished(record.recordId, p))) {
+      this.log('warn', `⏭ 跳过《${record.title}》：所有待发布平台均已在本地账本（防重复保护）`);
+      this.setProgress({
+        active: false,
+        stage: 'idle',
+        title: '',
+        recordId: '',
+        platform: '',
+        account: '',
+        detail: `跳过《${record.title}》（账本已记录）`,
+      });
+      return { published: 0, failed: 0 };
+    }
+
     const tmpDir = getRecordTempDir(record.recordId);
     try {
       this.setProgress({
@@ -547,6 +570,13 @@ class Scheduler {
           nextNote = this.mergeNoteEntry(nextNote, entry);
           noteChanged = true;
           this.log('error', `  🚨 ${entry}`);
+        } else if (r.retryable) {
+          // P0.4 C1 fail-closed → 飞书状态保持"待发布"，下轮自动重试，不污染状态
+          allSuccess = false;
+          const retryEntry = `${r.platform}本轮暂缓(${r.account}): ${r.error}`;
+          nextNote = this.mergeNoteEntry(nextNote, retryEntry);
+          noteChanged = true;
+          this.log('warn', `  ⏳ ${r.platform}(${r.account}) 本轮暂缓，下轮重试: ${r.error}`);
         } else {
           allSuccess = false;
           await this.feishu.markPlatformStatus(record.recordId, r.platform, '发布失败');

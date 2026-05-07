@@ -15,6 +15,9 @@ const DEFAULT_API_BASE_URL = 'https://www.yixiaoer.cn/api';
 const DEFAULT_PENDING_STATUS_GUARD_MS = 2 * 60 * 1000;
 // 链路 C1 防御：发布前/发布失败后查询蚁小二 /taskSets 的"最近窗口"（小时）
 const C1_DEDUP_WINDOW_HOURS = 12;
+
+// 同账号同平台 in-flight 锁：防止两条记录同时 POST 到蚁小二同账号导致 burst → 风控
+const inFlightAccountLocks = new Map();
 const PLATFORM_RULES = {
   DouYin: { code: 'DouYin', name: '抖音', supportedTypes: ['video', 'imageText', 'article'] },
   XiaoHongShu: { code: 'XiaoHongShu', name: '小红书', supportedTypes: ['video', 'imageText'] },
@@ -1418,7 +1421,20 @@ async function publishRecord(record, config, accountMapping, options = {}) {
       };
     }
 
-    if (platformName === '小红书' && xhsPublishChannel === '比特浏览器') {
+    // P0.2 同账号 in-flight 并发锁：防止两条记录同时 POST 到同账号导致风控
+    const lockKey = `${accountId || accountName}:${platformName}`;
+    while (inFlightAccountLocks.has(lockKey)) {
+      console.log(`  ⏳ ${platformName}(${accountName}) 同账号有发布在进行，等待释放锁...`);
+      try {
+        await inFlightAccountLocks.get(lockKey);
+      } catch (_) { /* 忽略前一持有者的错误，自己重新尝试拿锁 */ }
+    }
+    let releaseLock;
+    const lockPromise = new Promise(resolve => { releaseLock = resolve; });
+    inFlightAccountLocks.set(lockKey, lockPromise);
+
+    try {
+      if (platformName === '小红书' && xhsPublishChannel === '比特浏览器') {
       const browserMapping = bitbrowserConfig.xiaohongshu || {};
       const browserId = browserMapping[accountName]?.browserId;
       if (!browserId) {
@@ -1501,15 +1517,16 @@ async function publishRecord(record, config, accountMapping, options = {}) {
         yixiaoerConfig, platformName, titleMeta.text, accountId, accountName
       );
       if (preLookup.lookupError) {
-        // C1 预查重接口失败 → fail-closed：查不到就不敢发，宁可本次跳过也不冒重复发布的风险。
-        // 逻辑：蚁小二没响应 → 不知道这条笔记最近有没有发过 → 不发。
-        // 如果 /taskSets 接口路径有变（如迁移到 /v2/taskSets），需先修路径再上线。
+        // C1 预查重接口失败 → fail-closed：查不到就不敢发。
+        // P0.4: retryable 标志告诉调度器保留"待发布"状态等下轮重试，
+        // 不写"发布失败"，避免污染飞书状态导致用户改回待发布后下次再撞同样问题。
         return {
           platform: platformName, account: accountName, accountId,
           success: false,
           c1LookupFailed: true,
-          markFailed: true,
-          error: `C1 预查重接口失败: ${preLookup.lookupError}。为防止重复发布，已暂缓本次提交，请检查蚁小二接口连通性后重试`,
+          retryable: true,
+          markFailed: false,
+          error: `C1 预查重接口暂时不可用: ${preLookup.lookupError}。本轮已暂缓，等待下轮自动重试`,
         };
       }
       if (preLookup.found) {
@@ -1662,6 +1679,10 @@ async function publishRecord(record, config, accountMapping, options = {}) {
     } catch (e) {
       return { platform: platformName, account: accountName, accountId,
         success: false, error: e.message };
+    }
+    } finally {
+      inFlightAccountLocks.delete(lockKey);
+      releaseLock();
     }
   }
 
