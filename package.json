@@ -1,12 +1,14 @@
 {
   "name": "zhifa",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "productName": "知发",
   "description": "知发 - 笔记多平台发布工具",
   "main": "src/electron-main.js",
   "scripts": {
     "start": "node src/server.js",
     "desktop": "electron .",
+    "predist:win": "node -e \"const {execSync}=require('child_process'),fs=require('fs');fs.writeFileSync('src/build-info.json',JSON.stringify({commit:execSync('git rev-parse --short HEAD').toString().trim(),buildTime:new Date().toISOString()}))\"",
+    "predist:mac": "node -e \"const {execSync}=require('child_process'),fs=require('fs');fs.writeFileSync('src/build-info.json',JSON.stringify({commit:execSync('git rev-parse --short HEAD').toString().trim(),buildTime:new Date().toISOString()}))\"",
     "dist:win": "electron-builder --win portable --publish never",
     "dist:mac": "electron-builder --mac zip --publish never",
     "check:syntax": "node --check src/config-store.js && node --check src/server.js && node --check src/scheduler.js && node --check src/publisher.js && node --check src/check.js && node --check src/feishu.js && node --check src/electron-main.js",

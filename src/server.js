@@ -27,7 +27,11 @@ const { generateContent, testConnection } = require('./ai-writer.js');
 const { allocateImportSchedule } = require('./scheduler-allocator.js');
 const { archiveImportFolders } = require('./archiver.js');
 
-const APP_VERSION = require('../package.json').version;
+// 版本号 + commit hash 拼接：打包时 predist 脚本会生成 build-info.json，运行时读取拼到版本里
+// 开发模式（npm start / npm run desktop）下文件不存在，仅显示 package.json 版本号
+let _buildInfo = {};
+try { _buildInfo = require('./build-info.json'); } catch (_) { /* dev mode */ }
+const APP_VERSION = require('../package.json').version + (_buildInfo.commit ? ` (${_buildInfo.commit})` : '');
 const storage = initializeAppStorage();
 const runtimePaths = storage.paths;
 const storageState = storage.state;
