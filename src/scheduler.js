@@ -398,7 +398,9 @@ class Scheduler {
     });
     this.log('info', `📝 处理: "${record.title}"`);
 
-    // P0.3 处理前预检本地账本：所有待发布平台都已在账本中 → 直接跳过，避免下载素材+调 publisher 浪费
+    // P0.3 处理前预检本地账本：所有待发布平台都已在账本中 → 补写飞书状态后跳过
+    // 修复（Codex adversarial review）：早返前必须补写飞书"已发布"状态，否则记录会永远
+    // 卡在"待发布"列表里被反复扫描。补写状态本身不会触发重复发布——账本已记录是真理。
     const pendingPlatforms = [];
     if (record.xiaohongshuAccount && this.isPlatformPending(record.xiaohongshuStatus)) {
       pendingPlatforms.push('小红书');
@@ -408,7 +410,33 @@ class Scheduler {
     }
     if (pendingPlatforms.length > 0
         && pendingPlatforms.every(p => publisher.isAlreadyPublished(record.recordId, p))) {
-      this.log('warn', `⏭ 跳过《${record.title}》：所有待发布平台均已在本地账本（防重复保护）`);
+      this.log('warn', `⏭ 跳过《${record.title}》：所有待发布平台均已在本地账本（防重复保护），补写飞书状态`);
+      let nextNote = record.note || '';
+      let noteChanged = false;
+      for (const platform of pendingPlatforms) {
+        try {
+          await this.feishu.markPlatformStatus(record.recordId, platform, '已发布');
+          const entry = `${platform}状态补正：本地账本已记录为已发布，飞书状态已同步`;
+          nextNote = this.mergeNoteEntry(nextNote, entry);
+          noteChanged = true;
+          this.log('info', `  ✅ ${platform} 状态已补写为"已发布"（来源：本地账本）`);
+        } catch (markErr) {
+          this.log('error', `  ❌ ${platform} 状态补写失败: ${markErr.message}`);
+        }
+      }
+      if (noteChanged) {
+        try {
+          await this.feishu.setNote(record.recordId, nextNote);
+        } catch (noteErr) {
+          this.log('warn', `  ⚠️ 备注同步失败: ${noteErr.message}`);
+        }
+      }
+      try {
+        await this.feishu.markPublished(record.recordId);
+      } catch (markErr) {
+        this.log('warn', `  ⚠️ 整体已发布状态同步失败: ${markErr.message}`);
+      }
+      this.markRecordRecentlyPublished(record.recordId);
       this.setProgress({
         active: false,
         stage: 'idle',
@@ -416,7 +444,7 @@ class Scheduler {
         recordId: '',
         platform: '',
         account: '',
-        detail: `跳过《${record.title}》（账本已记录）`,
+        detail: `跳过《${record.title}》（账本已记录，状态已补写）`,
       });
       return { published: 0, failed: 0 };
     }
