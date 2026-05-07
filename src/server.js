@@ -24,6 +24,8 @@ const {
   saveAiWritingCache,
 } = require('./config-store.js');
 const { generateContent, testConnection } = require('./ai-writer.js');
+const { allocateImportSchedule } = require('./scheduler-allocator.js');
+const { archiveImportFolders } = require('./archiver.js');
 
 const APP_VERSION = require('../package.json').version;
 const storage = initializeAppStorage();
@@ -607,6 +609,30 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, result);
       } catch (e) {
         return sendJson(res, { error: e.message }, 500);
+      }
+    }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/import/schedule' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        return sendJson(res, allocateImportSchedule(payload));
+      } catch (e) {
+        return sendJson(res, { error: e.message }, e.statusCode || (e instanceof SyntaxError ? 400 : 500));
+      }
+    }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/import/archive' && req.method === 'POST') {
+    readBody(req).then((body) => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        return sendJson(res, archiveImportFolders(payload));
+      } catch (e) {
+        return sendJson(res, { error: e.message }, e.statusCode || (e instanceof SyntaxError ? 400 : 500));
       }
     }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
     return;
