@@ -1309,10 +1309,6 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   const teamId = yixiaoerConfig.teamId;
   const accountAliasCache = config.yixiaoerAccountCache || {};
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
-  const pendingStatusGuardMs = Math.max(
-    0,
-    Number(config.rules?.pendingStatusGuardMs) || DEFAULT_PENDING_STATUS_GUARD_MS
-  );
 
   function isPublishableStatus(status) {
     return status === '待发布';
@@ -1348,33 +1344,6 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   }
 
   const allowCrossAccount = options.allowCrossAccount === true;
-
-  // 飞书平台状态是是否允许发布的唯一开关。
-  // 只有精确等于”待发布”时，才会清除本地保护并允许进入发布流程。
-  if (record.xiaohongshuStatus === '已发布') {
-    markAsObservedPublished(record.recordId, '小红书');
-  } else if (isPendingStatus(record.xiaohongshuStatus)) {
-    const shouldKeep = shouldKeepEntryForPendingStatus(
-      getPublishedEntry(record.recordId, '小红书'),
-      Date.now(),
-      pendingStatusGuardMs
-    );
-    if (!shouldKeep) {
-      unmarkAsPublished(record.recordId, '小红书');
-    }
-  }
-  if (record.douyinStatus === '已发布') {
-    markAsObservedPublished(record.recordId, '抖音');
-  } else if (isPendingStatus(record.douyinStatus)) {
-    const shouldKeep = shouldKeepEntryForPendingStatus(
-      getPublishedEntry(record.recordId, '抖音'),
-      Date.now(),
-      pendingStatusGuardMs
-    );
-    if (!shouldKeep) {
-      unmarkAsPublished(record.recordId, '抖音');
-    }
-  }
 
   // P0 红线防御：跨账号血统硬锁 + 跨记录内容指纹软锁。
   // 一条 recordId 一旦在某个平台上发过任何一个账号，就永远不能发到历史集合外的另一个账号。
