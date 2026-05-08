@@ -1,4 +1,5 @@
 const path = require('path');
+const { execSync } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { startServer, stopServer, getServerState } = require('./server.js');
 
@@ -19,16 +20,48 @@ process.on('uncaughtException', (err) => {
 let mainWindow = null;
 const WINDOW_ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png');
 
+// 启动前检查 3210 是否被知发自己的孤儿进程占用，如果是就自动清理。
+// 只在 macOS 上执行，只 kill 命令行含 server.js 的 node 进程（知发特征），
+// 不会误 kill 其他 .app 实例（它们的服务跑在 Electron 进程内，命令行不含 server.js）。
+function clearZhifaOrphanOnPort3210() {
+  if (process.platform !== 'darwin') return;
+  try {
+    const pid = execSync('lsof -ti :3210 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (!pid) return;
+    const cmd = execSync(`ps -p ${pid} -o command= 2>/dev/null`, { encoding: 'utf8' }).trim();
+    if (cmd.includes('node') && cmd.includes('server.js')) {
+      execSync(`kill ${pid} 2>/dev/null`);
+      // 等端口真正释放
+      execSync('sleep 0.5');
+    }
+  } catch (_) {
+    // lsof/ps 失败或端口已空闲，忽略
+  }
+}
+
 async function ensureServerReady() {
   const current = getServerState().server;
   if (current && current.port) {
     return current;
   }
 
-  return startServer({
-    port: 0,
-    host: '127.0.0.1',
-  });
+  clearZhifaOrphanOnPort3210();
+
+  try {
+    return await startServer({
+      port: 3210,
+      host: '127.0.0.1',
+    });
+  } catch (err) {
+    if (err.code === 'EADDRINUSE') {
+      throw new Error(
+        '端口 3210 被其他程序占用，知发无法启动。\n\n' +
+        '请在终端执行以下命令，然后重新打开知发：\n' +
+        'lsof -ti :3210 | xargs kill -9'
+      );
+    }
+    throw err;
+  }
 }
 
 async function createMainWindow() {
