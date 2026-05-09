@@ -170,6 +170,16 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('will-quit', () => {
-  void stopServer();
+let _isQuitting = false;
+app.on('before-quit', (event) => {
+  if (_isQuitting) return;
+  _isQuitting = true;
+  event.preventDefault();
+  // 等服务关闭（最多 2 秒），确保端口释放后再退出
+  Promise.race([
+    stopServer(),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]).finally(() => {
+    app.exit(0);
+  });
 });
