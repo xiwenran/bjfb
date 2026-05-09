@@ -1684,6 +1684,8 @@ function logStartup(port, host) {
     console.log(`♻️ 已从旧路径迁移配置: ${migrationSources.config || runtimePaths.legacyConfigPath}`);
   } else if (storageState.config === 'created') {
     console.log(`🆕 已生成空白配置模板，请先在页面或配置文件中完成接入信息`);
+  } else if (storageState.config === 'corrupted') {
+    console.warn(`⚠️ 配置文件损坏，已备份并以默认配置启动，请前往「设置」重新填写飞书接入信息`);
   }
   if (storageState.ledger === 'migrated') {
     console.log(`♻️ 已从旧路径迁移发布账本: ${migrationSources.ledger || runtimePaths.legacyLedgerPath}`);

@@ -194,26 +194,45 @@ function normalizeConfig(config = {}) {
   return deepMerge(cloneDefaultConfig(), config);
 }
 
+function safeReadConfig(filePath) {
+  try {
+    return normalizeConfig(readJsonFile(filePath, {}, { throwOnError: true }));
+  } catch (_) {
+    // 配置文件损坏时备份原文件，以默认配置启动，避免崩溃
+    const backupPath = `${filePath}.corrupted.${Date.now()}`;
+    try {
+      fs.renameSync(filePath, backupPath);
+      console.warn(`[config] 配置文件已损坏，已备份至: ${backupPath}`);
+    } catch (_2) {
+      console.warn(`[config] 配置文件已损坏，备份失败（${_2.message}），将使用默认配置`);
+    }
+    return null;
+  }
+}
+
 function ensureConfigFile(paths = getRuntimePaths()) {
   if (fs.existsSync(paths.configPath)) {
+    const config = safeReadConfig(paths.configPath);
     return {
-      state: 'existing',
-      config: normalizeConfig(readJsonFile(paths.configPath, {}, { throwOnError: true })),
+      state: config ? 'existing' : 'corrupted',
+      config: config || cloneDefaultConfig(),
     };
   }
 
   if (fs.existsSync(paths.legacyConfigPath)) {
+    const config = safeReadConfig(paths.legacyConfigPath);
     return {
-      state: 'migrated',
-      config: normalizeConfig(readJsonFile(paths.legacyConfigPath, {}, { throwOnError: true })),
+      state: config ? 'migrated' : 'corrupted',
+      config: config || cloneDefaultConfig(),
     };
   }
 
   for (const legacyPath of paths.legacyNamedConfigPaths || []) {
     if (fs.existsSync(legacyPath)) {
+      const config = safeReadConfig(legacyPath);
       return {
-        state: 'migrated',
-        config: normalizeConfig(readJsonFile(legacyPath, {}, { throwOnError: true })),
+        state: config ? 'migrated' : 'corrupted',
+        config: config || cloneDefaultConfig(),
         sourcePath: legacyPath,
       };
     }

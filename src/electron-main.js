@@ -17,22 +17,45 @@ process.on('uncaughtException', (err) => {
   throw err;
 });
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandledRejection:', reason);
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  dialog.showErrorBox('知发遇到意外错误', msg);
+  app.quit();
+});
+
 let mainWindow = null;
 const WINDOW_ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png');
 
 // 启动前检查 3210 是否被知发自己的孤儿进程占用，如果是就自动清理。
-// 只在 macOS 上执行，只 kill 命令行含 server.js 的 node 进程（知发特征），
-// 不会误 kill 其他 .app 实例（它们的服务跑在 Electron 进程内，命令行不含 server.js）。
+// 识别知发相关进程：node+server.js（npm start）、Electron（npm run desktop）、知发.app
 function clearZhifaOrphanOnPort3210() {
   if (process.platform !== 'darwin') return;
   try {
-    const pid = execSync('lsof -ti :3210 2>/dev/null', { encoding: 'utf8' }).trim();
-    if (!pid) return;
-    const cmd = execSync(`ps -p ${pid} -o command= 2>/dev/null`, { encoding: 'utf8' }).trim();
-    if (cmd.includes('node') && cmd.includes('server.js')) {
-      execSync(`kill ${pid} 2>/dev/null`);
-      // 等端口真正释放
+    const pids = execSync('lsof -ti :3210 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (!pids) return;
+    for (const pid of pids.split('\n').map(p => p.trim()).filter(Boolean)) {
+      try {
+        const cmd = execSync(`ps -p ${pid} -o command= 2>/dev/null`, { encoding: 'utf8' }).trim();
+        const isZhifa = (cmd.includes('node') && cmd.includes('server.js'))
+          || cmd.includes('知发')
+          || (cmd.toLowerCase().includes('electron') && (cmd.includes('zhifa') || cmd.includes('知发')));
+        if (isZhifa) {
+          execSync(`kill ${pid} 2>/dev/null`);
+        }
+      } catch (_) { /* 单个 pid 失败忽略，继续处理其他 */ }
+    }
+    // 等端口真正释放（最多 2 秒，每次单独 try-catch 避免空输出 exit code 被外层吞）
+    for (let i = 0; i < 4; i++) {
       execSync('sleep 0.5');
+      let stillUsed = false;
+      try {
+        const out = execSync('lsof -ti :3210 2>/dev/null', { encoding: 'utf8' }).trim();
+        stillUsed = !!out;
+      } catch (_) {
+        stillUsed = false; // lsof exit code 非 0 = 端口已空闲
+      }
+      if (!stillUsed) break;
     }
   } catch (_) {
     // lsof/ps 失败或端口已空闲，忽略
