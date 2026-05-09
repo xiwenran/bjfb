@@ -1,0 +1,80 @@
+name: Build Windows
+
+# 触发条件：
+#   - push 到 main 自动触发（推完代码 5-10 分钟后 Windows 用户就能下载新版）
+#   - 手动触发（在 Actions 页面点 "Run workflow"）
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 创建 release 需要
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate build-info.json
+        shell: bash
+        run: |
+          node -e "const {execSync}=require('child_process'),fs=require('fs');fs.writeFileSync('src/build-info.json',JSON.stringify({commit:execSync('git rev-parse --short HEAD').toString().trim(),buildTime:new Date().toISOString()}))"
+          cat src/build-info.json
+
+      - name: Build Windows portable
+        run: npm run dist:win
+
+      - name: Read version and commit info
+        id: meta
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "tag=ci-win-v${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: List dist artifacts
+        shell: bash
+        run: ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: 知发 Windows v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.sha }})
+          body: |
+            知发 Windows portable 版本，GitHub Actions 自动构建。
+
+            **版本**：v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.sha }})
+            **触发**：${{ github.event_name }} on `${{ github.ref_name }}`
+            **commit**：${{ github.sha }}
+
+            ## 下载
+
+            点开下面 Assets，下载 `知发 Portable.exe` 即可使用（免安装绿色版）。
+
+            ## 核对版本
+
+            打开应用后看左侧栏底部，应显示 `v${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.sha }})`。
+          files: |
+            dist/*.exe
+          fail_on_unmatched_files: true
