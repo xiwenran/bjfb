@@ -9,6 +9,7 @@ zhifa Skill 辅助脚本
 """
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -18,6 +19,7 @@ import urllib.request
 
 ZHIFA_BASE = "http://localhost:3210"
 SCAN_RESULT_TMP = "/tmp/zhifa_scan_result.json"
+FAILED_UPLOAD_TMP = "/tmp/zhifa_upload_failed.json"
 
 
 def zhifa_post(path: str, payload: dict, timeout: int = 60) -> dict:
@@ -77,14 +79,18 @@ def decide_batch_params(total: int) -> tuple[int, float, int]:
     根据记录总数自动决定分批参数。
     返回 (batch_size, batch_delay_seconds, per_batch_timeout_seconds)
     """
-    if total <= 20:
+    if total <= 10:
         return total, 0.0, 300
+    elif total <= 20:
+        return 5, 3.0, 300
+    elif total <= 50:
+        return 3, 5.0, 300
     elif total <= 100:
-        return 10, 3.0, 300
+        return 2, 8.0, 300
     elif total <= 300:
-        return 5, 5.0, max(300, 5 * 60)
+        return 2, 10.0, max(300, 5 * 60)
     else:
-        return 5, 8.0, 600
+        return 2, 12.0, 600
 
 
 def parse_batch_result(result: dict | None) -> tuple[list, list, list]:
@@ -166,6 +172,195 @@ def run_ai_fallback(records: list) -> list:
     return records
 
 
+def parse_publish_time(value: str) -> datetime.datetime:
+    """Parse supported publishTime formats with stdlib datetime only."""
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return datetime.datetime.strptime(value, fmt)
+        except (TypeError, ValueError):
+            pass
+    raise ValueError(f"不支持的时间格式：{value}")
+
+
+def strip_template_suffix(note_key: str) -> str:
+    parts = str(note_key).rsplit("/", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return str(note_key)
+
+
+def extract_template_number(note_key: str) -> int | None:
+    parts = str(note_key).rsplit("/", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def account_values(record: dict) -> list[str]:
+    accounts = []
+    for key in ("xiaohongshuAccount", "douyinAccount"):
+        value = record.get(key)
+        if value:
+            accounts.append(str(value))
+    return accounts
+
+
+def validate_records_for_dry_run(records: list) -> bool:
+    """Run local validation checks for create --dry-run."""
+    check_results = []
+    all_violations = []
+
+    violations = []
+    required_keys = ("noteKey", "folderPath", "images", "publishTime")
+    if not isinstance(records, list) or not records:
+        violations.append("records 必须是非空数组")
+    else:
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                violations.append(f"records[{i}] 必须是对象")
+                continue
+            for key in required_keys:
+                if key not in record:
+                    violations.append(f"records[{i}] 缺少必填字段 {key}")
+            if not record.get("xiaohongshuAccount") and not record.get("douyinAccount"):
+                violations.append(
+                    f"records[{i}] 至少需要 xiaohongshuAccount 或 douyinAccount 之一"
+                )
+    check_results.append(("JSON format", violations))
+
+    violations = []
+    if isinstance(records, list):
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            images = record.get("images")
+            if not isinstance(images, list):
+                violations.append(f"records[{i}].images 必须是数组")
+                continue
+            for j, image in enumerate(images):
+                if not isinstance(image, dict) or "path" not in image:
+                    violations.append(f"records[{i}].images[{j}] 缺少 path")
+                    continue
+                image_path = os.path.expanduser(str(image.get("path")))
+                if not os.path.isfile(image_path):
+                    violations.append(f"records[{i}].images[{j}].path 文件不存在：{image.get('path')}")
+    check_results.append(("Image paths", violations))
+
+    violations = []
+    account_groups: dict[str, list[dict]] = {}
+    if isinstance(records, list):
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            for account in account_values(record):
+                account_groups.setdefault(account, []).append(record)
+        for account, account_records in account_groups.items():
+            note_keys = [str(r.get("noteKey", "")) for r in account_records if r.get("noteKey")]
+            template_numbers = [
+                extract_template_number(note_key)
+                for note_key in note_keys
+            ]
+            template_numbers = [n for n in template_numbers if n is not None]
+            if not template_numbers:
+                violations.append(f"{account} 没有可解析的 noteKey 模板编号")
+                continue
+            num_topics = len({strip_template_suffix(note_key) for note_key in note_keys})
+            num_templates = max(template_numbers)
+            max_variety = min(num_topics, num_templates)
+            min_required = max(max_variety - 1, max_variety // 2)
+            used_variety = len(set(template_numbers))
+            if used_variety < min_required:
+                violations.append(
+                    f"{account} 模板多样性严重不足：使用 {used_variety} 种，至少需要 {min_required} 种（满分 {max_variety}）"
+                )
+    check_results.append(("Template diversity", violations))
+
+    violations = []
+    if isinstance(records, list):
+        timed_groups: dict[str, list[tuple[datetime.datetime, str]]] = {}
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            try:
+                publish_time = parse_publish_time(record.get("publishTime"))
+            except ValueError as e:
+                violations.append(f"records[{i}].publishTime {e}")
+                continue
+            for account in account_values(record):
+                timed_groups.setdefault(account, []).append((publish_time, str(record.get("noteKey", ""))))
+        for account, items in timed_groups.items():
+            items.sort(key=lambda item: item[0])
+            for (prev_time, prev_key), (next_time, next_key) in zip(items, items[1:]):
+                if (next_time - prev_time).total_seconds() < 600:
+                    violations.append(
+                        f"{account} 时间间隔不足 10 分钟：{prev_key} 与 {next_key}"
+                    )
+    check_results.append(("Time interval", violations))
+
+    violations = []
+    note_keys_seen: set[str] = set()
+    xhs_time_seen: set[tuple[str, str]] = set()
+    if isinstance(records, list):
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            note_key = record.get("noteKey")
+            if note_key in note_keys_seen:
+                violations.append(f"noteKey 重复：{note_key}")
+            else:
+                note_keys_seen.add(note_key)
+            xhs_account = record.get("xiaohongshuAccount")
+            publish_time = record.get("publishTime")
+            if xhs_account and publish_time:
+                pair = (str(xhs_account), str(publish_time))
+                if pair in xhs_time_seen:
+                    violations.append(f"(xiaohongshuAccount, publishTime) 重复：{pair[0]} @ {pair[1]}")
+                else:
+                    xhs_time_seen.add(pair)
+    check_results.append(("No duplicates", violations))
+
+    for label, violations in check_results:
+        if violations:
+            print(f"❌ {label}：{len(violations)} 个问题")
+            for violation in violations:
+                print(f"  - {violation}")
+            all_violations.extend(violations)
+        else:
+            print(f"✅ {label}：通过")
+
+    if all_violations:
+        print(f"\nDry run 失败：共 {len(all_violations)} 个问题。")
+        return False
+
+    print(f"\nDry run 通过：{len(records)} 条记录已完成 5 项本地校验。")
+    return True
+
+
+def load_failed_note_keys() -> set[str]:
+    if not os.path.isfile(FAILED_UPLOAD_TMP):
+        print(f"失败列表不存在：{FAILED_UPLOAD_TMP}", file=sys.stderr)
+        sys.exit(1)
+    with open(FAILED_UPLOAD_TMP, encoding="utf-8") as f:
+        failed_note_keys = json.load(f)
+    if not isinstance(failed_note_keys, list):
+        print(f"失败列表格式错误：{FAILED_UPLOAD_TMP} 需要 JSON 数组", file=sys.stderr)
+        sys.exit(1)
+    return {str(note_key) for note_key in failed_note_keys}
+
+
+def save_failed_note_keys(failed_records: list) -> None:
+    failed_note_keys = [
+        r.get("noteKey")
+        for r in failed_records
+        if isinstance(r, dict) and r.get("noteKey")
+    ]
+    if failed_note_keys:
+        with open(FAILED_UPLOAD_TMP, "w", encoding="utf-8") as f:
+            json.dump(failed_note_keys, f, ensure_ascii=False, indent=2)
+    elif os.path.exists(FAILED_UPLOAD_TMP):
+        os.remove(FAILED_UPLOAD_TMP)
+
+
 def cmd_scan(folder_path: str) -> None:
     """扫描合成图文件夹，打印人类可读摘要，并把原始 JSON 写入临时文件。"""
     folder_path = os.path.expanduser(folder_path)
@@ -211,6 +406,8 @@ def cmd_create(
     override_batch_size: int | None = None,
     override_timeout: int | None = None,
     override_batch_delay: float | None = None,
+    dry_run: bool = False,
+    retry_failed: bool = False,
 ) -> None:
     """读取 records JSON 文件，分批 POST 到 create-records API，打印进度和结果摘要。"""
     records_json_file = os.path.expanduser(records_json_file)
@@ -228,6 +425,17 @@ def cmd_create(
         records = payload["records"]
     else:
         print("JSON 格式错误：需要 {\"records\": [...]} 或直接的数组", file=sys.stderr)
+        sys.exit(1)
+
+    if retry_failed:
+        failed_note_keys = load_failed_note_keys()
+        before_retry_filter = len(records)
+        records = [r for r in records if isinstance(r, dict) and str(r.get("noteKey")) in failed_note_keys]
+        print(f"retry-failed：从 {before_retry_filter} 条中过滤出 {len(records)} 条失败记录。")
+
+    if dry_run:
+        if validate_records_for_dry_run(records):
+            sys.exit(0)
         sys.exit(1)
 
     total = len(records)
@@ -328,6 +536,8 @@ def cmd_create(
             reason = r.get("reason", "") or r.get("message", "未知原因")
             print(f"  {note_key}：{reason}")
 
+    save_failed_note_keys(total_failed)
+
     if total_skipped:
         print("\n跳过（指纹查重命中，已存在）：")
         for r in total_skipped:
@@ -381,18 +591,35 @@ def main() -> None:
         metavar="S",
         help="强制指定批间等待秒数（覆盖自动决策）",
     )
+    create_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="仅运行本地校验，不上传、不发起网络请求",
+    )
+    create_parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        default=False,
+        help=f"仅重试 {FAILED_UPLOAD_TMP} 中记录的 noteKey",
+    )
 
     args = parser.parse_args()
 
     if args.command == "scan":
         cmd_scan(args.folder)
     elif args.command == "create":
+        if args.dry_run and args.retry_failed:
+            print("错误：--dry-run 和 --retry-failed 不能同时使用", file=sys.stderr)
+            sys.exit(1)
         cmd_create(
             args.records_json,
             ai_fallback=args.ai_fallback,
             override_batch_size=args.batch_size,
             override_timeout=args.timeout,
             override_batch_delay=args.batch_delay,
+            dry_run=args.dry_run,
+            retry_failed=args.retry_failed,
         )
 
 
