@@ -299,7 +299,7 @@ class FeishuClient {
     // 服务端筛选：只拉「活跃」状态记录，避免全量拉取 500+ 条再客户端过滤。
     // 注：「发布状态」是计算字段，飞书不支持对它 filter；
     //     「小红书发布状态」和「抖音发布状态」是单选字段，支持 is 筛选。
-    const ACTIVE_STATUSES = ['待发布', '发布中', '发布失败', '已发布(跨账号已拒绝)'];
+    const ACTIVE_STATUSES = ['待发布', '发布中', '发布失败'];
     const PLATFORM_FIELDS = ['小红书发布状态', '抖音发布状态'];
     const conditions = [];
     for (const field_name of PLATFORM_FIELDS) {
