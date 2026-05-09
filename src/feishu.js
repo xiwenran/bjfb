@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('axios').create({ timeout: 30000 });
 const fs = require('fs');
 const path = require('path');
 const { mapWithConcurrency } = require('./async-utils.js');
