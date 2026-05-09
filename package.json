@@ -16,7 +16,9 @@
     "backup:tag": "sh scripts/tag-backup.sh",
     "git:sync": "sh scripts/git-sync.sh",
     "release:mac-local": "sh scripts/upload-local-mac-release.sh",
-    "release:win-local": "sh scripts/upload-local-win-release.sh"
+    "release:win-local": "sh scripts/upload-local-win-release.sh",
+    "release:mac": "npm run dist:mac && npm run release:mac-local",
+    "release:win": "npm run dist:win && npm run release:win-local"
   },
   "dependencies": {
     "axios": "^1.6.0",
