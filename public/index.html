@@ -5482,9 +5482,12 @@ async function refreshStatus() {
   if (isRefreshingStatus) return;
   isRefreshingStatus = true;
   try {
-    const [status, pendingResp] = await Promise.all([
-      fetchApi('/api/status'),
+    // /api/status 不访问飞书，直接返回；/api/pending-count 要拉飞书数据可能很慢
+    // 分开请求：status 先更新版本号和服务状态，pending-count 加 8 秒超时独立处理
+    const status = await fetchApi('/api/status');
+    const pendingResp = await Promise.race([
       fetchApi('/api/pending-count').catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
     ]);
     refreshScheduledTasks();
     const pendingCountValue = pendingResp && pendingResp.success ? pendingResp.count : latestPendingCount;
