@@ -161,11 +161,11 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 1. 读取 `~/zhifa/src/ai-writer.js` 的 `SYSTEM_PROMPT`
 2. 每篇笔记单独生成：依据内容类型选最贴切的标题公式，写 2–3 个候选标题
 3. description 固定填 `""`
-4. 按 SYSTEM_PROMPT 标签规范组装标签；飞书「标签」字段提取 3–5 个关键词（不带 `#`）
+4. 按 SYSTEM_PROMPT 标签规范组装标签；飞书「标签」字段提取 3–5 个关键词，**每个标签带 `#` 前缀**（如 `#经典常谈 #马说`）
 
-**标题生成后必须逐一检查以下禁用词，命中则重写**：
-- 年级词：七年级 / 八年级 / 九年级 / 七上 / 七下 / 八上 / 八下 / 九上 / 九下
-- 书名超过 8 字时先缩写再拼标题（如《钢铁是怎样炼成的》→《钢铁》）；拼完标题总长仍超 20 字则继续压缩其他部分，直到 ≤20 字
+**标题生成后必须逐一检查以下规则，不通过则重写**：
+- 年级词禁用：七年级 / 八年级 / 九年级 / 七上 / 七下 / 八上 / 八下 / 九上 / 九下
+- **课文名/书名不允许缩写**，原名直接使用（《钢铁是怎样炼成的》不得缩写为《钢铁》）；标题总长超 20 字时，压缩其他部分（动词/结果词），不动课文名
 - 标题必须套用 SYSTEM_PROMPT 中的公式：普通课文用公式三（突然发现/听说 + 课文名 + 这样讲/备 + 结果）；其他类型课文按 SYSTEM_PROMPT 对应公式，若不确定类型则默认公式三
 
 每条标题自检通过后才进入预览环节。
@@ -180,7 +180,7 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
   A. ……
   B. ……
 正文：""（留空）
-标签：历史故事 / 三国 / 战争智慧
+标签：#历史故事 / #三国 / #战争智慧
 
 ── 组2：赤壁之战：以少胜多的经典战例 ──
 …
@@ -237,7 +237,7 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 | 字段 | 来源 |
 |------|------|
 | `topic` | scan JSON 里的 `topic` 字段 |
-| `topicOverride` | 用户提供的「主题」（写文案用的那句话） |
+| `topicOverride` | 用户提供的「主题」（写文案用的那句话）；**留空 `""`**，不要填内容——知发会把此字段写入飞书「笔记主题」列，用户不需要该列有值 |
 | `noteKey` | scan JSON 里每条 note 的 `noteKey` 字段 |
 | `folderPath` | scan JSON 里每条 note 的 `folderPath` 字段（绝对路径） |
 | `images` | scan JSON 里每条 note 的 `images` 数组（已含 name/path/size，**直接复用，不要重新构建**） |
@@ -247,7 +247,7 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 | `xiaohongshuChannel` | 用户指定的渠道，**未指定时固定填 `"蚁小二"`** |
 | `title` | Claude 生成的标题 |
 | `description` | Claude 生成的正文 |
-| `tags` | Claude 生成的标签数组（不带 `#` 的关键词） |
+| `tags` | Claude 生成的标签数组（每个带 `#` 前缀，如 `["#经典常谈", "#马说"]`） |
 
 **records JSON 结构示例**（写入 `/tmp/zhifa_records.json`）：
 
@@ -256,7 +256,7 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
   "records": [
     {
       "topic": "课件A",
-      "topicOverride": "草船借箭的历史背景与战争智慧",
+      "topicOverride": "",
       "noteKey": "课件A/1",
       "folderPath": "~/笔记制作输出/合成图/课件A/1",
       "images": [
@@ -269,7 +269,7 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
       "xiaohongshuChannel": "蚁小二",
       "title": "草船借箭，诸葛亮凭什么敢这么赌？",
       "description": "完整正文内容……",
-      "tags": ["历史故事", "三国", "战争智慧"]
+      "tags": ["#历史故事", "#三国", "#战争智慧"]
     }
   ]
 }
