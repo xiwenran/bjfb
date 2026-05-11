@@ -394,6 +394,22 @@ npm run git:sync -- "提交信息"  # add + commit + push
 
 ---
 
+## 知发工作流子代理分工（防主会话上下文过重）
+
+在执行 zhifa-upload / zhifa-pipeline / rongjing 等多步骤 skill 时，以下三类子任务必须派子代理，不允许全部放在主会话处理：
+
+| 子任务类型 | 派哪个 | 典型场景 |
+|-----------|--------|---------|
+| 目录结构未知 / 新素材格式探索 | `Agent(subagent_type="Explore")` | 合成图目录结构是否符合预期、封面文件夹映射关系确认 |
+| 机械性批处理脚本 | `Agent(subagent_type="codex:codex-rescue")` | 重整目录结构、批量复制封面到模板子文件夹、按图片数切分连续编号 |
+| 内容生成 + 分配逻辑（>50 行 Python / JSON 构建） | `Agent(subagent_type="general-purpose", model="sonnet")` | build_records.py、标题批量生成、账号×主题×时间矩阵分配 |
+
+判断口诀：「读文件 → Explore；写脚本 → Codex；生内容 → Sonnet」。进了 skill 不因为"全链路都在这里"而豁免子代理分工规则。
+
+**立规则依据**：26春初中语文 192 篇笔记制作发布（2026-05-10）全程未用子代理，主会话上下文极重，多次 compact 丢失上下文；重整脚本、封面放置脚本、build_records.py 均应派子代理处理。
+
+---
+
 ## 待办 / 潜在优化点
 
 - [ ] SSE 重连目前无限循环，Electron 本地环境可接受，若需限制可加最大次数
