@@ -384,3 +384,26 @@ npm run git:sync -- "提交信息"  # add + commit + push
 - [ ] `refreshRecords()` 等 Promise 调用方未 await，失败时 UI 静默不同步（低优先级）
 - [ ] reconcileCloudPublishing 的 accountId 字段为 null（从飞书记录无法还原），影响跨账号检查精度（低优先级，contentHash 已兜底）
 - [ ] **c1Suspect 漏发风险**（2026-04-09 Codex 审计发现）：`publisher.js:1473` 网络异常+二次确认接口也挂时，返回 `success:true, c1Suspect:true`，scheduler 会把它写成"已发布"。如果原始 POST 实际上没到蚁小二，这条会被静默漏发且永不重试。**当年的设计权衡**是宁可漏发也不双发。修复方案：新增飞书状态 `待核验`，c1Suspect 路径只写"待核验"，调度器单独跑核验循环反复查 `/v2/taskSets`，命中改"已发布"，多次未命中改回"待发布"。涉及飞书字段配置变更和 scheduler 状态机分支，单独开 PR。
+
+---
+
+## ⚡ Echo 会话检查清单（每次任务完成前必查）
+
+完成任何实质性改动后，**在报告完成之前**，按顺序检查：
+
+**① 高风险改动？→ 冷眼审查**
+- 触发条件：发布逻辑（蚁小二发布）/ 写入飞书数据库 / 防重复机制（contentHash/导入指纹）
+- 操作：说"我将触发冷眼审查"，派 worker 读取 echo-reviewer.md 做审查，或使用 App Review
+
+**② 方向性问题出现？→ 主动建议圆桌讨论**
+- 触发条件：项目定位、产品路线、架构主线；用户表达"要不要 / 像 A 还是像 B / 感觉但不确定"；或主会话自己准备列出 ≥2 个互斥方向
+- 操作：在回答之前先停下，说"这是方向性问题，建议三省讨论。可以输入「圆桌讨论：[问题]」触发多 Agent 分析。"
+- 注意：主动建议圆桌不等于擅自执行圆桌。用户确认后才执行完整 roundtable。
+
+**③ 有实质改动？→ Obsidian 捕获**
+- 触发条件：新功能完成 / 重构 / bug 根因找到 / 推送 GitHub
+- 操作：展示 changelog 草稿，等用户确认后写入 `~/Obsidian/PersonalWiki/项目/知发/changelog/`
+
+**④ git push 前 → 脱敏扫描**
+- 检查：`/Users/用户名/`绝对路径、token、邮箱、AppID、飞书 App Secret
+- 发现敏感内容：立即停下告知用户，修改后再推
