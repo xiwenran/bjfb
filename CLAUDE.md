@@ -417,3 +417,15 @@ npm run git:sync -- "提交信息"  # add + commit + push
 - [ ] `refreshRecords()` 等 Promise 调用方未 await，失败时 UI 静默不同步（低优先级）
 - [ ] reconcileCloudPublishing 的 accountId 字段为 null（从飞书记录无法还原），影响跨账号检查精度（低优先级，contentHash 已兜底）
 - [ ] **c1Suspect 漏发风险**（2026-04-09 Codex 审计发现）：`publisher.js:1473` 网络异常+二次确认接口也挂时，返回 `success:true, c1Suspect:true`，scheduler 会把它写成"已发布"。如果原始 POST 实际上没到蚁小二，这条会被静默漏发且永不重试。**当年的设计权衡**是宁可漏发也不双发。修复方案：新增飞书状态 `待核验`，c1Suspect 路径只写"待核验"，调度器单独跑核验循环反复查 `/v2/taskSets`，命中改"已发布"，多次未命中改回"待发布"。涉及飞书字段配置变更和 scheduler 状态机分支，单独开 PR。
+
+---
+
+## ⚡ Echo 会话检查清单（每次任务完成前必查）
+
+完成任何实质性改动后，**在报告完成之前**，按顺序检查：
+
+1. **高风险改动**（发布逻辑 / 写库 / 防误操作 / 蚁小二发布链路）→ 冷眼审查（派独立子代理只看 diff + 需求）
+2. **方向性问题**（项目定位、产品路线、架构主线；用户表达「要不要 / 像 A 还是像 B / 感觉但不确定」；或主会话准备列出 ≥2 个互斥方向）→ 先停下，说「这是方向性问题，建议三省讨论」
+3. **有实质改动** → 建议写入 Obsidian changelog（`~/Obsidian/PersonalWiki/项目/知发/changelog/`）
+4. **git push 前** → 脱敏扫描（绝对路径 / token / 邮箱 / AppID / 飞书 cli_xxx）
+5. **规则文件改动** → 检查 rule-sync-matrix.yml 同步状态
