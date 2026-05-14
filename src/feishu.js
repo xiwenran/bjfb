@@ -695,32 +695,37 @@ class FeishuClient {
       recoveryDirty = true;
     };
 
+    const MULTIPART_THRESHOLD = 20 * 1024 * 1024; // 20MB: media/upload_all 上限
+    const BLOCK_SIZE = 4 * 1024 * 1024; // 4MB per block
+
     const uploadOne = async (imagePath) => {
       const originalName = path.basename(imagePath);
 
-      // P0-7: 提前检查文件可用性,给出明确错误而不是让飞书返回神秘的 HTTP 400
-      // fs.createReadStream() 对不存在的文件不会立即抛出,而是返回空流,
-      // axios 发送空流时飞书会返回 HTTP 400 "Bad Request",根因完全不可见。
       if (!fs.existsSync(imagePath)) {
-        throw new Error(`图片文件不存在: ${imagePath}`);
+        throw new Error(`文件不存在: ${imagePath}`);
       }
       let stat;
       try {
         stat = fs.statSync(imagePath);
       } catch (e) {
-        throw new Error(`无法读取图片文件信息: ${imagePath}: ${e.message}`);
+        throw new Error(`无法读取文件信息: ${imagePath}: ${e.message}`);
       }
       if (stat.size === 0) {
-        throw new Error(`图片文件为空 (0 字节): ${imagePath}`);
+        throw new Error(`文件为空 (0 字节): ${imagePath}`);
       }
 
-      // 创建流并监听错误(TOCTOU 兜底:stat 之后到 axios 发送期间文件被删或权限变化)
+      const safeFileName = `${crypto.randomBytes(6).toString('hex')}_${originalName}`;
+
+      if (stat.size > MULTIPART_THRESHOLD) {
+        return await uploadLargeFile(imagePath, safeFileName, stat.size);
+      }
+
       const stream = fs.createReadStream(imagePath);
       let streamError = null;
       stream.once('error', (e) => { streamError = e; });
 
       const form = new FormData();
-      form.append('file_name', `${crypto.randomBytes(6).toString('hex')}_${originalName}`);
+      form.append('file_name', safeFileName);
       form.append('parent_type', 'bitable_file');
       form.append('parent_node', this.appToken);
       form.append('size', stat.size);
@@ -739,13 +744,10 @@ class FeishuClient {
         )
       );
 
-      // 流错误优先:如果传输过程中文件被删/断开,优先报流错误
       if (streamError) {
-        throw new Error(`图片读取失败(传输中断): ${imagePath}: ${streamError.message}`);
+        throw new Error(`文件读取失败(传输中断): ${imagePath}: ${streamError.message}`);
       }
 
-      // P0-6: 检查飞书上传业务错误(HTTP 200 + code!=0)
-      // 此前 `file_token || ''` 静默返回空字符串,导致 createRecord 建单成功但素材为空
       const data = resp.data || {};
       if (data.code && data.code !== 0) {
         throw new Error(`飞书上传失败: code=${data.code} msg=${data.msg || '未知'} (${imagePath})`);
@@ -753,6 +755,85 @@ class FeishuClient {
       const fileToken = data.data?.file_token;
       if (!fileToken) {
         throw new Error(`飞书上传返回空 fileToken (${imagePath}): ${JSON.stringify(data).slice(0, 200)}`);
+      }
+
+      return { originalName, fileToken };
+    };
+
+    const uploadLargeFile = async (filePath, fileName, fileSize) => {
+      const originalName = path.basename(filePath);
+      const blockNum = Math.ceil(fileSize / BLOCK_SIZE);
+
+      // Step 1: upload_prepare
+      const prepResp = await this.requestWithRetry(token =>
+        axios.post(
+          'https://open.feishu.cn/open-apis/drive/v1/medias/upload_prepare',
+          { file_name: fileName, parent_type: 'bitable_file', parent_node: this.appToken, size: fileSize },
+          { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        )
+      );
+      const prepData = prepResp.data || {};
+      if (prepData.code && prepData.code !== 0) {
+        throw new Error(`分片上传 prepare 失败: code=${prepData.code} msg=${prepData.msg || '未知'} (${filePath})`);
+      }
+      const uploadId = prepData.data?.upload_id;
+      if (!uploadId) {
+        throw new Error(`分片上传 prepare 返回空 upload_id (${filePath})`);
+      }
+
+      // Step 2: upload_part for each block
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        for (let seq = 0; seq < blockNum; seq++) {
+          const offset = seq * BLOCK_SIZE;
+          const length = Math.min(BLOCK_SIZE, fileSize - offset);
+          const buf = Buffer.alloc(length);
+          fs.readSync(fd, buf, 0, length, offset);
+
+          // 飞书要求 Adler-32 校验和
+          let a = 1, b = 0;
+          const MOD = 65521;
+          for (let i = 0; i < buf.length; i++) { a = (a + buf[i]) % MOD; b = (b + a) % MOD; }
+          const checksum = String(((b << 16) | a) >>> 0);
+
+          const form = new FormData();
+          form.append('upload_id', uploadId);
+          form.append('seq', seq);
+          form.append('size', length);
+          form.append('checksum', checksum);
+          form.append('file', buf, { filename: `part_${seq}`, contentType: 'application/octet-stream' });
+
+          const partResp = await this.requestWithRetry(token =>
+            axios.post(
+              'https://open.feishu.cn/open-apis/drive/v1/medias/upload_part',
+              form,
+              { headers: { Authorization: `Bearer ${token}`, ...form.getHeaders() } }
+            )
+          );
+          const partData = partResp.data || {};
+          if (partData.code && partData.code !== 0) {
+            throw new Error(`分片上传 part ${seq}/${blockNum} 失败: code=${partData.code} msg=${partData.msg || '未知'} (${filePath})`);
+          }
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      // Step 3: upload_finish
+      const finResp = await this.requestWithRetry(token =>
+        axios.post(
+          'https://open.feishu.cn/open-apis/drive/v1/medias/upload_finish',
+          { upload_id: uploadId, block_num: blockNum },
+          { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+        )
+      );
+      const finData = finResp.data || {};
+      if (finData.code && finData.code !== 0) {
+        throw new Error(`分片上传 finish 失败: code=${finData.code} msg=${finData.msg || '未知'} (${filePath})`);
+      }
+      const fileToken = finData.data?.file_token;
+      if (!fileToken) {
+        throw new Error(`分片上传 finish 返回空 fileToken (${filePath}): ${JSON.stringify(finData).slice(0, 200)}`);
       }
 
       return { originalName, fileToken };

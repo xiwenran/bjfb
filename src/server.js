@@ -485,13 +485,13 @@ const server = http.createServer(async (req, res) => {
           return a.localeCompare(b, 'zh-CN', { numeric: true });
         }
 
-        // 从一个目录收集图片（包含直接的和子文件夹里的，extraDepth 控制再向下几层）
+        // 从一个目录收集图片和视频（包含直接的和子文件夹里的，extraDepth 控制再向下几层）
         function collectImagesFromDir(dirPath, extraDepth) {
           const entries = fs.readdirSync(dirPath, { withFileTypes: true })
             .filter(e => !e.name.startsWith('.'))
             .sort((a, b) => compareEntryNames(a.name, b.name));
           const images = [];
-          let hasVideo = false;
+          const videos = [];
           for (const entry of entries) {
             const p = path.join(dirPath, entry.name);
             if (entry.isFile()) {
@@ -499,15 +499,15 @@ const server = http.createServer(async (req, res) => {
               if (imageExtensions.has(ext)) {
                 images.push({ name: entry.name, path: p, size: fs.statSync(p).size });
               } else if (videoExtensions.has(ext)) {
-                hasVideo = true;
+                videos.push({ name: entry.name, path: p, size: fs.statSync(p).size });
               }
             } else if (entry.isDirectory() && extraDepth > 0) {
               const sub = collectImagesFromDir(p, extraDepth - 1);
               images.push(...sub.images);
-              if (sub.hasVideo) hasVideo = true;
+              videos.push(...sub.videos);
             }
           }
-          return { images, hasVideo };
+          return { images, videos, hasVideo: videos.length > 0 };
         }
 
         function isLeafNoteDir(dirPath, allowedImageExtensions) {
@@ -536,17 +536,18 @@ const server = http.createServer(async (req, res) => {
           const topicName = path.basename(folderPath);
           const notes = firstLevelDirs.map(noteEntry => {
             const noteFolderPath = path.join(folderPath, noteEntry.name);
-            const { images, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
-            const warnings = hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [];
+            const { images, videos, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
             return {
               noteKey: `${topicName}/${noteEntry.name}`,
               folderName: noteEntry.name,
               folderPath: noteFolderPath,
               images,
               imageCount: images.length,
+              videos,
+              videoCount: videos.length,
               firstImagePath: images[0]?.path || '',
               hasVideo,
-              warnings,
+              warnings: [],
             };
           });
 
@@ -578,31 +579,40 @@ const server = http.createServer(async (req, res) => {
               // 笔记内图片可能直接在里面，也可能在再下一层子文件夹（extraDepth=1 兼容两种情况）
               notes = noteFolders.map(noteEntry => {
                 const noteFolderPath = path.join(topicPath, noteEntry.name);
-                const { images, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
-                const warnings = hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [];
+                const { images, videos, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
                 return {
                   noteKey: `${topicEntry.name}/${noteEntry.name}`,
                   folderName: noteEntry.name,
                   folderPath: noteFolderPath,
                   images,
                   imageCount: images.length,
+                  videos,
+                  videoCount: videos.length,
                   firstImagePath: images[0]?.path || '',
                   hasVideo,
-                  warnings,
+                  warnings: [],
                 };
               });
             } else {
-              // 没有子文件夹 → 主题文件夹本身当作一篇笔记，图片直接在里面
-              const hasVideo = topicChildren.some(e => e.isFile() && videoExtensions.has(path.extname(e.name).toLowerCase()));
-              notes = directImages.length > 0 ? [{
+              // 没有子文件夹 → 主题文件夹本身当作一篇笔记，图片和视频直接在里面
+              const directVideos = topicChildren
+                .filter(e => e.isFile() && videoExtensions.has(path.extname(e.name).toLowerCase()))
+                .map(e => {
+                  const p = path.join(topicPath, e.name);
+                  return { name: e.name, path: p, size: fs.statSync(p).size };
+                });
+              const hasVideo = directVideos.length > 0;
+              notes = (directImages.length > 0 || directVideos.length > 0) ? [{
                 noteKey: `${topicEntry.name}/${topicEntry.name}`,
                 folderName: topicEntry.name,
                 folderPath: topicPath,
                 images: directImages,
                 imageCount: directImages.length,
+                videos: directVideos,
+                videoCount: directVideos.length,
                 firstImagePath: directImages[0]?.path || '',
                 hasVideo,
-                warnings: hasVideo ? ['包含视频文件（v2.0 不支持，已跳过）'] : [],
+                warnings: [],
               }] : [];
             }
 
@@ -755,6 +765,7 @@ const server = http.createServer(async (req, res) => {
           noteKey = '',
           folderPath: recordFolderPath = '',
           images = [],
+          videos = [],
           xiaohongshuAccount = '',
           douyinAccount = '',
           publishTime = '',
@@ -928,9 +939,14 @@ const server = http.createServer(async (req, res) => {
         // Step 4: 图片上传（B-3）
         // 并发 3 路 + 每张完成后推 SSE,UI 能看到「正在传 5/16 张」之类的实时进度
         // 启用断点续传 (useRecovery=true,默认):中途失败的下次重试自动跳过已成功的图
-        const imagePathsForRecord = images.map(i => i.path);
+        // 视频笔记时只上传封面图（主序号=0），非封面图不传（视频笔记只需封面+视频）
+        const isVideoNote = videos.length > 0;
+        const imagesToUpload = isVideoNote
+          ? images.filter(i => { const sk = parseAttachmentSortKey(i.name); return sk && sk[0] === 0; })
+          : images;
+        const imagePathsForRecord = imagesToUpload.map(i => i.path);
         recordImagesByNoteKey.set(noteKey, imagePathsForRecord);
-        let uploadedTokens = [];
+        let uploadedImageTokens = [];
         try {
           const uploaded = await feishu.uploadLocalImagesToFeishu(
             imagePathsForRecord,
@@ -939,17 +955,42 @@ const server = http.createServer(async (req, res) => {
               useRecovery: true,
               onProgress: (done, totalImages, fileName, fromCache) => {
                 pushImageProgress(noteKey, done, totalImages, fileName);
-                // fromCache=true 说明这张图复用了之前批次上传成功的缓存
-                // 不影响 done 计数,只影响日志可读性,这里暂不区分
               },
             }
           );
-          uploadedTokens = uploaded.map(u => ({ file_token: u.fileToken }));
+          uploadedImageTokens = uploaded.map(u => ({ file_token: u.fileToken }));
         } catch (uploadErr) {
           results.push({ noteKey, status: 'failed', reason: 'upload_error', message: uploadErr.message });
           pushImportProgress(noteKey, 'failed');
           continue;
         }
+
+        // Step 4b: 视频文件上传（视频笔记时）
+        let uploadedVideoTokens = [];
+        if (videos.length > 0) {
+          try {
+            const videoPathsForRecord = videos.map(v => v.path);
+            recordImagesByNoteKey.set(noteKey + ':video', videoPathsForRecord);
+            const uploadedVids = await feishu.uploadLocalImagesToFeishu(
+              videoPathsForRecord,
+              {
+                concurrency: 1,
+                useRecovery: true,
+                onProgress: (done, totalVids, fileName) => {
+                  pushImageProgress(noteKey, done, totalVids, fileName);
+                },
+              }
+            );
+            uploadedVideoTokens = uploadedVids.map(u => ({ file_token: u.fileToken }));
+          } catch (uploadErr) {
+            results.push({ noteKey, status: 'failed', reason: 'video_upload_error', message: uploadErr.message });
+            pushImportProgress(noteKey, 'failed');
+            continue;
+          }
+        }
+
+        // Step 4c: 视频笔记时，上传的图片全部是封面（Step 4 已过滤只保留主序号=0）
+        const coverTokens = isVideoNote ? [...uploadedImageTokens] : [];
 
         // Step 5: 组装飞书字段并建单（B-3）
         const fields = {
@@ -957,12 +998,21 @@ const server = http.createServer(async (req, res) => {
         };
         // 「内容类型」「导入指纹」属于可选增强字段，用户表格中可能不存在
         // 只在字段实际存在时才写入，避免 code=1254045 FieldNameNotFound
-        if (tableFieldSet.has('内容类型')) fields['内容类型'] = '图文';
         if (tableFieldSet.has('导入指纹') && storedFingerprint) fields['导入指纹'] = storedFingerprint;
         if (aiTitle) fields['标题'] = aiTitle;
         if (aiDescription) fields['正文'] = aiDescription;
         if (aiTags.length) fields['标签'] = aiTags.join('\n');
-        if (uploadedTokens.length) fields['素材'] = uploadedTokens;
+
+        if (isVideoNote) {
+          // 视频笔记：视频→素材，封面→视频封面，类型→视频
+          if (uploadedVideoTokens.length) fields['素材'] = uploadedVideoTokens;
+          if (coverTokens.length && tableFieldSet.has('视频封面')) fields['视频封面'] = coverTokens;
+          if (tableFieldSet.has('内容类型')) fields['内容类型'] = '视频';
+        } else {
+          // 图文笔记：所有图片→素材，类型→图文
+          if (uploadedImageTokens.length) fields['素材'] = uploadedImageTokens;
+          if (tableFieldSet.has('内容类型')) fields['内容类型'] = '图文';
+        }
         // 发布时间（字符串 "YYYY-MM-DD HH:mm" → 毫秒时间戳）
         if (publishTime) {
           const ts = new Date(publishTime).getTime();
@@ -980,6 +1030,9 @@ const server = http.createServer(async (req, res) => {
           fields['小红书发布渠道'] = xiaohongshuAccount ? (xiaohongshuChannel || '蚁小二') : '';
           fields['抖音账号'] = douyinAccount || '';
           fields['抖音发布状态'] = '';
+          if (isVideoNote && tableFieldSet.has('视频封面')) {
+            fields['视频封面'] = coverTokens.length ? coverTokens : [];
+          }
         } else {
           if (xiaohongshuAccount) {
             fields['小红书账号'] = xiaohongshuAccount;
@@ -1011,6 +1064,8 @@ const server = http.createServer(async (req, res) => {
             正文长度: (fields['正文'] || '').length,
             标签数: (fields['标签'] || '').split('\n').filter(Boolean).length,
             素材张数: (fields['素材'] || []).length,
+            视频封面张数: (fields['视频封面'] || []).length,
+            内容类型: fields['内容类型'] || '(无)',
             小红书账号: fields['小红书账号'] || '(无)',
             抖音账号: fields['抖音账号'] || '(无)',
             发布时间: fields['发布时间'] || '(无)',

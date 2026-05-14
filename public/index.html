@@ -4820,7 +4820,7 @@ function importCollectRecords() {
   const records = [];
   for (const topicGroup of importScanData) {
     const gs = normalizeImportGroupState(importGroupState.get(importGroupKey(topicGroup)));
-    const validNotes = (topicGroup.notes || []).filter(n => n.imageCount > 0);
+    const validNotes = (topicGroup.notes || []).filter(n => n.imageCount > 0 || (n.videoCount || 0) > 0);
     validNotes.forEach(note => {
       const state = normalizeImportNoteState(importNoteState.get(note.noteKey));
       const base = {
@@ -4829,6 +4829,7 @@ function importCollectRecords() {
         noteKey: note.noteKey,
         folderPath: note.folderPath,
         images: note.images,
+        videos: note.videos || [],
         xiaohongshuChannel: gs.channel || '蚁小二',
         publishTime: state.publishTime || '',
         title: '', description: '', tags: [],

@@ -152,6 +152,8 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 
 **每篇笔记单独生成文案，即使同一主题下有多篇，也必须各写各的——标题角度不同、切入点不同。** 不允许任何情况下复用同一套文案。
 
+**文案必须在 Step 5 上传之前完成**：`title` 和 `tags` 预填进 records JSON，知发收到预填标题后跳过自身 AI 生成。**禁止**先上传空标题的记录再事后补写——事后补写需要额外脚本，且容易遗漏。
+
 **完整写作规范**：执行前读取 `~/zhifa/src/ai-writer.js` 开头的 `SYSTEM_PROMPT`，严格按其中的标题公式、标签规则、禁用词执行。
 
 **正文（description）固定留空** `""`，不生成任何正文内容。
@@ -241,6 +243,7 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 | `noteKey` | scan JSON 里每条 note 的 `noteKey` 字段 |
 | `folderPath` | scan JSON 里每条 note 的 `folderPath` 字段（绝对路径） |
 | `images` | scan JSON 里每条 note 的 `images` 数组（已含 name/path/size，**直接复用，不要重新构建**） |
+| `videos` | scan JSON 里每条 note 的 `videos` 数组（已含 name/path/size）。有视频时知发自动识别为视频笔记：视频上传到飞书「素材」字段，封面图（文件名主序号=0）上传到「视频封面」字段，内容类型设为「视频」 |
 | `xiaohongshuAccount` | 按分配原则确定的该条笔记对应账号，没有小红书账号则留空 `""` |
 | `douyinAccount` | 用户提供的抖音账号名，没有则留空 `""` |
 | `publishTime` | 按分配原则确定的该条笔记对应时间槽，格式 `YYYY-MM-DD HH:mm` |
@@ -263,19 +266,73 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
         {"name": "0.jpg", "path": "~/笔记制作输出/合成图/课件A/1/0.jpg", "size": 98765},
         {"name": "1.jpg", "path": "~/笔记制作输出/合成图/课件A/1/1.jpg", "size": 123456}
       ],
+      "videos": [],
       "xiaohongshuAccount": "小红书-测试账号",
       "douyinAccount": "",
       "publishTime": "2026-04-30 15:00",
       "xiaohongshuChannel": "蚁小二",
       "title": "草船借箭，诸葛亮凭什么敢这么赌？",
-      "description": "完整正文内容……",
+      "description": "",
       "tags": ["#历史故事", "#三国", "#战争智慧"]
+    },
+    {
+      "topic": "视频课件B",
+      "topicOverride": "",
+      "noteKey": "视频课件B/1",
+      "folderPath": "~/笔记制作输出/合成图/视频课件B/1",
+      "images": [
+        {"name": "0.jpg", "path": "~/笔记制作输出/合成图/视频课件B/1/0.jpg", "size": 98765}
+      ],
+      "videos": [
+        {"name": "课件B.mp4", "path": "~/笔记制作输出/合成图/视频课件B/1/课件B.mp4", "size": 52428800}
+      ],
+      "douyinAccount": "抖音-测试账号",
+      "xiaohongshuAccount": "",
+      "publishTime": "2026-04-30 19:00",
+      "xiaohongshuChannel": "",
+      "title": "这节课的板书笔记，值得反复看三遍",
+      "description": "",
+      "tags": ["#课堂笔记", "#学习方法"]
     }
   ]
 }
 ```
 
+**视频笔记字段写入规则**：当 `videos` 数组非空时，知发自动识别为视频笔记——视频文件上传到飞书「素材」字段，`images` 中文件名主序号=0 的图（`0.jpg`）上传到飞书「视频封面」字段，内容类型设为「视频」。图文笔记（`videos` 为空）行为不变。
+
 **注意**：`title` 字段预填时，知发跳过自身 AI 生成，直接使用 Claude 写的文案。
+
+### Step 5.5：上传后强制后处理（CRITICAL — 每次上传后必执行）
+
+上传成功后，**立即**对所有刚创建的记录执行以下两步，不等用户追问：
+
+**① 清空笔记主题字段**：`create-records` 会把 `topic` 写入飞书「笔记主题」列。笔记主题的作用是触发 AI 写作自动扫描——标题已在 Step 4 预填的情况下，留着笔记主题会导致调度器自动覆盖 Claude 写的标题。必须在上传后立即清空。
+
+**② 设置发布状态**：根据用户意图决定：
+- 用户说「发布 / 安排发布 / 定时发布 / 排期发布」→ 自动把 `小红书发布状态` 和/或 `抖音发布状态` 设为 `待发布`（哪个平台有账号就设哪个）
+- 用户只说「上传 / 导入 / 建档」→ 状态留空，告知用户需手动改
+
+**执行方式**：用 FeishuClient 直接 `updateRecord`，不需要通过知发 HTTP API。示例：
+
+```javascript
+const FeishuClient = require('/Users/xili/zhifa/src/feishu');
+const { loadConfig } = require('/Users/xili/zhifa/src/config-store');
+const config = loadConfig();
+const client = new FeishuClient({
+  appId: config.feishu.appId, appSecret: config.feishu.appSecret,
+  appToken: config.feishu.appToken, tableId: config.feishu.tableId,
+});
+
+for (const rid of recordIds) {
+  await client.updateRecord(rid, {
+    '笔记主题': '',           // ① 清空
+    '小红书发布状态': '待发布', // ② 设状态（有小红书账号时）
+    '抖音发布状态': '待发布',   // ② 设状态（有抖音账号时）
+  });
+}
+```
+
+**反面教训（2026-05-14）**：上传 7 篇视频笔记后，笔记主题没清空 + 发布状态没设 + 标题没预填，用户逐一追问才补上。三个遗漏全是"上传后处理"缺位导致。
 
 ### Step 6：归档未安排的笔记到备用文件夹
 
@@ -319,21 +376,24 @@ cp -R "<合成图根目录>/<主题全称>/<原编号>" \
   - 跳过 0 篇（已存在，指纹查重命中）
   ✗ 失败 0 篇
 
-飞书表格已更新。**发布状态字段保持为空**，需要人工在飞书里手动改成"待发布"才会进入调度发布。
+后处理：
+  ✓ 笔记主题已清空
+  ✓ 发布状态已设为「待发布」（若用户要求发布）/ 发布状态留空（若用户只要求上传）
 
 未安排笔记已归档：<合成图根目录>/_未安排备用/（共 N 篇，含 README）
 ```
 
 ## 与 zhifa-pipeline 的区分（入口判断标准）
 
-**判断口诀：磁盘上能 `ls` 看到合成图（JPG/PNG）→ 用这个 Skill（zhifa-upload）；只有 PPT 文件还没合成 → 用 zhifa-pipeline。**
+**判断口诀：磁盘上能 `ls` 看到合成图（JPG/PNG）或视频文件（MP4/MOV）→ 用这个 Skill（zhifa-upload）；只有 PPT 文件还没合成 → 用 zhifa-pipeline。**
 
 | 情况 | 正确入口 |
 |------|---------|
 | 合成图文件夹已存在（`ls` 能看到 .jpg/.png） | **zhifa-upload**（本 Skill） |
+| 视频 + 封面已准备好（`ls` 能看到 .mp4/.mov + 0.jpg） | **zhifa-upload**（本 Skill） |
 | 起点是 PPT，还没跑融景合成 | zhifa-pipeline |
 
-**AI 强制自检**：接到"上传/发布/排期"类任务时，必须先执行 `ls <目标文件夹>` 确认图片文件是否存在，**不能凭用户口头描述或目录名推断**。看到图片文件 → 选本 Skill；看不到图片（只有 PPT）→ 选 zhifa-pipeline。
+**AI 强制自检**：接到"上传/发布/排期"类任务时，必须先执行 `ls <目标文件夹>` 确认素材文件是否存在，**不能凭用户口头描述或目录名推断**。看到图片/视频文件 → 选本 Skill；看不到图片（只有 PPT）→ 选 zhifa-pipeline。
 
 ## 注意事项
 
@@ -343,5 +403,5 @@ cp -R "<合成图根目录>/<主题全称>/<原编号>" \
 - 多个模板共用同一封面组合：同一主题的 `1/`、`2/`、`3/` 文件夹放**完全相同**的封面组合，不因模板编号不同而差异化
 - ⛔ **飞书记录红线（禁止删改已入库记录）**：记录一旦通过 `skill_upload.py create` 写入飞书，即视为进入发布流程——用户可能已手动改状态为"待发布"并开始发布，**状态留空 ≠ 安全可删**。禁止建议删除、批量替换素材或清空已创建记录。如需修复内容问题，**AI 不得发起任何飞书 API 写入调用**，只能告知用户在飞书界面手动操作，不得提议程序化批量操作已有记录。
 - `images` 数组直接从 scan JSON 复用（含 size 字段），不要手动构建
-- **发布状态默认留空（2026-05-06 调整）**：上传只建档不触发自动发布。`小红书发布状态` 和 `抖音发布状态` 字段在飞书里默认为空，要人工改成"待发布"调度才会扫到。这是为了避免上传完误自动发，也方便用户分批审核后再开闸。
+- **发布状态按用户意图设置（2026-05-14 调整）**：`create-records` 上传时发布状态留空（知发设计）。**但 Step 5.5 后处理会根据用户意图补设**：用户说"发布/排期"→ 自动设「待发布」；用户只说"上传/导入"→ 留空由人工在飞书改。不再需要用户每次手动去飞书改状态。
 - **立即发布按钮也受人工闸门保护（设计意图，不是 bug）**：UI 发布页的「立即发布」按钮内部仍要求状态 `=== '待发布'` 才执行。上传后状态为空时点该按钮会被静默跳过——这是有意为之，避免文案/封面还没审核完就被人误触发。要立即发布某条，先去飞书把状态改成"待发布"再点按钮。
