@@ -522,7 +522,7 @@ PPT 处理：X 个文件，每个导出 N 页
 | 标题生成不通过自检（字数/禁用词） | fallback 调 `/api/ai-writing/generate`，失败则报告给用户手动填写 |
 | `ppt-batch-tool` 崩溃 | 报告完整错误信息，不重试，让用户决定 |
 | 飞书字段不存在 | 不静默跳过，停下告知用户并提供三选一：我帮你建、你自己建、跳过这个字段 |
-| client 断开 ≠ server 完成 | 断开后先查服务端实际写入条数（`GET /api/records`）再决定是否补传 |
+| client 断开 ≠ server 完成 | 断开后用 Step 6.5 的本地导入日志（`import-debug.log`）确认实际写入了哪些 noteKey，再决定是否补传（不要用 `/api/records`，100+ 条会超时） |
 
 ---
 
@@ -530,8 +530,8 @@ PPT 处理：X 个文件，每个导出 N 页
 
 本 skill 是**自包含的全链路入口**，内部串联以下工具，上层无需单独调用：
 
-- `ppt-batch-tool`（PPT 导出 + pipeline.py）
-- `rongjing`（融景合成 + `--cover-source` 封面放置）
+- `ppt-batch-tool`（PPT 导出，用 `cli.py convert`）
+- `rongjing`（融景合成 + `--cover-source` 封面放置，用 `cli.py process`）
 - `zhifa-upload`（skill_upload.py，上传这一步的底层实现）
 
 **什么时候直接用下层 skill：**
@@ -552,7 +552,7 @@ PPT 处理：X 个文件，每个导出 N 页
 **根因**：没走正确入口（`zhifa-pipeline`），而是从中间工具切入，导致对"0 开头 = 封面，1 开头 = 内容图"的约定不知情，脚本满天飞，状态对账失控。
 
 **整改后**：
-- `ppt-batch-tool/pipeline.py` 加 `--cover-source` 参数，封面放置内建，无需脚本
+- 封面放置内建到 `rongjing/cli.py process --cover-source`，无需脚本（`pipeline.py` 本身不支持该参数，带封面走 Step 2 的两步命令）
 - 调度矩阵内建到 `/api/import/schedule`
 - 归档内建到 `/api/import/archive`
 - 上传自适应分批内建到 `skill_upload.py`
