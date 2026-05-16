@@ -398,9 +398,6 @@ class Scheduler {
     });
     this.log('info', `📝 处理: "${record.title}"`);
 
-    // P0.3 处理前预检本地账本：所有待发布平台都已在账本中 → 补写飞书状态后跳过
-    // 修复（Codex adversarial review）：早返前必须补写飞书"已发布"状态，否则记录会永远
-    // 卡在"待发布"列表里被反复扫描。补写状态本身不会触发重复发布——账本已记录是真理。
     const pendingPlatforms = [];
     if (record.xiaohongshuAccount && this.isPlatformPending(record.xiaohongshuStatus)) {
       pendingPlatforms.push('小红书');
@@ -408,6 +405,10 @@ class Scheduler {
     if (record.douyinAccount && this.isPlatformPending(record.douyinStatus)) {
       pendingPlatforms.push('抖音');
     }
+
+    // P0.3 处理前预检本地账本：所有待发布平台都已在账本中 → 补写飞书状态后跳过
+    // 修复（Codex adversarial review）：早返前必须补写飞书"已发布"状态，否则记录会永远
+    // 卡在"待发布"列表里被反复扫描。补写状态本身不会触发重复发布——账本已记录是真理。
     if (pendingPlatforms.length > 0
         && pendingPlatforms.every(p => publisher.isAlreadyPublished(record.recordId, p))) {
       this.log('warn', `⏭ 跳过《${record.title}》：所有待发布平台均已在本地账本（防重复保护），补写飞书状态`);
@@ -620,7 +621,10 @@ class Scheduler {
         record.note = nextNote;
       }
 
-      if (allSuccess && results.length > 0) {
+      const allPendingCovered = pendingPlatforms.every(p =>
+        results.some(r => r.platform === p && r.success)
+      );
+      if (allSuccess && results.length > 0 && allPendingCovered) {
         await this.feishu.markPublished(record.recordId);
         this.markRecordRecentlyPublished(record.recordId);
         this.setProgress({

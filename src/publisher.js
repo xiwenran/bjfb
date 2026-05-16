@@ -1690,14 +1690,28 @@ async function publishRecord(record, config, accountMapping, options = {}) {
   if (record.xiaohongshuAccount && isPendingStatus(record.xiaohongshuStatus)) {
     const resolved = resolveMappedAccountId('小红书', record.xiaohongshuAccount);
     const result = await publishToPlatform('小红书', record.xiaohongshuAccount, resolved.accountId);
-    if (result) results.push(result);
+    results.push(result || {
+      platform: '小红书',
+      account: record.xiaohongshuAccount,
+      accountId: resolved.accountId,
+      success: false,
+      retryable: true,
+      error: 'publishToPlatform 静默返回 null,内部分支未产生 result——请检查素材准备/账号映射/平台分支判断',
+    });
   }
 
   // 发布到抖音（跳过已发布的）
   if (record.douyinAccount && isPendingStatus(record.douyinStatus)) {
     const resolved = resolveMappedAccountId('抖音', record.douyinAccount);
     const result = await publishToPlatform('抖音', record.douyinAccount, resolved.accountId);
-    if (result) results.push(result);
+    results.push(result || {
+      platform: '抖音',
+      account: record.douyinAccount,
+      accountId: resolved.accountId,
+      success: false,
+      retryable: true,
+      error: 'publishToPlatform 静默返回 null,内部分支未产生 result——请检查素材准备/账号映射/平台分支判断',
+    });
   }
 
   return results;
