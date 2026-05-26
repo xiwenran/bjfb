@@ -332,7 +332,8 @@ def validate_records_for_dry_run(records: list) -> bool:
         print(f"\nDry run 失败：共 {len(all_violations)} 个问题。")
         return False
 
-    print(f"\nDry run 通过：{len(records)} 条记录已完成 5 项本地校验。")
+    print(f"\nDry run 通过：{len(records)} 条记录已完成 5 项本地结构校验。")
+    print("提示：dry-run 不检查标题公式、标题吸引力或文案质量；标题仍需按 ai-writer SYSTEM_PROMPT 单独审查。")
     return True
 
 
