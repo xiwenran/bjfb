@@ -149,6 +149,8 @@ function getRuntimePaths() {
     cacheDir: path.join(dataDir, 'cache'),
     tempDir: path.join(dataDir, 'tmp'),
     logsDir: path.join(dataDir, 'logs'),
+    diagnosticsLogPath: path.join(dataDir, 'logs', 'runtime-diagnostics.ndjson'),
+    runtimeStatePath: path.join(dataDir, 'logs', 'last-runtime-state.json'),
     ledgerPath: path.join(dataDir, 'publish-ledger.json'),
     historyPath: path.join(dataDir, 'publish-history.json'),
     aiWritingCachePath: path.join(dataDir, 'ai-writing-cache.json'),
@@ -188,6 +190,13 @@ function readJsonFile(filePath, fallback = null, options = {}) {
 function writeJsonFile(filePath, data) {
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+}
+
+function writeJsonFileAtomic(filePath, data) {
+  ensureDir(path.dirname(filePath));
+  const tmpPath = `${filePath}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+  fs.renameSync(tmpPath, filePath);
 }
 
 function normalizeConfig(config = {}) {
@@ -348,9 +357,7 @@ function readAiWritingCache() {
 function saveAiWritingCache(data) {
   const paths = getRuntimePaths();
   ensureRuntimeDirs(paths);
-  const tmp = `${paths.aiWritingCachePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data || {}, null, 2), 'utf-8');
-  fs.renameSync(tmp, paths.aiWritingCachePath);
+  writeJsonFileAtomic(paths.aiWritingCachePath, data || {});
 }
 
 // 导入断点续传缓存:整批上传中途失败时,已成功上传到飞书的图片 fileToken
@@ -365,9 +372,23 @@ function readImportRecovery() {
 function saveImportRecovery(data) {
   const paths = getRuntimePaths();
   ensureRuntimeDirs(paths);
-  const tmp = `${paths.importRecoveryPath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data || {}, null, 2), 'utf-8');
-  fs.renameSync(tmp, paths.importRecoveryPath);
+  writeJsonFileAtomic(paths.importRecoveryPath, data || {});
+}
+
+function appendDiagnosticEvent(event = {}) {
+  const paths = getRuntimePaths();
+  ensureRuntimeDirs(paths);
+  const normalized = {
+    time: new Date().toISOString(),
+    ...event,
+  };
+  fs.appendFileSync(paths.diagnosticsLogPath, `${JSON.stringify(normalized)}\n`, 'utf-8');
+}
+
+function saveRuntimeState(data = {}) {
+  const paths = getRuntimePaths();
+  ensureRuntimeDirs(paths);
+  writeJsonFileAtomic(paths.runtimeStatePath, data);
 }
 
 function getRecordTempDir(recordId) {
@@ -406,4 +427,6 @@ module.exports = {
   saveAiWritingCache,
   readImportRecovery,
   saveImportRecovery,
+  appendDiagnosticEvent,
+  saveRuntimeState,
 };

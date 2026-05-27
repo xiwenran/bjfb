@@ -22,6 +22,8 @@ const {
   isYixiaoerConfigured,
   readAiWritingCache,
   saveAiWritingCache,
+  appendDiagnosticEvent,
+  saveRuntimeState,
 } = require('./config-store.js');
 const { generateContent, testConnection } = require('./ai-writer.js');
 const { allocateImportSchedule } = require('./scheduler-allocator.js');
@@ -75,8 +77,38 @@ function getPublicRuntimePaths() {
     dataDir: paths.dataDir,
     cacheDir: paths.cacheDir,
     logsDir: paths.logsDir,
+    diagnosticsLogPath: paths.diagnosticsLogPath,
+    runtimeStatePath: paths.runtimeStatePath,
     ledgerPath: paths.ledgerPath,
   };
+}
+
+function persistRuntimeState(reason = 'status-update') {
+  const status = scheduler.getStatus();
+  saveRuntimeState({
+    savedAt: new Date().toISOString(),
+    reason,
+    version: APP_VERSION,
+    server: activeServerInfo ? {
+      host: activeServerInfo.host,
+      port: activeServerInfo.port,
+    } : null,
+    scheduler: {
+      running: status.running,
+      nextCheck: status.nextCheck,
+      scheduledCount: status.scheduledCount,
+      currentProgress: status.currentProgress,
+      recentLogs: status.recentLogs,
+    },
+  });
+}
+
+function recordDiagnosticEvent(type, payload = {}) {
+  appendDiagnosticEvent({
+    source: 'server',
+    type,
+    payload,
+  });
 }
 
 function cloneConfigForExport() {
@@ -327,12 +359,16 @@ scheduler.onLog = (entry) => {
   for (const res of sseClients) {
     res.write(`data: ${data}\n\n`);
   }
+  recordDiagnosticEvent('scheduler-log', entry);
+  persistRuntimeState('scheduler-log');
 };
 scheduler.onProgress = (progress) => {
   const data = JSON.stringify(progress);
   for (const res of sseClients) {
     res.write(`event: progress\ndata: ${data}\n\n`);
   }
+  recordDiagnosticEvent('scheduler-progress', progress);
+  persistRuntimeState('scheduler-progress');
 };
 
 function sendJson(res, data, status = 200) {
@@ -394,8 +430,20 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, {
       ...scheduler.getStatus(),
       configState: getConfigState(),
+      runtimePaths: getPublicRuntimePaths(),
       version: APP_VERSION,
     });
+  }
+
+  if (pathname === '/api/diagnostics/renderer-error' && req.method === 'POST') {
+    return readBody(req, 256 * 1024)
+      .then((body) => {
+        const payload = JSON.parse(body || '{}');
+        recordDiagnosticEvent('renderer-error', payload);
+        persistRuntimeState('renderer-error');
+        sendJson(res, { success: true });
+      })
+      .catch((e) => sendJson(res, { success: false, error: e.message }, e.statusCode || 500));
   }
 
   if (pathname === '/api/pending-count') {
@@ -1806,6 +1854,8 @@ function startServer(options = {}) {
       cleanup();
       const info = normalizeServerAddress(server.address(), host);
       activeServerInfo = { ...info, server };
+      recordDiagnosticEvent('server-started', info);
+      persistRuntimeState('server-started');
       if (!silent) {
         logStartup(info.port, info.host);
       }
@@ -1832,6 +1882,8 @@ function stopServer() {
   if (!server.listening) {
     activeServerInfo = null;
     scheduler.stop();
+    recordDiagnosticEvent('server-stopped', { listening: false });
+    persistRuntimeState('server-stopped');
     return Promise.resolve();
   }
 
@@ -1839,6 +1891,8 @@ function stopServer() {
     server.close((err) => {
       if (err) return reject(err);
       activeServerInfo = null;
+      recordDiagnosticEvent('server-stopped', { listening: false });
+      persistRuntimeState('server-stopped');
       resolve();
     });
   });

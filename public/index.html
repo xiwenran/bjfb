@@ -3271,6 +3271,44 @@ async function fetchApi(path, method = 'GET', body) {
   return resp.json();
 }
 
+function summarizeErrorValue(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') {
+    try { return JSON.parse(JSON.stringify(value)); } catch (_) {}
+  }
+  return String(value);
+}
+
+function reportRendererError(type, payload = {}) {
+  const body = {
+    type,
+    href: location.href,
+    timestamp: new Date().toISOString(),
+    ...payload,
+  };
+  try {
+    if (window.electronAPI?.reportRendererError) {
+      window.electronAPI.reportRendererError(body);
+      return;
+    }
+  } catch (_) {}
+  try {
+    fetch(API + '/api/diagnostics/renderer-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_) {}
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -5483,14 +5521,19 @@ async function refreshStatus() {
   if (isRefreshingStatus) return;
   isRefreshingStatus = true;
   try {
-    // /api/status 不访问飞书，直接返回；/api/pending-count 要拉飞书数据可能很慢
-    // 分开请求：status 先更新版本号和服务状态，pending-count 加 8 秒超时独立处理
+    // /api/status 不访问飞书，直接返回。
+    // 只有服务运行中才去拉 /api/pending-count，避免服务已停止时仍然周期性扫飞书。
     const status = await fetchApi('/api/status');
-    const pendingResp = await Promise.race([
-      fetchApi('/api/pending-count').catch(() => null),
-      new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
-    ]);
-    refreshScheduledTasks();
+    let pendingResp = null;
+    if (status.running) {
+      pendingResp = await Promise.race([
+        fetchApi('/api/pending-count').catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+      refreshScheduledTasks();
+    } else {
+      scheduledTasksData = [];
+    }
     const pendingCountValue = pendingResp && pendingResp.success ? pendingResp.count : latestPendingCount;
     const signature = JSON.stringify({
       status: buildStatusSignature(status),
@@ -5533,6 +5576,10 @@ async function refreshStatus() {
       const pendingCountEl = document.getElementById('pendingCount');
       if (pendingCountEl) pendingCountEl.textContent = countText;
       document.getElementById('toolbarPendingCount').textContent = countText;
+    } else if (!status.running) {
+      const pendingCountEl = document.getElementById('pendingCount');
+      if (pendingCountEl) pendingCountEl.textContent = '-';
+      document.getElementById('toolbarPendingCount').textContent = '-';
     }
 
     if (status.schedule && status.schedule.periods) {
@@ -6471,6 +6518,30 @@ function connectSSE() {
     reconnectTimer = setTimeout(connectSSE, 5000);
   };
 }
+
+window.addEventListener('error', (event) => {
+  const target = event.target;
+  if (target && target !== window) {
+    reportRendererError('resource-error', {
+      tagName: target.tagName || null,
+      source: target.src || target.href || null,
+    });
+    return;
+  }
+  reportRendererError('window-error', {
+    message: event.message,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    error: summarizeErrorValue(event.error),
+  });
+}, true);
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportRendererError('unhandledrejection', {
+    reason: summarizeErrorValue(event.reason),
+  });
+});
 
 async function loadCurrentMusic() {
   try {

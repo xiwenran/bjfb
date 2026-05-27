@@ -909,6 +909,21 @@ class Scheduler {
     this.log('info', '🔍 开始扫描飞书表格，补建精准发布时间任务...');
 
     try {
+      const hasPendingRecords = await this.feishu.hasPendingRecords();
+      if (!hasPendingRecords) {
+        this.log('info', '🈳 本轮未发现待发布记录，跳过完整扫描');
+        this.setProgress({
+          active: false,
+          stage: 'idle',
+          title: '',
+          recordId: '',
+          platform: '',
+          account: '',
+          detail: '当前没有待发布记录',
+        });
+        return { scheduled: 0, published: 0, failed: 0, skippedEmptyProbe: true };
+      }
+
       const records = await this.feishu.getUnpublishedRecords();
       const parsed = records.map(r => this.feishu.parseRecord(r));
 

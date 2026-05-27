@@ -161,6 +161,25 @@ class FeishuClient {
     return items;
   }
 
+  async hasPendingRecords() {
+    const filter = {
+      conjunction: 'or',
+      conditions: [
+        { field_name: '小红书发布状态', operator: 'is', value: ['待发布'] },
+        { field_name: '抖音发布状态', operator: 'is', value: ['待发布'] },
+      ],
+    };
+    const resp = await this.requestWithRetry(token =>
+      axios.post(
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+        { page_size: 1, automatic_fields: false, filter },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+    );
+    const items = resp.data?.data?.items || [];
+    return items.length > 0;
+  }
+
   // 根据 recordId 拉取单条最新记录。供 scheduler 在发布前做"二次校验账号字段"使用。
   async getRecordById(recordId) {
     if (!recordId) return null;

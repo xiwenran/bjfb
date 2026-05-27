@@ -2,6 +2,29 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { startServer, stopServer, getServerState } = require('./server.js');
+const { appendDiagnosticEvent } = require('./config-store.js');
+
+function serializeError(error) {
+  if (!error) return null;
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    code: error.code,
+  };
+}
+
+function recordDiagnosticEvent(type, payload = {}) {
+  try {
+    appendDiagnosticEvent({
+      source: 'electron-main',
+      type,
+      payload,
+    });
+  } catch (_) {
+    // 诊断写盘失败不能反过来打断应用退出路径
+  }
+}
 
 // 防止上传 OSS 时 ReadStream EPIPE 弹 Electron 错误弹窗。
 // 当 OSS 服务端因 403/400 等原因关闭连接时，Node.js ReadStream 会产生
@@ -11,14 +34,23 @@ const { startServer, stopServer, getServerState } = require('./server.js');
 process.on('uncaughtException', (err) => {
   if (err.code === 'EPIPE') {
     console.error('[warn] EPIPE suppressed in main process:', err.message);
+    recordDiagnosticEvent('main-epipe-suppressed', {
+      error: serializeError(err),
+    });
     return;
   }
+  recordDiagnosticEvent('main-uncaught-exception', {
+    error: serializeError(err),
+  });
   // 不是 EPIPE，走 Electron 默认（弹窗）
   throw err;
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('[fatal] unhandledRejection:', reason);
+  recordDiagnosticEvent('main-unhandled-rejection', {
+    reason: reason instanceof Error ? serializeError(reason) : String(reason),
+  });
   const msg = reason instanceof Error ? reason.message : String(reason);
   dialog.showErrorBox('知发遇到意外错误', msg);
   app.quit();
@@ -126,6 +158,19 @@ async function createMainWindow() {
     }
   });
 
+  win.webContents.on('render-process-gone', (_event, details) => {
+    recordDiagnosticEvent('render-process-gone', details);
+  });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    recordDiagnosticEvent('did-fail-load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
+  });
+
   await win.loadURL(appUrl);
   return win;
 }
@@ -145,6 +190,9 @@ async function bootstrap() {
 
 app.whenReady().then(() => {
   app.setName('知发');
+  recordDiagnosticEvent('app-ready', {
+    pid: process.pid,
+  });
   bootstrap();
 
   ipcMain.handle('dialog:openFolder', async () => {
@@ -152,6 +200,10 @@ app.whenReady().then(() => {
       properties: ['openDirectory']
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.on('diagnostics:renderer-error', (_event, payload) => {
+    recordDiagnosticEvent('renderer-error', payload);
   });
 
   app.on('activate', async () => {
@@ -165,15 +217,25 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  recordDiagnosticEvent('window-all-closed', {
+    platform: process.platform,
+  });
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('child-process-gone', (_event, details) => {
+  recordDiagnosticEvent('child-process-gone', details);
 });
 
 let _isQuitting = false;
 app.on('before-quit', (event) => {
   if (_isQuitting) return;
   _isQuitting = true;
+  recordDiagnosticEvent('before-quit', {
+    pid: process.pid,
+  });
   event.preventDefault();
   // 等服务关闭（最多 2 秒），确保端口释放后再退出
   Promise.race([
