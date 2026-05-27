@@ -329,6 +329,16 @@ class FeishuClient {
     return await this.getRecords({ conjunction: 'or', conditions });
   }
 
+  async getPendingRecords() {
+    const PLATFORM_FIELDS = ['小红书发布状态', '抖音发布状态'];
+    const conditions = PLATFORM_FIELDS.map(field_name => ({
+      field_name,
+      operator: 'is',
+      value: ['待发布'],
+    }));
+    return await this.getRecords({ conjunction: 'or', conditions });
+  }
+
   async getRecordsByPlatformStatus(platform, status) {
     const field_name = platform === '小红书' ? '小红书发布状态' : '抖音发布状态';
     return await this.getRecords({

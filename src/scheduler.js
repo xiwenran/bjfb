@@ -924,7 +924,7 @@ class Scheduler {
         return { scheduled: 0, published: 0, failed: 0, skippedEmptyProbe: true };
       }
 
-      const records = await this.feishu.getUnpublishedRecords();
+      const records = await this.feishu.getPendingRecords();
       const parsed = records.map(r => this.feishu.parseRecord(r));
 
       if (this.config.aiWriting?.enabled) {
