@@ -276,9 +276,26 @@ this.scanTimer = setTimeout(() => {
 
 ---
 
-## AI 写作模块（src/ai-writer.js，v1.3.0）
+## AI 写作模块（src/ai-writer.js）
 
-### 功能
+### 两条独立触发路径（重要，2026-04-25 补）
+
+**路径 A：导入时直接调用（v2.0 新增，当前主路径）**
+- 接口：`POST /api/import/create-records`
+- 触发：用户在"素材导入"页点"主题撰写并预览"
+- 入参：每篇笔记携带 `topic`（文件夹一级目录名，或 UI 里用户填的覆盖值）+ 图片文件名
+- `dryRun=true` 时只生成内容返回，不写飞书；`dryRun=false` 完整链路上传图片+建记录
+- **同主题下 N 篇笔记就生成 N 篇内容**（每个二级子文件夹一篇）
+- 路线图 P3.0 / P3.1 已 ✅
+
+**路径 B：调度器后台扫描（v1.3.0 老路径，仍保留）**
+- 触发：飞书记录"笔记主题"字段有值 + 近 24h 内修改 + 内容与上次不同
+- 由 `scheduler.runAiWriting()` 定时扫描，自动生成并回写飞书
+- 适用：在飞书里直接改主题字段的场景
+
+两条路径独立生效，互不冲突。
+
+### 功能（路径 B 细节）
 
 扫描飞书"笔记主题"字段，有值且近 24 小时内修改、且内容与上次不同时，自动调用 AI 生成标题/正文/标签并回写飞书。
 
@@ -287,10 +304,10 @@ this.scanTimer = setTimeout(() => {
 | provider | 说明 | 接口格式 |
 |---------|------|---------|
 | `openai` | OpenAI 兼容（官方/中转/大多数第三方服务） | POST `{apiBaseUrl}/chat/completions` |
-| `anthropic` | Anthropic Codex 官方 API | POST `https://api.anthropic.com/v1/messages`，`x-api-key` header |
+| `anthropic` | Anthropic Claude 官方 API | POST `https://api.anthropic.com/v1/messages`，`x-api-key` header |
 | `gemini` | Google Gemini 官方 API | POST `https://generativelanguage.googleapis.com/...?key={apiKey}` |
 
-Codex/Gemini 通过第三方中转站时，通常提供 OpenAI 兼容接口，选 `openai` 填中转 base URL 即可。
+Claude/Gemini 通过第三方中转站时，通常提供 OpenAI 兼容接口，选 `openai` 填中转 base URL 即可。
 
 ### 配置结构（config.aiWriting）
 
@@ -300,7 +317,7 @@ aiWriting: {
   provider: 'openai',   // 'openai' | 'anthropic' | 'gemini'
   apiBaseUrl: '',       // openai 模式必填
   apiKey: '',           // GET /api/config 返回时掩码为 ******
-  model: 'gpt-4o-mini', // anthropic 默认 Codex-3-5-haiku，gemini 默认 gemini-2.0-flash
+  model: 'gpt-4o-mini', // anthropic 默认 claude-3-5-haiku，gemini 默认 gemini-2.0-flash
 }
 ```
 
@@ -374,6 +391,22 @@ npm run git:sync -- "提交信息"  # add + commit + push
 | 2026-04 | feishu.js | 附件排序只提取前缀整数，`1(2).png`/`1.2.png` 内部顺序靠飞书上传顺序兜底 | 新增括号子序号和小数点子序号解析，`1(1)<1(2)`、`1.1<1.2` 均可靠排序 |
 | 2026-04-09 | config-store.js:281 | `saveLedger` 是直接 `writeFileSync`，与 `saveHistory` 的 tmp+rename 不对称。scheduler 的写入顺序是 history 先 / ledger 后，进程在两次写之间被强杀会出现"血统说已发、ledger 没拦截"的不一致；ledger 写到一半被杀还会留下残缺 JSON，下次启动 `loadPublishedLedger` fail-closed 整个服务起不来 | 改为原子写：先写 `.tmp` 再 `rename`，与 `saveHistory` 对称 |
 | 2026-04-09 | feishu.js:284 / scheduler.js:350 | `downloadAllAttachments` 用 `fs.renameSync` 写入飞书原始文件名，POSIX 上同名会静默覆盖；同一条记录里两张同名图会塌成一份，scheduler 让 attachments 与 videoCover 共用同一 `tmpDir` 也会跨集合污染（封面 vs 主附件同名时） | 1) 在 `downloadAllAttachments` 内部用 `usedNames` Set + `existsSync` 双重检测，遇到同名自动追加 `_2/_3...` 后缀；2) scheduler 把 cover 下载到 `tmpDir/cover/` 子目录，与主附件目录物理隔离 |
+
+---
+
+## 知发工作流子代理分工（防主会话上下文过重）
+
+在执行 zhifa-upload / zhifa-pipeline / rongjing 等多步骤 skill 时，以下三类子任务必须派子代理，不允许全部放在主会话处理：
+
+| 子任务类型 | 派哪个 | 典型场景 |
+|-----------|--------|---------|
+| 目录结构未知 / 新素材格式探索 | `spawn_agent` 派 Explore 子代理 | 合成图目录结构是否符合预期、封面文件夹映射关系确认 |
+| 机械性批处理脚本 | `spawn_agent` 派 echo-worker（worker） | 重整目录结构、批量复制封面到模板子文件夹、按图片数切分连续编号 |
+| 内容生成 + 分配逻辑（>50 行 Python / JSON 构建） | `spawn_agent` 派 echo-writer（writer） | build_records.py、标题批量生成、账号×主题×时间矩阵分配 |
+
+判断口诀：「读文件 → Explore；写脚本 → worker；生内容 → writer」。进了 skill 不因为"全链路都在这里"而豁免子代理分工规则。
+
+**立规则依据**：26春初中语文 192 篇笔记制作发布（2026-05-10）全程未用子代理，主会话上下文极重，多次 compact 丢失上下文；重整脚本、封面放置脚本、build_records.py 均应派子代理处理。
 
 ---
 
