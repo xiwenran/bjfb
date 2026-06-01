@@ -227,10 +227,11 @@ P3.0 用 dryRun 模式，P3.1 用完整模式，共用同一个接口。
 - **本步执行逻辑**：
   1. 遍历 records，每条：
   2. 若 `xiaohongshuAccount` 和 `douyinAccount` 均为空 → `{status: 'failed', reason: 'no_account'}`，跳过
-  3. 对每个非空平台账号，计算指纹，调 `findRecordByFingerprint`
-  4. 指纹已存在 → `{status: 'skipped', reason: 'fingerprint_exists', recordId}`
-  5. 都通过 → `{status: 'pending'}`（占位，后续步骤填充）
-  6. 本步暂时直接返回全部结果（AI 生成和写入结果为空）
+  3. 若 `xiaohongshuAccount` 和 `douyinAccount` 同时非空 → `{status: 'failed', reason: 'multiple_platform_accounts'}`，跳过；同一笔记发两个平台必须拆成两条记录
+  4. 对唯一非空的平台账号计算指纹，调 `findRecordByFingerprint`
+  5. 指纹已存在 → `{status: 'skipped', reason: 'fingerprint_exists', recordId}`
+  6. 都通过 → `{status: 'pending'}`（占位，后续步骤填充）
+  7. 本步暂时直接返回全部结果（AI 生成和写入结果为空）
 - **验收标准**：
   - 传入无账号的记录，返回 `failed/no_account`
   - 传入已存在指纹的记录，返回 `skipped/fingerprint_exists`

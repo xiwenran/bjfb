@@ -343,6 +343,8 @@ python3 ~/zhifa/scripts/skill_upload.py create /tmp/zhifa_records.json
 | `description` | Claude 生成的正文 |
 | `tags` | Claude 生成的标签数组（每个带 `#` 前缀，如 `["#经典常谈", "#马说"]`） |
 
+**平台字段硬规则**：同一条记录只能填写 `xiaohongshuAccount` 或 `douyinAccount` 其中一个。若同一篇笔记要发小红书和抖音，必须在 `records` 里写成两条记录：一条只填小红书账号，一条只填抖音账号。禁止一条记录同时带两个平台账号。
+
 **records JSON 结构示例**（写入 `/tmp/zhifa_records.json`）：
 
 ```json
@@ -416,12 +418,15 @@ const client = new FeishuClient({
   appToken: config.feishu.appToken, tableId: config.feishu.tableId,
 });
 
-for (const rid of recordIds) {
-  await client.updateRecord(rid, {
-    '笔记主题': '',           // ① 清空
-    '小红书发布状态': '待处理', // ② 设状态（有小红书账号时）
-    '抖音发布状态': '待处理',   // ② 设状态（有抖音账号时）
-  });
+const successfulCreates = uploadResults
+  .map((result, index) => ({ result, record: records[index] }))
+  .filter(({ result }) => result?.status === 'success' && result.recordId);
+
+for (const { result, record } of successfulCreates) {
+  const fields = { '笔记主题': '' }; // ① 清空
+  if (record?.xiaohongshuAccount) fields['小红书发布状态'] = '待处理';
+  if (record?.douyinAccount) fields['抖音发布状态'] = '待处理';
+  await client.updateRecord(result.recordId, fields);
 }
 ```
 

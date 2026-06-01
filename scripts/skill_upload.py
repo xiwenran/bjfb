@@ -93,7 +93,19 @@ def decide_batch_params(total: int) -> tuple[int, float, int]:
         return 2, 12.0, 600
 
 
-def parse_batch_result(result: dict | None) -> tuple[list, list, list]:
+def record_retry_key(record: dict) -> str:
+    """Build a retry key that distinguishes the same note across platforms."""
+    note_key = str(record.get("noteKey") or "")
+    xhs_account = str(record.get("xiaohongshuAccount") or "").strip()
+    dy_account = str(record.get("douyinAccount") or "").strip()
+    if xhs_account:
+        return f"xiaohongshuAccount|{xhs_account}|{note_key}"
+    if dy_account:
+        return f"douyinAccount|{dy_account}|{note_key}"
+    return f"unknown||{note_key}"
+
+
+def parse_batch_result(result: dict | None, batch_records: list | None = None) -> tuple[list, list, list]:
     """
     解析单批 API 响应，返回 (success_list, skipped_list, failed_list)。
     任意字段缺失时返回空列表。
@@ -108,9 +120,18 @@ def parse_batch_result(result: dict | None) -> tuple[list, list, list]:
     else:
         return [], [], []
 
-    success = [r for r in result_list if r.get("status") == "success"]
-    skipped = [r for r in result_list if r.get("status") == "skipped"]
-    failed = [r for r in result_list if r.get("status") == "failed"]
+    enriched_results = []
+    for i, item in enumerate(result_list):
+        if not isinstance(item, dict):
+            continue
+        enriched = dict(item)
+        if batch_records and i < len(batch_records) and isinstance(batch_records[i], dict):
+            enriched["__retryKey"] = record_retry_key(batch_records[i])
+        enriched_results.append(enriched)
+
+    success = [r for r in enriched_results if r.get("status") == "success"]
+    skipped = [r for r in enriched_results if r.get("status") == "skipped"]
+    failed = [r for r in enriched_results if r.get("status") == "failed"]
     return success, skipped, failed
 
 
@@ -196,12 +217,12 @@ def extract_template_number(note_key: str) -> int | None:
     return None
 
 
-def account_values(record: dict) -> list[str]:
+def platform_account_values(record: dict) -> list[tuple[str, str, str]]:
     accounts = []
-    for key in ("xiaohongshuAccount", "douyinAccount"):
-        value = record.get(key)
+    for key, platform in (("xiaohongshuAccount", "小红书"), ("douyinAccount", "抖音")):
+        value = str(record.get(key) or "").strip()
         if value:
-            accounts.append(str(value))
+            accounts.append((key, platform, value))
     return accounts
 
 
@@ -222,9 +243,15 @@ def validate_records_for_dry_run(records: list) -> bool:
             for key in required_keys:
                 if key not in record:
                     violations.append(f"records[{i}] 缺少必填字段 {key}")
-            if not record.get("xiaohongshuAccount") and not record.get("douyinAccount"):
+            xhs_account = str(record.get("xiaohongshuAccount") or "").strip()
+            dy_account = str(record.get("douyinAccount") or "").strip()
+            if not xhs_account and not dy_account:
                 violations.append(
                     f"records[{i}] 至少需要 xiaohongshuAccount 或 douyinAccount 之一"
+                )
+            if xhs_account and dy_account:
+                violations.append(
+                    f"records[{i}] 不能同时填写 xiaohongshuAccount 和 douyinAccount；同一笔记发两个平台时必须拆成两条记录"
                 )
     check_results.append(("JSON format", violations))
 
@@ -252,9 +279,15 @@ def validate_records_for_dry_run(records: list) -> bool:
         for record in records:
             if not isinstance(record, dict):
                 continue
-            for account in account_values(record):
-                account_groups.setdefault(account, []).append(record)
-        for account, account_records in account_groups.items():
+            for account_key, platform, account in platform_account_values(record):
+                group_key = f"{account_key}:{account}"
+                account_groups.setdefault(group_key, []).append({
+                    "record": record,
+                    "label": f"{platform}:{account}",
+                })
+        for account_group in account_groups.values():
+            account = account_group[0]["label"]
+            account_records = [item["record"] for item in account_group]
             note_keys = [str(r.get("noteKey", "")) for r in account_records if r.get("noteKey")]
             template_numbers = [
                 extract_template_number(note_key)
@@ -277,7 +310,7 @@ def validate_records_for_dry_run(records: list) -> bool:
 
     violations = []
     if isinstance(records, list):
-        timed_groups: dict[str, list[tuple[datetime.datetime, str]]] = {}
+        timed_groups: dict[str, list[tuple[datetime.datetime, str, str]]] = {}
         for i, record in enumerate(records):
             if not isinstance(record, dict):
                 continue
@@ -286,37 +319,46 @@ def validate_records_for_dry_run(records: list) -> bool:
             except ValueError as e:
                 violations.append(f"records[{i}].publishTime {e}")
                 continue
-            for account in account_values(record):
-                timed_groups.setdefault(account, []).append((publish_time, str(record.get("noteKey", ""))))
-        for account, items in timed_groups.items():
+            for account_key, platform, account in platform_account_values(record):
+                group_key = f"{account_key}:{account}"
+                account_label = f"{platform}:{account}"
+                timed_groups.setdefault(group_key, []).append((publish_time, str(record.get("noteKey", "")), account_label))
+        for items in timed_groups.values():
             items.sort(key=lambda item: item[0])
-            for (prev_time, prev_key), (next_time, next_key) in zip(items, items[1:]):
+            for (prev_time, prev_key, account_label), (next_time, next_key, _) in zip(items, items[1:]):
                 if (next_time - prev_time).total_seconds() < 600:
                     violations.append(
-                        f"{account} 时间间隔不足 10 分钟：{prev_key} 与 {next_key}"
+                        f"{account_label} 时间间隔不足 10 分钟：{prev_key} 与 {next_key}"
                     )
     check_results.append(("Time interval", violations))
 
     violations = []
-    note_keys_seen: set[str] = set()
-    xhs_time_seen: set[tuple[str, str]] = set()
+    note_platform_seen: set[tuple[str, str]] = set()
+    account_time_seen: set[tuple[str, str, str]] = set()
     if isinstance(records, list):
         for i, record in enumerate(records):
             if not isinstance(record, dict):
                 continue
-            note_key = record.get("noteKey")
-            if note_key in note_keys_seen:
-                violations.append(f"noteKey 重复：{note_key}")
-            else:
-                note_keys_seen.add(note_key)
-            xhs_account = record.get("xiaohongshuAccount")
-            publish_time = record.get("publishTime")
-            if xhs_account and publish_time:
-                pair = (str(xhs_account), str(publish_time))
-                if pair in xhs_time_seen:
-                    violations.append(f"(xiaohongshuAccount, publishTime) 重复：{pair[0]} @ {pair[1]}")
+            note_key = str(record.get("noteKey") or "")
+            publish_time = str(record.get("publishTime") or "")
+            platform_accounts = (
+                ("xiaohongshuAccount", str(record.get("xiaohongshuAccount") or "").strip()),
+                ("douyinAccount", str(record.get("douyinAccount") or "").strip()),
+            )
+            for account_key, account in platform_accounts:
+                if not account:
+                    continue
+                note_pair = (account_key, note_key)
+                if note_pair in note_platform_seen:
+                    violations.append(f"({account_key}, noteKey) 重复：{note_key}")
                 else:
-                    xhs_time_seen.add(pair)
+                    note_platform_seen.add(note_pair)
+                if publish_time:
+                    time_pair = (account_key, account, publish_time)
+                    if time_pair in account_time_seen:
+                        violations.append(f"({account_key}, publishTime) 重复：{account} @ {publish_time}")
+                    else:
+                        account_time_seen.add(time_pair)
     check_results.append(("No duplicates", violations))
 
     for label, violations in check_results:
@@ -337,27 +379,85 @@ def validate_records_for_dry_run(records: list) -> bool:
     return True
 
 
-def load_failed_note_keys() -> set[str]:
+def validate_records_for_create(records: list) -> bool:
+    """Run upload-blocking checks that are safe for all supported scan shapes."""
+    violations = []
+    note_platform_seen: set[tuple[str, str]] = set()
+    account_time_seen: set[tuple[str, str, str]] = set()
+
+    if not isinstance(records, list) or not records:
+        violations.append("records 必须是非空数组")
+    else:
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                violations.append(f"records[{i}] 必须是对象")
+                continue
+
+            note_key = str(record.get("noteKey") or "")
+            if not note_key:
+                violations.append(f"records[{i}] 缺少必填字段 noteKey")
+
+            xhs_account = str(record.get("xiaohongshuAccount") or "").strip()
+            dy_account = str(record.get("douyinAccount") or "").strip()
+            if not xhs_account and not dy_account:
+                violations.append(
+                    f"records[{i}] 至少需要 xiaohongshuAccount 或 douyinAccount 之一"
+                )
+            if xhs_account and dy_account:
+                violations.append(
+                    f"records[{i}] 不能同时填写 xiaohongshuAccount 和 douyinAccount；同一笔记发两个平台时必须拆成两条记录"
+                )
+
+            publish_time = str(record.get("publishTime") or "")
+            for account_key, account in (
+                ("xiaohongshuAccount", xhs_account),
+                ("douyinAccount", dy_account),
+            ):
+                if not account:
+                    continue
+                note_pair = (account_key, note_key)
+                if note_pair in note_platform_seen:
+                    violations.append(f"({account_key}, noteKey) 重复：{note_key}")
+                else:
+                    note_platform_seen.add(note_pair)
+                if publish_time:
+                    time_pair = (account_key, account, publish_time)
+                    if time_pair in account_time_seen:
+                        violations.append(f"({account_key}, publishTime) 重复：{account} @ {publish_time}")
+                    else:
+                        account_time_seen.add(time_pair)
+
+    if violations:
+        print(f"❌ 上传前硬校验失败：{len(violations)} 个问题")
+        for violation in violations:
+            print(f"  - {violation}")
+        return False
+
+    print("✅ 上传前硬校验通过")
+    return True
+
+
+def load_failed_retry_keys() -> set[str]:
     if not os.path.isfile(FAILED_UPLOAD_TMP):
         print(f"失败列表不存在：{FAILED_UPLOAD_TMP}", file=sys.stderr)
         sys.exit(1)
     with open(FAILED_UPLOAD_TMP, encoding="utf-8") as f:
-        failed_note_keys = json.load(f)
-    if not isinstance(failed_note_keys, list):
+        failed_retry_keys = json.load(f)
+    if not isinstance(failed_retry_keys, list):
         print(f"失败列表格式错误：{FAILED_UPLOAD_TMP} 需要 JSON 数组", file=sys.stderr)
         sys.exit(1)
-    return {str(note_key) for note_key in failed_note_keys}
+    return {str(key) for key in failed_retry_keys}
 
 
-def save_failed_note_keys(failed_records: list) -> None:
-    failed_note_keys = [
-        r.get("noteKey")
+def save_failed_retry_keys(failed_records: list) -> None:
+    failed_retry_keys = [
+        r.get("__retryKey") or r.get("noteKey")
         for r in failed_records
-        if isinstance(r, dict) and r.get("noteKey")
+        if isinstance(r, dict) and (r.get("__retryKey") or r.get("noteKey"))
     ]
-    if failed_note_keys:
+    if failed_retry_keys:
         with open(FAILED_UPLOAD_TMP, "w", encoding="utf-8") as f:
-            json.dump(failed_note_keys, f, ensure_ascii=False, indent=2)
+            json.dump(failed_retry_keys, f, ensure_ascii=False, indent=2)
     elif os.path.exists(FAILED_UPLOAD_TMP):
         os.remove(FAILED_UPLOAD_TMP)
 
@@ -429,14 +529,21 @@ def cmd_create(
         sys.exit(1)
 
     if retry_failed:
-        failed_note_keys = load_failed_note_keys()
+        failed_retry_keys = load_failed_retry_keys()
         before_retry_filter = len(records)
-        records = [r for r in records if isinstance(r, dict) and str(r.get("noteKey")) in failed_note_keys]
+        records = [
+            r for r in records
+            if isinstance(r, dict)
+            and (record_retry_key(r) in failed_retry_keys or str(r.get("noteKey")) in failed_retry_keys)
+        ]
         print(f"retry-failed：从 {before_retry_filter} 条中过滤出 {len(records)} 条失败记录。")
 
     if dry_run:
         if validate_records_for_dry_run(records):
             sys.exit(0)
+        sys.exit(1)
+
+    if not validate_records_for_create(records):
         sys.exit(1)
 
     total = len(records)
@@ -480,12 +587,18 @@ def cmd_create(
         )
         elapsed = time.time() - t0
 
-        ok, skip, fail = parse_batch_result(result)
+        ok, skip, fail = parse_batch_result(result, batch)
 
         # 如果 result 是 None（网络失败），把整批算入失败
         if result is None:
-            fail_keys = [r.get("noteKey", f"batch{batch_idx}-{j}") for j, r in enumerate(batch)]
-            fail_items = [{"noteKey": k, "reason": "网络请求失败"} for k in fail_keys]
+            fail_items = [
+                {
+                    "noteKey": r.get("noteKey", f"batch{batch_idx}-{j}"),
+                    "__retryKey": record_retry_key(r),
+                    "reason": "网络请求失败",
+                }
+                for j, r in enumerate(batch)
+            ]
             fail = fail_items
 
         total_success.extend(ok)
@@ -514,6 +627,7 @@ def cmd_create(
                 for r in remaining_batch:
                     total_failed.append({
                         "noteKey": r.get("noteKey", "unknown"),
+                        "__retryKey": record_retry_key(r),
                         "reason": "连续失败后放弃",
                     })
             break
@@ -537,7 +651,7 @@ def cmd_create(
             reason = r.get("reason", "") or r.get("message", "未知原因")
             print(f"  {note_key}：{reason}")
 
-    save_failed_note_keys(total_failed)
+    save_failed_retry_keys(total_failed)
 
     if total_skipped:
         print("\n跳过（指纹查重命中，已存在）：")

@@ -510,11 +510,15 @@ const client = new FeishuClient({
   appToken: config.feishu.appToken, tableId: config.feishu.tableId,
 });
 
-for (const rid of recordIds) {
+const successfulCreates = uploadResults
+  .map((result, index) => ({ result, record: records[index] }))
+  .filter(({ result }) => result?.status === 'success' && result.recordId);
+
+for (const { result, record } of successfulCreates) {
   const fields = { '笔记主题': '' };
-  if (hasXhsAccount) fields['小红书发布状态'] = '待处理';
-  if (hasDouyinAccount) fields['抖音发布状态'] = '待处理';
-  await client.updateRecord(rid, fields);
+  if (record?.xiaohongshuAccount) fields['小红书发布状态'] = '待处理';
+  if (record?.douyinAccount) fields['抖音发布状态'] = '待处理';
+  await client.updateRecord(result.recordId, fields);
 }
 ```
 

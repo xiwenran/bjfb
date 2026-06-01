@@ -5,3 +5,5 @@ publish-ledger.json
 publish-history.json
 .echo/
 src/build-info.json
+.claude/
+__pycache__/
