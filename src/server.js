@@ -824,13 +824,25 @@ const server = http.createServer(async (req, res) => {
           overwrite = false,
           overwriteId = '',
         } = record;
+        const normalizedXiaohongshuAccount = String(xiaohongshuAccount || '').trim();
+        const normalizedDouyinAccount = String(douyinAccount || '').trim();
 
         // 是否覆盖模式（前端明确传 overwrite:true + overwriteId）
         const isOverwrite = !!(overwrite && overwriteId);
 
         // Step 1: 账号校验
-        if (!xiaohongshuAccount && !douyinAccount) {
+        if (!normalizedXiaohongshuAccount && !normalizedDouyinAccount) {
           results.push({ noteKey, status: 'failed', reason: 'no_account' });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+        if (normalizedXiaohongshuAccount && normalizedDouyinAccount) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'multiple_platform_accounts',
+            message: '同一条笔记不能同时填写小红书和抖音账号。请拆成两条记录：一条只填小红书账号，一条只填抖音账号。',
+          });
           if (!dryRun) pushImportProgress(noteKey, 'failed');
           continue;
         }
@@ -839,25 +851,24 @@ const server = http.createServer(async (req, res) => {
         const noteFolder = noteKey.split('/').pop() || recordFolderPath.split('/').pop() || '';
 
         // Step 2: 指纹计算（始终计算，供查重和写入 导入指纹 字段使用）
-        // 【Fix 问题2】双平台导入时分别计算两个指纹，存储时合并为换行分隔，
-        // 查重用 contains 操作符（见 feishu.findRecordByFingerprint），
-        // 保证"双平台首次导入 → 单平台再次导入"也能命中查重。
+        // 每条导入记录只允许单个平台；这里仍按平台计算指纹，避免同一素材
+        // 在不同平台/账号之间互相误判为重复。
         const imgNamesSorted = images.map(i => i.name).sort().join(',');
         const imgSizesSorted = images.slice().sort((a, b) => a.name.localeCompare(b.name)).map(i => i.size).join(',');
 
         let xhsFingerprint = '';
         let douyinFingerprint = '';
-        if (xiaohongshuAccount) {
+        if (normalizedXiaohongshuAccount) {
           xhsFingerprint = crypto.createHash('sha256')
-            .update([topic, noteFolder, 'xiaohongshu', xiaohongshuAccount, imgNamesSorted, imgSizesSorted].join('|'))
+            .update([topic, noteFolder, 'xiaohongshu', normalizedXiaohongshuAccount, imgNamesSorted, imgSizesSorted].join('|'))
             .digest('hex');
         }
-        if (douyinAccount) {
+        if (normalizedDouyinAccount) {
           douyinFingerprint = crypto.createHash('sha256')
-            .update([topic, noteFolder, 'douyin', douyinAccount, imgNamesSorted, imgSizesSorted].join('|'))
+            .update([topic, noteFolder, 'douyin', normalizedDouyinAccount, imgNamesSorted, imgSizesSorted].join('|'))
             .digest('hex');
         }
-        // storedFingerprint：两个平台都有时换行合并，只有一个时单独存
+        // 通过上方校验后只会存在一个平台指纹；保留变量名便于沿用后续查重逻辑。
         const primaryFingerprint = xhsFingerprint || douyinFingerprint;
         const storedFingerprint = (xhsFingerprint && douyinFingerprint)
           ? `${xhsFingerprint}\n${douyinFingerprint}`
@@ -868,7 +879,7 @@ const server = http.createServer(async (req, res) => {
           let fingerprintExists = false;
           let existingRecordId = null;
 
-          // 逐个指纹查重（feishu.findRecordByFingerprint 用 contains，双平台合并字段也能命中）
+          // 逐个指纹查重；contains 兼容历史记录里曾经合并存储的多平台指纹。
           if (xhsFingerprint) {
             const existingId = await feishu.findRecordByFingerprint(xhsFingerprint);
             if (existingId) { fingerprintExists = true; existingRecordId = existingId; }
@@ -936,8 +947,8 @@ const server = http.createServer(async (req, res) => {
                 const aiRecord = {
                   topic: topicForAi,
                   attachments: images.map(i => ({ name: i.name })),
-                  xiaohongshuAccount,
-                  douyinAccount,
+                  xiaohongshuAccount: normalizedXiaohongshuAccount,
+                  douyinAccount: normalizedDouyinAccount,
                   imagePaths: images.map(i => i.path), // 传实际路径供 AI 视觉识别
                 };
                 const aiResult = await generateContent(aiConfig, aiRecord);
@@ -1073,22 +1084,22 @@ const server = http.createServer(async (req, res) => {
         // 覆盖模式：账号/渠道字段还需要显式重置，防止旧账号残留。
         if (isOverwrite) {
           // 显式重置账号/渠道，避免旧账号继续进入调度链路；状态保持空
-          fields['小红书账号'] = xiaohongshuAccount || '';
+          fields['小红书账号'] = normalizedXiaohongshuAccount || '';
           fields['小红书发布状态'] = '';
-          fields['小红书发布渠道'] = xiaohongshuAccount ? (xiaohongshuChannel || '蚁小二') : '';
-          fields['抖音账号'] = douyinAccount || '';
+          fields['小红书发布渠道'] = normalizedXiaohongshuAccount ? (xiaohongshuChannel || '蚁小二') : '';
+          fields['抖音账号'] = normalizedDouyinAccount || '';
           fields['抖音发布状态'] = '';
           if (isVideoNote && tableFieldSet.has('视频封面')) {
             fields['视频封面'] = coverTokens.length ? coverTokens : [];
           }
         } else {
-          if (xiaohongshuAccount) {
-            fields['小红书账号'] = xiaohongshuAccount;
+          if (normalizedXiaohongshuAccount) {
+            fields['小红书账号'] = normalizedXiaohongshuAccount;
             fields['小红书发布渠道'] = xiaohongshuChannel || '蚁小二';
             // 不写小红书发布状态——让人工手动设"待发布"才触发调度
           }
-          if (douyinAccount) {
-            fields['抖音账号'] = douyinAccount;
+          if (normalizedDouyinAccount) {
+            fields['抖音账号'] = normalizedDouyinAccount;
             // 不写抖音发布状态——让人工手动设"待发布"才触发调度
           }
         }

@@ -920,7 +920,7 @@ class FeishuClient {
   }
 
   async findRecordByFingerprint(fingerprint) {
-    // 使用 contains 而非 is，支持「双平台导入」场景下同一字段存储多个指纹（换行分隔）
+    // 使用 contains 而非 is，兼容历史记录里同一字段存储多个指纹（换行分隔）
     // 若用户表格不存在「导入指纹」字段，飞书 search API 返回空结果或报错——均优雅降级
     try {
       const resp = await this.requestWithRetry(token =>
