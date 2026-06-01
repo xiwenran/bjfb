@@ -46,6 +46,7 @@ test('create-records should enforce trimmed account validation and keep single-p
 
   let uploadCalls = 0;
   let createRecordCalls = 0;
+  const createRecordFields = [];
   const originalGetTableFields = FeishuClient.prototype.getTableFields;
   const originalCreateTextField = FeishuClient.prototype.createTextField;
   const originalUploadLocalImagesToFeishu = FeishuClient.prototype.uploadLocalImagesToFeishu;
@@ -57,8 +58,9 @@ test('create-records should enforce trimmed account validation and keep single-p
     uploadCalls += 1;
     return [{ fileToken: 'ft_1' }];
   };
-  FeishuClient.prototype.createRecord = async () => {
+  FeishuClient.prototype.createRecord = async (fields) => {
     createRecordCalls += 1;
+    createRecordFields.push(fields);
     return { recordId: 'rec_1' };
   };
 
@@ -115,6 +117,8 @@ test('create-records should enforce trimmed account validation and keep single-p
   assert.equal(douyinOnlyResponse.body.results[0].status, 'success');
   assert.equal(douyinOnlyResponse.body.results[0].recordId, 'rec_1');
   assert.equal(createRecordCalls, 1);
+  assert.equal(createRecordFields[0]['抖音账号'], '抖音账号B');
+  assert.ok(!('小红书账号' in createRecordFields[0]) || createRecordFields[0]['小红书账号'] === '');
 
   const douyinOnlyWithEmptyXhsResponse = await requestJson({
     method: 'POST',
@@ -135,4 +139,33 @@ test('create-records should enforce trimmed account validation and keep single-p
   assert.equal(douyinOnlyWithEmptyXhsResponse.body.results[0].status, 'success');
   assert.equal(douyinOnlyWithEmptyXhsResponse.body.results[0].recordId, 'rec_1');
   assert.equal(createRecordCalls, 2);
+  assert.equal(createRecordFields[1]['抖音账号'], '抖音账号B');
+  assert.ok(!('小红书账号' in createRecordFields[1]) || createRecordFields[1]['小红书账号'] === '');
+
+  const xiaohongshuOnlyResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: false,
+      records: [{
+        noteKey: '专题A/004',
+        topic: '专题A',
+        images: [],
+        xiaohongshuAccount: ' 小红书账号A ',
+        douyinAccount: '   ',
+      }],
+    },
+  });
+
+  assert.equal(xiaohongshuOnlyResponse.statusCode, 200);
+  assert.equal(xiaohongshuOnlyResponse.body.results[0].status, 'success');
+  assert.equal(xiaohongshuOnlyResponse.body.results[0].recordId, 'rec_1');
+  assert.equal(createRecordCalls, 3);
+  assert.equal(createRecordFields[2]['小红书账号'], '小红书账号A');
+  assert.ok(
+    createRecordFields[2]['小红书发布渠道'] !== undefined &&
+    createRecordFields[2]['小红书发布渠道'] !== null &&
+    createRecordFields[2]['小红书发布渠道'] !== ''
+  );
+  assert.ok(!('抖音账号' in createRecordFields[2]) || createRecordFields[2]['抖音账号'] === '');
 });
