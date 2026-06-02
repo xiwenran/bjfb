@@ -168,4 +168,36 @@ test('create-records should enforce trimmed account validation and keep single-p
     createRecordFields[2]['小红书发布渠道'] !== ''
   );
   assert.ok(!('抖音账号' in createRecordFields[2]) || createRecordFields[2]['抖音账号'] === '');
+
+  const sameFolderNameDifferentPptTopicResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: false,
+      records: [
+        {
+          noteKey: '教务资料/期末家长会/001',
+          topic: '教务资料',
+          pptTopic: '期末家长会',
+          images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+          xiaohongshuAccount: '小红书账号A',
+          douyinAccount: '',
+        },
+        {
+          noteKey: '教务资料/暑假家长会/001',
+          topic: '教务资料',
+          pptTopic: '暑假家长会',
+          images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+          xiaohongshuAccount: '小红书账号A',
+          douyinAccount: '',
+        },
+      ],
+    },
+  });
+
+  assert.equal(sameFolderNameDifferentPptTopicResponse.statusCode, 200);
+  assert.equal(sameFolderNameDifferentPptTopicResponse.body.results[0].status, 'success');
+  assert.equal(sameFolderNameDifferentPptTopicResponse.body.results[1].status, 'success');
+  assert.equal(createRecordCalls, 5);
+  assert.notEqual(createRecordFields[3]['导入指纹'], createRecordFields[4]['导入指纹']);
 });

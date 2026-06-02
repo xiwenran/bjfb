@@ -105,6 +105,30 @@ title 和 tags 必须有实质内容，不得为空字符串或空数组；descr
 
 这些词可以帮助判断资料质量，但不能单独作为标题吸引点。必须改成动作和结果，如"这样讲""这样带""这样开""学生更清楚""家长听进去了"。
 
+**小红书真实标题风格补充（课件类优先级更高）**
+
+标题对象是老师，不是学生自学用户。标题必须写出"老师为什么现在需要这套课件"，而不是介绍资料本身。
+
+硬约束：
+- 标题 16-20 字为主，最低 14 字；允许 1 个 emoji，但 emoji 不用来凑字数
+- 必须包含具体教学/教务场景 + 情绪或结果钩子
+- 不得只写"这套课件很清楚/很省心/更稳/更懂"这类平铺结论
+- 同一批标题避免连续使用同一个句式
+
+优先标题方向：
+- 场景冲突：家长会上我说了某句话，家长安静/沉默/记笔记
+- 反常识表达：别急着讲成绩/别再讲大道理，先讲状态/问题
+- 课堂即时反馈：某知识点这样拆，学生终于能跟上
+- 强节点压力：中考前、期末前、暑假前，老师最怕的场景
+- 玩法类比：用熟悉事物讲抽象知识点，但不得编造图片中没有的玩法
+
+示例：
+- 家长会别急着讲成绩，先讲孩子状态
+- 期末家长会这页，家长真的会安静
+- 班会别再讲大道理，学生真的不爱听
+- 暑假作业这样布置，家长少追问很多
+- 宾语从句这样拆，学生终于不乱了
+
 **笔记主题中没有明确课文名且不属于上述课件分类时**（家长会、班主任经验、育儿话题、班级管理、教师成长等）：
 
 不套课文类公式，使用以下专属公式：
@@ -245,6 +269,12 @@ title 和 tags 必须有实质内容，不得为空字符串或空数组；descr
 
 function buildUserMessage(record) {
   const topic = record.topic || '';
+  const contentGroup = record.contentGroup || record.accountGroup || '';
+  const pptTopic = record.pptTopic || '';
+  const noteTitle = record.noteTitle || '';
+  const attachmentNames = Array.isArray(record.attachments)
+    ? record.attachments.map(item => item?.name).filter(Boolean).slice(0, 12)
+    : [];
   const xhsAccount = record.xiaohongshuAccount || '';
   const dyAccount = record.douyinAccount || '';
 
@@ -260,9 +290,14 @@ function buildUserMessage(record) {
   }
 
   return [
+    contentGroup ? `内容分组：${contentGroup}` : '',
+    pptTopic ? `PPT主题目录：${pptTopic}` : '',
+    noteTitle ? `笔记目录名：${noteTitle}` : '',
     `笔记主题：${topic}`,
+    attachmentNames.length ? `图片文件名：${attachmentNames.join('、')}` : '',
     platformHint,
-  ].join('\n');
+    '标题要求：面向老师，16-20字为主，最低14字；写具体教学/教务场景和情绪或结果钩子，不要写成资料说明。',
+  ].filter(Boolean).join('\n');
 }
 
 // 读取本地图片为 base64

@@ -2971,7 +2971,7 @@ function calcDailyCapacity(windows, intervalMin) {
 
 function allocateTimesByWindows(noteCount, windows, intervalMin, startDate) {
   if (noteCount <= 0) return [];
-  if (!Array.isArray(windows) || !windows.length || intervalMin <= 0) {
+  if (!Array.isArray(windows) || !windows.length) {
     return Array.from({ length: noteCount }, () => '');
   }
   const normalizedWindows = windows
@@ -2990,9 +2990,10 @@ function allocateTimesByWindows(noteCount, windows, intervalMin, startDate) {
   if (!normalizedWindows.length) {
     return Array.from({ length: noteCount }, () => '');
   }
-  const results = [];
+  const slots = [];
   let dayOffset = 0;
-  while (results.length < noteCount) {
+  const spacingMin = Number.isFinite(Number(intervalMin)) && Number(intervalMin) > 0 ? Number(intervalMin) : 10;
+  while (slots.length < noteCount) {
     const day = new Date(`${startDate}T00:00:00`);
     if (Number.isNaN(day.getTime())) {
       return Array.from({ length: noteCount }, () => '');
@@ -3002,15 +3003,20 @@ function allocateTimesByWindows(noteCount, windows, intervalMin, startDate) {
     const mm = String(day.getMonth() + 1).padStart(2, '0');
     const dd = String(day.getDate()).padStart(2, '0');
     for (const window of normalizedWindows) {
-      for (let minutes = window.startTotal; minutes <= window.endTotal && results.length < noteCount; minutes += intervalMin) {
+      for (let minutes = window.startTotal; minutes <= window.endTotal; minutes += spacingMin) {
         const hour = String(Math.floor(minutes / 60)).padStart(2, '0');
         const minute = String(minutes % 60).padStart(2, '0');
-        results.push(`${yyyy}-${mm}-${dd} ${hour}:${minute}`);
+        slots.push(`${yyyy}-${mm}-${dd} ${hour}:${minute}`);
       }
     }
     dayOffset++;
   }
-  return results;
+  const shuffled = slots
+    .map(value => ({ value, sort: Math.random() }))
+    .sort((a, b) => a.sort - b.sort)
+    .slice(0, noteCount)
+    .map(item => item.value);
+  return shuffled.sort((a, b) => new Date(a.replace(' ', 'T')).getTime() - new Date(b.replace(' ', 'T')).getTime());
 }
 
 const SECTION_META = {
@@ -4045,6 +4051,38 @@ function importGetNotesForGroup(topicGroup) {
   return (topicGroup?.notes || []).filter(note => note.imageCount > 0);
 }
 
+function importIsGrammarGroup(topicGroup) {
+  const label = String(topicGroup?.contentGroup || topicGroup?.accountGroup || topicGroup?.topic || '');
+  return /中考语法|语法/.test(label);
+}
+
+function importValidateBeforePreview() {
+  const groups = importGetTopicGroups();
+  if (!groups.length) return '请先选择素材根目录';
+  let hasAssignedNote = false;
+  for (const topicGroup of groups) {
+    const notes = importGetNotesForGroup(topicGroup);
+    if (!notes.length) continue;
+    const gs = normalizeImportGroupState(importGroupState.get(importGroupKey(topicGroup)));
+    const groupName = topicGroup.contentGroup || topicGroup.topic || '未命名分组';
+    const assignedNotes = notes.filter(note => {
+      const state = importGetNoteState(note.noteKey);
+      return !!state.xhsAccount || (!importIsGrammarGroup(topicGroup) && !!state.dyAccount);
+    });
+    if (!assignedNotes.length) continue;
+    hasAssignedNote = true;
+    const missingTime = assignedNotes.some(note => !importGetNoteState(note.noteKey).publishTime);
+    if (missingTime) {
+      if (!gs.startDate) return `请先为「${groupName}」选择发布日期`;
+      const validWindow = (gs.timeWindows || []).some(window => window?.start && window?.end);
+      if (!validWindow) return `请先为「${groupName}」选择发布时间段`;
+      return `请先为「${groupName}」执行一键自动分配，生成随机发布时间`;
+    }
+  }
+  if (!hasAssignedNote) return '请先选择要发布到哪些账号';
+  return '';
+}
+
 function importGetNoteState(noteKey) {
   return normalizeImportNoteState(importNoteState.get(noteKey));
 }
@@ -4268,6 +4306,12 @@ function renderImportTableRow(note, idx, gc) {
 }
 
 function renderImportAccountSelect(field, noteKey, currentValue, accounts) {
+  const groupInfo = importFindGroupByNoteKey(noteKey);
+  if (field === 'dy' && importIsGrammarGroup(groupInfo?.topicGroup)) {
+    return `<select class="import-table-select" data-note-key="${escapeAttr(noteKey)}" data-field="${field}" disabled>
+      <option value="">语法分组不自动发抖音</option>
+    </select>`;
+  }
   const value = currentValue || '';
   const options = [`<option value="">未分配</option>`]
     .concat((accounts || []).map(account => `<option value="${escapeAttr(account)}" ${value === account ? 'selected' : ''}>${escapeHtml(account)}</option>`));
@@ -4459,7 +4503,7 @@ function importApplyRoundRobin() {
       xhsCursor += 1;
       xhsCount += 1;
     }
-    if (!state.dirty && (gc.dyAccounts || []).length) {
+    if (!state.dirty && (gc.dyAccounts || []).length && !importIsGrammarGroup(topicGroup)) {
       state.dyAccount = gc.dyAccounts[dyCursor % gc.dyAccounts.length] || '';
       state.source = 'batch';
       state.dirty = false;
@@ -4514,9 +4558,14 @@ function importApplyAllBatch() {
       xhsCount++;
     }
     if (hasDy) {
-      state.dyAccount = gc.dyAccounts[dyCursor % gc.dyAccounts.length] || '';
-      dyCursor++;
-      dyCount++;
+      const groupInfo = importFindGroupByNoteKey(note.noteKey);
+      if (!importIsGrammarGroup(groupInfo?.topicGroup)) {
+        state.dyAccount = gc.dyAccounts[dyCursor % gc.dyAccounts.length] || '';
+        dyCursor++;
+        dyCount++;
+      } else {
+        state.dyAccount = '';
+      }
     }
     if (hasWindows && allocated[idx]) {
       state.publishTime = allocated[idx].replace(' ', 'T');
@@ -4542,6 +4591,22 @@ function importApplyColumnBatch(field, action, value = '') {
   if (!topicGroup) return;
   const notes = importGetNotesForGroup(topicGroup);
   const accountField = field === 'xhs' ? 'xhsAccount' : 'dyAccount';
+  if (field === 'dy' && importIsGrammarGroup(topicGroup)) {
+    notes.forEach(note => {
+      const state = importGetNoteState(note.noteKey);
+      if (state.dirty) return;
+      state.dyAccount = '';
+      state.source = 'batch';
+      state.dirty = false;
+      importNoteState.set(note.noteKey, state);
+    });
+    _importOpenBatchField = '';
+    importUpdateButtonState();
+    renderImportScanResult();
+    renderContextPreview();
+    importShowToast('语法分组由你手动发布抖音，这里已跳过抖音分配');
+    return;
+  }
   const gc = getImportGlobalConfig();
   const pool = field === 'xhs' ? (gc.xhsAccounts || []) : (gc.dyAccounts || []);
   let changed = 0;
@@ -4580,8 +4645,17 @@ function importHandleNoteSelectChange(el) {
   const field = el.dataset.field;
   if (!noteKey || !field) return;
   const state = importGetNoteState(noteKey);
+  const groupInfo = importFindGroupByNoteKey(noteKey);
   if (field === 'xhs') state.xhsAccount = el.value;
-  if (field === 'dy') state.dyAccount = el.value;
+  if (field === 'dy') {
+    if (importIsGrammarGroup(groupInfo?.topicGroup)) {
+      state.dyAccount = '';
+      el.value = '';
+      importShowToast('语法分组由你手动发布抖音，这里不自动生成抖音记录');
+    } else {
+      state.dyAccount = el.value;
+    }
+  }
   state.dirty = true;
   state.source = 'manual';
   importNoteState.set(noteKey, state);
@@ -4679,12 +4753,14 @@ function renderImportPreview() {
       <div style="font-size:12px;color:var(--muted);line-height:1.7">
         <div style="font-weight:600;color:var(--ink);margin-bottom:6px">支持两种目录结构</div>
         <pre style="background:var(--accent-soft);padding:10px;border-radius:8px;font-size:11px;margin:0 0 8px;line-height:1.6;white-space:pre-wrap">单主题（根目录就是主题）
-美食日记/         ← 主题
+教务资料/         ← 内容分组
   1/  2/  3/...   ← 笔记</pre>
-        <pre style="background:var(--accent-soft);padding:10px;border-radius:8px;font-size:11px;margin:0;line-height:1.6;white-space:pre-wrap">多主题（一个根目录多个主题）
+        <pre style="background:var(--accent-soft);padding:10px;border-radius:8px;font-size:11px;margin:0;line-height:1.6;white-space:pre-wrap">分组 + PPT主题
 根目录/
-  美食/   1/  2/  ...
-  穿搭/   1/  2/  ...</pre>
+  教务资料/
+    家长会PPT/  封面.jpg  1/  2/  ...
+  中考语法/
+    宾语从句/   cover.jpg  1/  2/  ...</pre>
       </div>
     </div>`;
   }
@@ -4862,8 +4938,12 @@ function importCollectRecords() {
     validNotes.forEach(note => {
       const state = normalizeImportNoteState(importNoteState.get(note.noteKey));
       const base = {
-        topic: gs.topic || '',
+        topic: gs.topic || topicGroup.topic || '',
         topicOverride: gs.topicOverride || '',
+        contentGroup: note.contentGroup || topicGroup.contentGroup || topicGroup.topic || '',
+        accountGroup: note.accountGroup || topicGroup.accountGroup || topicGroup.contentGroup || topicGroup.topic || '',
+        pptTopic: note.pptTopic || '',
+        noteTitle: note.noteTitle || note.folderName || '',
         noteKey: note.noteKey,
         folderPath: note.folderPath,
         images: note.images,
@@ -4875,7 +4955,7 @@ function importCollectRecords() {
       if (state.xhsAccount) {
         records.push({ ...base, xiaohongshuAccount: state.xhsAccount, douyinAccount: '' });
       }
-      if (state.dyAccount) {
+      if (state.dyAccount && !importIsGrammarGroup(topicGroup)) {
         records.push({ ...base, xiaohongshuAccount: '', douyinAccount: state.dyAccount });
       }
     });
@@ -4891,6 +4971,13 @@ function importBuildRecordList() {
 async function importStartPreview() {
   const btn = document.getElementById('btnImportPreview');
   if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+
+  const validationMessage = importValidateBeforePreview();
+  if (validationMessage) {
+    alert(validationMessage);
+    if (btn) { btn.disabled = false; btn.textContent = '主题撰写并预览'; }
+    return;
+  }
 
   const records = importCollectRecords();
   if (!records.length) {

@@ -564,6 +564,102 @@ const server = http.createServer(async (req, res) => {
           return entries.some(entry => entry.isFile() && allowedImageExtensions.has(path.extname(entry.name).toLowerCase()));
         }
 
+        function hasMediaWithinNoteDepth(dirPath) {
+          const collected = collectImagesFromDir(dirPath, 1);
+          return collected.images.length > 0 || collected.videos.length > 0;
+        }
+
+        function getValidNoteSubfolders(dirPath) {
+          return fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.') && entry.isDirectory())
+            .filter(entry => hasMediaWithinNoteDepth(path.join(dirPath, entry.name)))
+            .sort((a, b) => compareEntryNames(a.name, b.name));
+        }
+
+        function isCoverName(fileName) {
+          const parsed = path.parse(fileName);
+          const base = parsed.name.toLowerCase();
+          return base === '0' || base === 'cover' || base === '封面';
+        }
+
+        function coverNamePriority(fileName) {
+          const base = path.parse(fileName).name.toLowerCase();
+          if (base === '0') return 0;
+          if (base === 'cover') return 1;
+          if (base === '封面') return 2;
+          return 99;
+        }
+
+        function collectDirectCoverCandidates(dirPath) {
+          return fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.') && entry.isFile())
+            .filter(entry => imageExtensions.has(path.extname(entry.name).toLowerCase()) && isCoverName(entry.name))
+            .sort((a, b) => coverNamePriority(a.name) - coverNamePriority(b.name) || compareEntryNames(a.name, b.name))
+            .map(entry => {
+              const p = path.join(dirPath, entry.name);
+              return { name: entry.name, path: p, size: fs.statSync(p).size };
+            });
+        }
+
+        function noteHasOwnCover(images) {
+          return Array.isArray(images) && images.some(image => image && isCoverName(image.name));
+        }
+
+        function hasDirectNonCoverMedia(dirPath) {
+          const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.') && entry.isFile());
+          return entries.some(entry => {
+            const ext = path.extname(entry.name).toLowerCase();
+            if (videoExtensions.has(ext)) return true;
+            return imageExtensions.has(ext) && !isCoverName(entry.name);
+          });
+        }
+
+        function isNumericEntryName(entryName) {
+          const base = path.parse(entryName).name;
+          return /^\d+([.(]\d+\)?)?$/.test(base);
+        }
+
+        function looksLikePptNoteFolderSet(entries) {
+          if (!Array.isArray(entries) || entries.length === 0) return false;
+          return entries.every(entry => isNumericEntryName(entry.name));
+        }
+
+        function buildNote({
+          contentGroup,
+          topicName,
+          noteEntry,
+          noteFolderPath,
+          pptTopic = '',
+          sharedCover = null,
+          sharedCoverWarnings = [],
+        }) {
+          const { images: rawImages, videos, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
+          const images = (sharedCover && !noteHasOwnCover(rawImages))
+            ? [sharedCover, ...rawImages]
+            : rawImages;
+          const noteTitle = noteEntry.name;
+          const noteKey = pptTopic
+            ? `${contentGroup}/${pptTopic}/${noteTitle}`
+            : `${topicName}/${noteTitle}`;
+          return {
+            noteKey,
+            folderName: noteTitle,
+            folderPath: noteFolderPath,
+            images,
+            imageCount: images.length,
+            videos,
+            videoCount: videos.length,
+            firstImagePath: images[0]?.path || '',
+            hasVideo,
+            warnings: [...sharedCoverWarnings],
+            contentGroup,
+            accountGroup: contentGroup,
+            pptTopic,
+            noteTitle,
+          };
+        }
+
         function detectScanMode(rootPath, firstLevelDirs, allowedImageExtensions) {
           if (firstLevelDirs.length === 0) return 'multi';
           const leafDirCount = firstLevelDirs.reduce((count, entry) => {
@@ -596,11 +692,17 @@ const server = http.createServer(async (req, res) => {
               firstImagePath: images[0]?.path || '',
               hasVideo,
               warnings: [],
+              contentGroup: topicName,
+              accountGroup: topicName,
+              pptTopic: '',
+              noteTitle: noteEntry.name,
             };
           });
 
           result = [{
             topic: topicName,
+            contentGroup: topicName,
+            accountGroup: topicName,
             path: folderPath,
             notes,
             scanMode,
@@ -623,24 +725,43 @@ const server = http.createServer(async (req, res) => {
             let notes;
 
             if (noteFolders.length > 0) {
-              // 有子文件夹 → 每个子文件夹是一篇笔记
-              // 笔记内图片可能直接在里面，也可能在再下一层子文件夹（extraDepth=1 兼容两种情况）
-              notes = noteFolders.map(noteEntry => {
-                const noteFolderPath = path.join(topicPath, noteEntry.name);
-                const { images, videos, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
-                return {
-                  noteKey: `${topicEntry.name}/${noteEntry.name}`,
-                  folderName: noteEntry.name,
-                  folderPath: noteFolderPath,
-                  images,
-                  imageCount: images.length,
-                  videos,
-                  videoCount: videos.length,
-                  firstImagePath: images[0]?.path || '',
-                  hasVideo,
-                  warnings: [],
-                };
-              });
+              // 有子文件夹 → 兼容两种结构：
+              // 1) 内容分组/笔记N/
+              // 2) 内容分组/PPT主题/笔记N/，其中 PPT 主题目录可提供共享封面。
+              notes = [];
+              for (const entry of noteFolders) {
+                const entryPath = path.join(topicPath, entry.name);
+                const childNoteFolders = getValidNoteSubfolders(entryPath);
+                const sharedCoverCandidates = collectDirectCoverCandidates(entryPath);
+                const looksLikePptTopic = childNoteFolders.length > 0
+                  && sharedCoverCandidates.length > 0
+                  && looksLikePptNoteFolderSet(childNoteFolders)
+                  && !hasDirectNonCoverMedia(entryPath);
+                if (looksLikePptTopic) {
+                  const sharedCover = sharedCoverCandidates[0] || null;
+                  const sharedCoverWarnings = sharedCoverCandidates.length > 1
+                    ? [`共享封面候选超过 1 个：${sharedCoverCandidates.map(item => item.name).join('、')}，已先使用 ${sharedCover.name}`]
+                    : [];
+                  for (const childNoteEntry of childNoteFolders) {
+                    notes.push(buildNote({
+                      contentGroup: topicEntry.name,
+                      topicName: topicEntry.name,
+                      noteEntry: childNoteEntry,
+                      noteFolderPath: path.join(entryPath, childNoteEntry.name),
+                      pptTopic: entry.name,
+                      sharedCover,
+                      sharedCoverWarnings,
+                    }));
+                  }
+                } else {
+                  notes.push(buildNote({
+                    contentGroup: topicEntry.name,
+                    topicName: topicEntry.name,
+                    noteEntry: entry,
+                    noteFolderPath: entryPath,
+                  }));
+                }
+              }
             } else {
               // 没有子文件夹 → 主题文件夹本身当作一篇笔记，图片和视频直接在里面
               const directVideos = topicChildren
@@ -661,10 +782,14 @@ const server = http.createServer(async (req, res) => {
                 firstImagePath: directImages[0]?.path || '',
                 hasVideo,
                 warnings: [],
+                contentGroup: topicEntry.name,
+                accountGroup: topicEntry.name,
+                pptTopic: '',
+                noteTitle: topicEntry.name,
               }] : [];
             }
 
-            return { topic: topicEntry.name, notes, scanMode };
+            return { topic: topicEntry.name, contentGroup: topicEntry.name, accountGroup: topicEntry.name, notes, scanMode };
           });
         }
 
@@ -810,6 +935,10 @@ const server = http.createServer(async (req, res) => {
         const {
           topic = '',
           topicOverride = '',
+          contentGroup = '',
+          accountGroup = '',
+          pptTopic = '',
+          noteTitle = '',
           noteKey = '',
           folderPath: recordFolderPath = '',
           images = [],
@@ -826,6 +955,7 @@ const server = http.createServer(async (req, res) => {
         } = record;
         const normalizedXiaohongshuAccount = String(xiaohongshuAccount || '').trim();
         const normalizedDouyinAccount = String(douyinAccount || '').trim();
+        const fingerprintTopicKey = [topic, pptTopic].filter(Boolean).join('/');
 
         // 是否覆盖模式（前端明确传 overwrite:true + overwriteId）
         const isOverwrite = !!(overwrite && overwriteId);
@@ -860,12 +990,12 @@ const server = http.createServer(async (req, res) => {
         let douyinFingerprint = '';
         if (normalizedXiaohongshuAccount) {
           xhsFingerprint = crypto.createHash('sha256')
-            .update([topic, noteFolder, 'xiaohongshu', normalizedXiaohongshuAccount, imgNamesSorted, imgSizesSorted].join('|'))
+            .update([fingerprintTopicKey, noteFolder, 'xiaohongshu', normalizedXiaohongshuAccount, imgNamesSorted, imgSizesSorted].join('|'))
             .digest('hex');
         }
         if (normalizedDouyinAccount) {
           douyinFingerprint = crypto.createHash('sha256')
-            .update([topic, noteFolder, 'douyin', normalizedDouyinAccount, imgNamesSorted, imgSizesSorted].join('|'))
+            .update([fingerprintTopicKey, noteFolder, 'douyin', normalizedDouyinAccount, imgNamesSorted, imgSizesSorted].join('|'))
             .digest('hex');
         }
         // 通过上方校验后只会存在一个平台指纹；保留变量名便于沿用后续查重逻辑。
@@ -946,6 +1076,10 @@ const server = http.createServer(async (req, res) => {
               } else {
                 const aiRecord = {
                   topic: topicForAi,
+                  contentGroup: contentGroup || accountGroup || topic,
+                  accountGroup: accountGroup || contentGroup || topic,
+                  pptTopic,
+                  noteTitle: noteTitle || noteFolder,
                   attachments: images.map(i => ({ name: i.name })),
                   xiaohongshuAccount: normalizedXiaohongshuAccount,
                   douyinAccount: normalizedDouyinAccount,
