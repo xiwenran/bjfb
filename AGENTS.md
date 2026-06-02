@@ -434,8 +434,8 @@ npm run git:sync -- "提交信息"  # add + commit + push
 - 注意：主动建议圆桌不等于擅自执行圆桌。用户确认后才执行完整 roundtable。
 
 **③ 有实质改动？→ Obsidian 捕获**
-- 触发条件：新功能完成 / 重构 / bug 根因找到 / 推送 GitHub
-- 操作：展示 changelog 草稿，等用户确认后写入 `~/Obsidian/PersonalWiki/项目/知发/changelog/`
+- 触发条件：新功能完成 / 重构 / bug 根因找到 / 推送 GitHub / 有价值讨论
+- 操作：先盘点本轮项目事实、经验、决策、方案和思维框架，再按 Obsidian A-I 路由判断写入位置。项目 changelog 只记录项目事实；跨项目经验和思维框架另行进入 `认知/经验性/` 或 `认知/哲科性/`。
 
 **④ git push 前 → 脱敏扫描**
 - 检查：`/Users/用户名/`绝对路径、token、邮箱、AppID、飞书 App Secret
