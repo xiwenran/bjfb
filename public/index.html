@@ -4053,7 +4053,7 @@ function importGetNotesForGroup(topicGroup) {
 
 function importIsGrammarGroup(topicGroup) {
   const label = String(topicGroup?.contentGroup || topicGroup?.accountGroup || topicGroup?.topic || '');
-  return /中考语法|语法/.test(label);
+  return /英语类|英语|中考语法|语法/.test(label);
 }
 
 function importValidateBeforePreview() {
@@ -4309,7 +4309,7 @@ function renderImportAccountSelect(field, noteKey, currentValue, accounts) {
   const groupInfo = importFindGroupByNoteKey(noteKey);
   if (field === 'dy' && importIsGrammarGroup(groupInfo?.topicGroup)) {
     return `<select class="import-table-select" data-note-key="${escapeAttr(noteKey)}" data-field="${field}" disabled>
-      <option value="">语法分组不自动发抖音</option>
+      <option value="">英语/语法分组不自动发抖音</option>
     </select>`;
   }
   const value = currentValue || '';
@@ -4604,7 +4604,7 @@ function importApplyColumnBatch(field, action, value = '') {
     importUpdateButtonState();
     renderImportScanResult();
     renderContextPreview();
-    importShowToast('语法分组由你手动发布抖音，这里已跳过抖音分配');
+    importShowToast('英语/语法分组由你手动发布抖音，这里已跳过抖音分配');
     return;
   }
   const gc = getImportGlobalConfig();
@@ -4651,7 +4651,7 @@ function importHandleNoteSelectChange(el) {
     if (importIsGrammarGroup(groupInfo?.topicGroup)) {
       state.dyAccount = '';
       el.value = '';
-      importShowToast('语法分组由你手动发布抖音，这里不自动生成抖音记录');
+      importShowToast('英语/语法分组由你手动发布抖音，这里不自动生成抖音记录');
     } else {
       state.dyAccount = el.value;
     }

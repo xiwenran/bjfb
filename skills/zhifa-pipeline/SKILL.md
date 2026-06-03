@@ -40,7 +40,7 @@ cat ~/Library/Application\ Support/Zhifa/accounts.json
       "xiaohongshu": ["账号A", "账号B"],
       "douyin": ["账号C"]
     },
-    "中考语法": {
+    "英语类": {
       "xiaohongshu": ["账号A"],
       "douyin": [],
       "douyinMode": "manual"
@@ -49,6 +49,12 @@ cat ~/Library/Application\ Support/Zhifa/accounts.json
       "xiaohongshu": ["账号B"],
       "douyin": ["账号C"]
     }
+  },
+  "accountGroupAliases": {
+    "教务类": "教务资料",
+    "英语": "英语类",
+    "中考语法": "英语类",
+    "综合组": "综合类"
   }
 }
 ```
@@ -58,9 +64,11 @@ cat ~/Library/Application\ Support/Zhifa/accounts.json
 **账号分组优先级**：
 1. 用户本次 CHECKLIST 明确写出的账号 / 分组账号规则，优先级最高
 2. `accounts.json.accountGroups[内容分组]` 命中时，作为默认推荐
-3. 未命中分组配置时，只能把旧版平台平铺账号清单展示为候选，不得自动全选
-4. 内容分组名包含 `中考语法` 或 `语法` 时，默认 `douyinMode=manual`，不自动生成抖音记录；除非用户明确说“这组也自动发抖音”
-5. 缺账号、起止日期或时间段时，必须以选项形式追问用户，不能继续调度矩阵生成
+3. 未精确命中时，先查 `accounts.json.accountGroupAliases[内容分组]`；例如 `教务类` → `教务资料`、`中考语法` → `英语类`
+4. 别名仍未命中时，允许做规范化模糊匹配：去掉 `类/组/资料/素材` 等泛化后缀后再比较；只能在唯一命中时自动映射，多候选必须回问
+5. 未命中分组配置时，只能把旧版平台平铺账号清单展示为候选，不得自动全选
+6. 内容分组名包含 `英语`、`语法` 或 `中考语法` 时，默认归入 `英语类`；英语类抖音默认 `manual`，不自动生成抖音记录，除非用户明确说“这组也自动发抖音”
+7. 缺账号、起止日期或时间段时，必须以选项形式追问用户，不能继续调度矩阵生成
 
 **CHECKLIST 未填写 = 不启动流程**。
 
@@ -302,7 +310,7 @@ curl -sf -X POST http://localhost:3210/api/import/schedule \
 ```
 
 - `noteFolders`：必填，从 Step 3 scan 结果构造（每个 topic 一项，templates 是该主题下的模板文件夹名数组）
-- `accounts`：由用户确认后的分组账号规则展开而来。小红书分 `xiaohongshu_regular`（用 regular 时段）和 `xiaohongshu_special`（用 special 时段），抖音用 `douyin`；语法分组默认不展开抖音账号
+- `accounts`：由用户确认后的分组账号规则展开而来。小红书分 `xiaohongshu_regular`（用 regular 时段）和 `xiaohongshu_special`（用 special 时段），抖音用 `douyin`；英语/语法分组默认不展开抖音账号
 - `timeSlots`：对象，`regular` 和 `special` 两组时段
 - `perAccountPerSlot`：每账号每时段几篇（默认 1）
 
