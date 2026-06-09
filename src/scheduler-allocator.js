@@ -18,6 +18,26 @@ function normalizeStringArray(value, fieldName) {
   return value.map(item => String(item || '').trim()).filter(Boolean);
 }
 
+function normalizeCoverageStrategy(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'minimum';
+
+  const aliasMap = new Map([
+    ['strict', 'strict'],
+    ['严格覆盖', 'strict'],
+    ['balanced', 'balanced'],
+    ['尽量覆盖', 'balanced'],
+    ['minimum', 'minimum'],
+    ['只保底发布', 'minimum'],
+  ]);
+
+  const normalized = aliasMap.get(raw);
+  if (!normalized) {
+    throw createInputError('coverageStrategy 仅支持 strict/严格覆盖、balanced/尽量覆盖、minimum/只保底发布');
+  }
+  return normalized;
+}
+
 function normalizeNotes(noteFolders) {
   if (!Array.isArray(noteFolders) || noteFolders.length === 0) {
     throw createInputError('noteFolders 必须是非空数组');
@@ -106,11 +126,11 @@ function buildTopicPlan(topics, totalCount, accountIndex) {
   return plan;
 }
 
-function chooseNote(topic, templatesByTopic, usedNoteKeys, usedAccountTemplates) {
+function chooseNote(topic, templatesByTopic, usedPlatformNoteKeys, usedAccountTemplates) {
   const templates = shuffle(templatesByTopic.get(topic) || []);
   for (const template of templates) {
     const noteKey = `${topic}/${template}`;
-    if (usedNoteKeys.has(noteKey) || usedAccountTemplates.has(template)) continue;
+    if (usedPlatformNoteKeys.has(noteKey) || usedAccountTemplates.has(template)) continue;
     return { topic, template, noteKey };
   }
   return null;
@@ -122,9 +142,11 @@ function allocateImportSchedule(input) {
   const perAccountPerSlot = Number.isInteger(input?.perAccountPerSlot) && input.perAccountPerSlot > 0
     ? input.perAccountPerSlot
     : 1;
+  const coverageStrategy = normalizeCoverageStrategy(input?.coverageStrategy);
 
   const schedule = [];
-  const usedNoteKeys = new Set();
+  const usedNoteKeysByPlatform = new Map();
+  const usedAnyNoteKeys = new Set();
   const accountTopics = new Map();
   const accountTemplates = new Map();
   const accountSlotCounts = new Map();
@@ -132,6 +154,10 @@ function allocateImportSchedule(input) {
   accounts.forEach((accountInfo, accountIndex) => {
     const accountKey = `${accountInfo.platform}:${accountInfo.account}`;
     const usedAccountTemplates = new Set();
+    if (!usedNoteKeysByPlatform.has(accountInfo.platform)) {
+      usedNoteKeysByPlatform.set(accountInfo.platform, new Set());
+    }
+    const usedPlatformNoteKeys = usedNoteKeysByPlatform.get(accountInfo.platform);
     const totalForAccount = accountInfo.slots.length * perAccountPerSlot;
     const topicPlan = buildTopicPlan(topics, totalForAccount, accountIndex);
 
@@ -143,12 +169,13 @@ function allocateImportSchedule(input) {
           ...shuffle(topics.filter(topic => topic !== topicPlan[planIndex])),
         ];
         const note = preferredTopics
-          .map(topic => chooseNote(topic, templatesByTopic, usedNoteKeys, usedAccountTemplates))
+          .map(topic => chooseNote(topic, templatesByTopic, usedPlatformNoteKeys, usedAccountTemplates))
           .find(Boolean);
 
         if (!note) continue;
 
-        usedNoteKeys.add(note.noteKey);
+        usedPlatformNoteKeys.add(note.noteKey);
+        usedAnyNoteKeys.add(note.noteKey);
         usedAccountTemplates.add(note.template);
         if (!accountTopics.has(accountKey)) accountTopics.set(accountKey, new Set());
         if (!accountTemplates.has(accountKey)) accountTemplates.set(accountKey, []);
@@ -169,10 +196,11 @@ function allocateImportSchedule(input) {
   });
 
   const unscheduled = notes
-    .filter(note => !usedNoteKeys.has(note.noteKey))
+    .filter(note => !usedAnyNoteKeys.has(note.noteKey))
     .map(note => note.noteKey);
 
   const violations = [];
+  const warnings = [];
   for (const accountInfo of accounts) {
     const accountKey = `${accountInfo.platform}:${accountInfo.account}`;
     const coveredTopics = accountTopics.get(accountKey) || new Set();
@@ -180,7 +208,12 @@ function allocateImportSchedule(input) {
     const duplicateTemplates = templates.filter((template, index) => templates.indexOf(template) !== index);
 
     if (coveredTopics.size < topics.length) {
-      violations.push(`${accountInfo.account}：只覆盖 ${coveredTopics.size}/${topics.length} 个主题`);
+      const message = `${accountInfo.account}：只覆盖 ${coveredTopics.size}/${topics.length} 个主题`;
+      if (coverageStrategy === 'strict') {
+        violations.push(message);
+      } else if (coverageStrategy === 'balanced') {
+        warnings.push(message);
+      }
     }
     if (duplicateTemplates.length > 0) {
       violations.push(`${accountInfo.account}：模板重复 ${Array.from(new Set(duplicateTemplates)).join(',')}`);
@@ -201,7 +234,9 @@ function allocateImportSchedule(input) {
     stats: {
       scheduledCount: schedule.length,
       unscheduledCount: unscheduled.length,
+      coverageStrategy,
       violations,
+      warnings,
     },
   };
 }

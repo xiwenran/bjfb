@@ -578,15 +578,29 @@ const server = http.createServer(async (req, res) => {
 
         function isCoverName(fileName) {
           const parsed = path.parse(fileName);
-          const base = parsed.name.toLowerCase();
-          return base === '0' || base === 'cover' || base === '封面';
+          const base = parsed.name
+            .toLowerCase()
+            .replace(/（/g, '(')
+            .replace(/）/g, ')')
+            .trim();
+          return (
+            base === '0'
+            || base === 'cover'
+            || base === '封面'
+            || /^0(?:\(\d+\)|\.\d+)$/.test(base)
+          );
         }
 
         function coverNamePriority(fileName) {
-          const base = path.parse(fileName).name.toLowerCase();
+          const base = path.parse(fileName).name
+            .toLowerCase()
+            .replace(/（/g, '(')
+            .replace(/）/g, ')')
+            .trim();
           if (base === '0') return 0;
           if (base === 'cover') return 1;
           if (base === '封面') return 2;
+          if (/^0(?:\(\d+\)|\.\d+)$/.test(base)) return 3;
           return 99;
         }
 
@@ -603,6 +617,18 @@ const server = http.createServer(async (req, res) => {
 
         function noteHasOwnCover(images) {
           return Array.isArray(images) && images.some(image => image && isCoverName(image.name));
+        }
+
+        function prioritizeNoteImages(images) {
+          if (!Array.isArray(images) || images.length <= 1) return images;
+          return images.slice().sort((a, b) => {
+            const aCover = a && isCoverName(a.name);
+            const bCover = b && isCoverName(b.name);
+            if (aCover && bCover) return coverNamePriority(a.name) - coverNamePriority(b.name);
+            if (aCover) return -1;
+            if (bCover) return 1;
+            return 0;
+          });
         }
 
         function hasDirectNonCoverMedia(dirPath) {
@@ -625,6 +651,27 @@ const server = http.createServer(async (req, res) => {
           return entries.every(entry => isNumericEntryName(entry.name));
         }
 
+        function hasDirectMedia(dirPath) {
+          const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+            .filter(entry => !entry.name.startsWith('.') && entry.isFile());
+          return entries.some(entry => {
+            const ext = path.extname(entry.name).toLowerCase();
+            return imageExtensions.has(ext) || videoExtensions.has(ext);
+          });
+        }
+
+        function describeRelativePath(targetPath) {
+          return path.relative(folderPath, targetPath).split(path.sep).join('/');
+        }
+
+        function createImportScanError(message, statusCode, code, details = {}) {
+          const error = new Error(message);
+          error.statusCode = statusCode;
+          error.code = code;
+          error.details = details;
+          return error;
+        }
+
         function buildNote({
           contentGroup,
           topicName,
@@ -635,9 +682,10 @@ const server = http.createServer(async (req, res) => {
           sharedCoverWarnings = [],
         }) {
           const { images: rawImages, videos, hasVideo } = collectImagesFromDir(noteFolderPath, 1);
-          const images = (sharedCover && !noteHasOwnCover(rawImages))
-            ? [sharedCover, ...rawImages]
-            : rawImages;
+          const ownImages = prioritizeNoteImages(rawImages);
+          const images = (sharedCover && !noteHasOwnCover(ownImages))
+            ? [sharedCover, ...ownImages]
+            : ownImages;
           const noteTitle = noteEntry.name;
           const noteKey = pptTopic
             ? `${contentGroup}/${pptTopic}/${noteTitle}`
@@ -733,10 +781,29 @@ const server = http.createServer(async (req, res) => {
                 const entryPath = path.join(topicPath, entry.name);
                 const childNoteFolders = getValidNoteSubfolders(entryPath);
                 const sharedCoverCandidates = collectDirectCoverCandidates(entryPath);
-                const looksLikePptTopic = childNoteFolders.length > 0
-                  && sharedCoverCandidates.length > 0
-                  && looksLikePptNoteFolderSet(childNoteFolders)
-                  && !hasDirectNonCoverMedia(entryPath);
+                const hasChildNotes = childNoteFolders.length > 0;
+                const hasRootDirectMedia = hasDirectMedia(entryPath);
+                const hasRootDirectContent = hasDirectNonCoverMedia(entryPath);
+                if (hasChildNotes && hasRootDirectContent) {
+                  const relativePath = describeRelativePath(entryPath);
+                  throw createImportScanError(
+                    `检测到混合结构：${relativePath}。该目录根部有图片或视频，同时下级子文件夹也有素材。请确认：根部素材是否也算一篇笔记，还是只发布下级子文件夹？`,
+                    400,
+                    'mixed_import_structure',
+                    {
+                      path: entryPath,
+                      relativePath,
+                    }
+                  );
+                }
+
+                const looksLikePptTopic = hasChildNotes
+                  && (
+                    sharedCoverCandidates.length > 0
+                    || hasRootDirectMedia
+                    || (!isNumericEntryName(entry.name) && looksLikePptNoteFolderSet(childNoteFolders))
+                    || childNoteFolders.length >= 2
+                  );
                 if (looksLikePptTopic) {
                   const sharedCover = sharedCoverCandidates[0] || null;
                   const sharedCoverWarnings = sharedCoverCandidates.length > 1
@@ -795,7 +862,11 @@ const server = http.createServer(async (req, res) => {
 
         return sendJson(res, result);
       } catch (e) {
-        return sendJson(res, { error: e.message }, 500);
+        return sendJson(res, {
+          error: e.message,
+          code: e.code || undefined,
+          ...(e.details || {}),
+        }, e.statusCode || 500);
       }
     }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
     return;
@@ -823,6 +894,45 @@ const server = http.createServer(async (req, res) => {
       }
     }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
     return;
+  }
+
+  if (pathname === '/api/import/postprocess' && req.method === 'POST') {
+    try {
+      ensureFeishuConfigReady();
+      const body = JSON.parse(await readBody(req) || '{}');
+      const updates = Array.isArray(body?.updates) ? body.updates : [];
+      const results = [];
+
+      for (const item of updates) {
+        const recordId = String(item?.recordId || '').trim();
+        if (!recordId) continue;
+        const xhsAccount = String(item?.xiaohongshuAccount || '').trim();
+        const dyAccount = String(item?.douyinAccount || '').trim();
+        const fields = { '笔记主题': '' };
+
+        fields['小红书发布状态'] = xhsAccount ? '待处理' : '';
+        fields['抖音发布状态'] = dyAccount ? '待处理' : '';
+
+        await feishu.updateRecord(recordId, fields);
+        const fresh = await feishu.getRecordById(recordId);
+        results.push({
+          recordId,
+          noteKey: String(item?.noteKey || ''),
+          xiaohongshuAccount: xhsAccount,
+          douyinAccount: dyAccount,
+          xiaohongshuStatus: fresh?.fields?.['小红书发布状态'] || '',
+          douyinStatus: fresh?.fields?.['抖音发布状态'] || '',
+          topic: fresh?.fields?.['笔记主题'] || '',
+        });
+      }
+
+      return sendJson(res, {
+        updated: results.length,
+        results,
+      });
+    } catch (e) {
+      return sendJson(res, { error: e.message }, e.statusCode || (e instanceof SyntaxError ? 400 : 500));
+    }
   }
 
   // 本地图片文件中转（Electron 页面 file:// 受限，改由 HTTP 接口提供）

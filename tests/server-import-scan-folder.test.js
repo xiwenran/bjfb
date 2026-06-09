@@ -115,6 +115,81 @@ test('scan-folder supports ppt topic note folders and shared covers', { concurre
   assert.equal(secondNote.firstImagePath, secondNote.images[0].path);
 });
 
+test('scan-folder treats 0(1) style root covers as shared covers for ppt topic notes', { concurrency: false }, async (t) => {
+  const root = path.join(tempRoot, 'ppt-topic-macos-cover-variants');
+  writeImage(path.join(root, '教务资料', '小升初总复习专项_语文剧本杀', '0(1).jpg'));
+  writeImage(path.join(root, '教务资料', '小升初总复习专项_语文剧本杀', '0(2).jpg'));
+  writeImage(path.join(root, '教务资料', '小升初总复习专项_语文剧本杀', '1', '1.jpg'));
+  writeImage(path.join(root, '教务资料', '小升初总复习专项_语文剧本杀', '11', '1.jpg'));
+
+  const response = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/scan-folder',
+    body: { folderPath: root },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.length, 1);
+  const group = response.body[0];
+  assert.equal(group.topic, '教务资料');
+  assert.equal(group.notes.length, 2);
+
+  const firstNote = group.notes.find(note => note.folderName === '1');
+  const secondNote = group.notes.find(note => note.folderName === '11');
+  assert.ok(firstNote);
+  assert.ok(secondNote);
+  assert.equal(firstNote.pptTopic, '小升初总复习专项_语文剧本杀');
+  assert.equal(secondNote.pptTopic, '小升初总复习专项_语文剧本杀');
+  assert.equal(firstNote.images[0].name, '0(1).jpg');
+  assert.equal(secondNote.images[0].name, '0(1).jpg');
+  assert.match(firstNote.noteKey, /教务资料\/小升初总复习专项_语文剧本杀\/1/);
+});
+
+test('scan-folder expands ppt topic folders without shared root cover', { concurrency: false }, async (t) => {
+  const root = path.join(tempRoot, 'ppt-topic-with-note-owned-covers');
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '7', '0.jpg'));
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '7', '1.jpg'));
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '8', '封面.jpg'));
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '8', '1.jpg'));
+
+  const response = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/scan-folder',
+    body: { folderPath: root },
+  });
+
+  assert.equal(response.statusCode, 200);
+  const group = response.body[0];
+  assert.equal(group.topic, '综合类');
+  assert.deepEqual(
+    group.notes.map(note => note.noteKey),
+    ['综合类/中考数学考前指导/7', '综合类/中考数学考前指导/8']
+  );
+  assert.deepEqual(
+    group.notes.map(note => note.pptTopic),
+    ['中考数学考前指导', '中考数学考前指导']
+  );
+  assert.equal(group.notes[0].images[0].name, '0.jpg');
+  assert.equal(group.notes[1].images[0].name, '封面.jpg');
+});
+
+test('scan-folder blocks mixed ppt topic root media and child note folders', { concurrency: false }, async (t) => {
+  const root = path.join(tempRoot, 'ppt-topic-mixed-root-and-child-media');
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '1.jpg'));
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '7', '1.jpg'));
+  writeImage(path.join(root, '综合类', '中考数学考前指导', '8', '1.jpg'));
+
+  const response = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/scan-folder',
+    body: { folderPath: root },
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body.code, 'mixed_import_structure');
+  assert.match(response.body.error, /综合类\/中考数学考前指导/);
+});
+
 test('scan-folder keeps nested image folders under ppt topic notes', { concurrency: false }, async (t) => {
   const root = path.join(tempRoot, 'ppt-topic-nested-images');
   writeImage(path.join(root, '教务资料', '期末家长会', 'cover.jpg'));

@@ -4927,6 +4927,92 @@ function importMakeRecordKey(record) {
   ].join('||');
 }
 
+function importParsePublishTime(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function importFormatDateLabel(date) {
+  if (!date) return '未设置日期';
+  return `${date.getMonth() + 1}.${date.getDate()}`;
+}
+
+function importFormatTimeLabel(date) {
+  if (!date) return '--:--';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function importTimeToMinutes(value) {
+  const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function importFindTimeWindowLabel(item) {
+  const parsed = importParsePublishTime(item.publishTime);
+  if (!parsed) return '未设置时间段';
+  const minutes = parsed.getHours() * 60 + parsed.getMinutes();
+  const group = importFindGroupByNoteKey(item.noteKey);
+  const groupState = normalizeImportGroupState(importGroupState.get(importGroupKey(group || {})));
+  const windows = groupState.timeWindows || [];
+  const matched = windows.find(window => {
+    const start = importTimeToMinutes(window.start);
+    const end = importTimeToMinutes(window.end);
+    if (start === null || end === null) return false;
+    return minutes >= start && minutes <= end;
+  });
+  const windowLabel = matched ? `${matched.start}-${matched.end}` : '未匹配时间段';
+  return `${importFormatDateLabel(parsed)} ${windowLabel}`;
+}
+
+function importPlatformAccountLabel(item) {
+  if (item.xiaohongshuAccount) return `小红书 · ${item.xiaohongshuAccount}`;
+  if (item.douyinAccount) return `抖音 · ${item.douyinAccount}`;
+  return '未指定账号';
+}
+
+function importPreviewPathLabel(item) {
+  const parts = [
+    item.contentGroup || item.accountGroup || '',
+    item.pptTopic || '',
+    item.noteTitle || item.folderName || (String(item.noteKey || '').split('/').pop() || ''),
+  ].filter(Boolean);
+  return parts.join(' / ') || item.noteKey || '未命名笔记';
+}
+
+function importBuildGroupedPreviewItems(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const timeLabel = importFindTimeWindowLabel(item);
+    const accountLabel = importPlatformAccountLabel(item);
+    const parsed = importParsePublishTime(item.publishTime);
+    const timeSort = parsed ? parsed.getTime() : Number.MAX_SAFE_INTEGER;
+    if (!groups.has(timeLabel)) groups.set(timeLabel, { label: timeLabel, sort: timeSort, accounts: new Map() });
+    const timeGroup = groups.get(timeLabel);
+    timeGroup.sort = Math.min(timeGroup.sort, timeSort);
+    if (!timeGroup.accounts.has(accountLabel)) timeGroup.accounts.set(accountLabel, []);
+    timeGroup.accounts.get(accountLabel).push(item);
+  }
+  return Array.from(groups.values())
+    .sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label, 'zh-CN'))
+    .map(group => ({
+      ...group,
+      accounts: Array.from(group.accounts.entries())
+        .map(([label, accountItems]) => ({
+          label,
+          items: accountItems.sort((a, b) => {
+            const at = importParsePublishTime(a.publishTime)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            const bt = importParsePublishTime(b.publishTime)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            return at - bt || String(a.noteKey || '').localeCompare(String(b.noteKey || ''), 'zh-CN', { numeric: true });
+          }),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
+    }));
+}
+
 // 组装要发给 create-records 的 records 列表（从 importScanData + importGroupState + importNoteState）
 // 账号分配策略：轮流分配（round-robin），每篇笔记只发一个账号
 // 选 3 个小红书账号 + 9 篇笔记 → 每个账号分配 3 篇，每篇只发一次
@@ -5028,14 +5114,13 @@ function renderImportPreviewCards() {
     return '<div style="padding:40px 20px;text-align:center;color:var(--muted);font-size:13px;">生成中，请稍候…</div>';
   }
 
-  let cardsHtml = '';
-  for (const item of importPreviewData) {
+  function renderPreviewCard(item) {
     const recordKey = item.__recordKey || importMakeRecordKey(item);
     const cardTitle = [item.noteKey, item.xiaohongshuAccount, item.douyinAccount].filter(Boolean).join(' · ');
     const dec = importCardDecisions.get(recordKey) || {};
     if (item.status === 'failed' || item.status === 'ai_error') {
       // AI 失败卡片
-      cardsHtml += `
+      return `
         <div class="import-preview-card import-preview-card--error" data-record-key="${escapeAttr(recordKey)}">
           <div class="import-preview-card-head">${escapeHtml(cardTitle || item.noteKey)}</div>
           <div style="font-size:12px;color:#e53e3e;margin:6px 0;">⚠️ ${escapeHtml(item.message || item.reason || '生成失败')}</div>
@@ -5050,20 +5135,25 @@ function renderImportPreviewCards() {
             </button>
           </div>
         </div>`;
-    } else if (item.status === 'skipped') {
-      cardsHtml += `
+    }
+    if (item.status === 'skipped') {
+      return `
         <div class="import-preview-card import-preview-card--skipped">
           <div class="import-preview-card-head">${escapeHtml(cardTitle || item.noteKey)}</div>
           <div style="font-size:12px;color:var(--muted);">⏭ 已存在相同记录，将跳过</div>
         </div>`;
-    } else {
-      // 正常预览卡（preview / pending）
-      const title = item.title || '';
-      const desc = item.description || '';
-      const tags = Array.isArray(item.tags) ? item.tags : [];
-      cardsHtml += `
+    }
+    // 正常预览卡（preview / pending）
+    const title = item.title || '';
+    const desc = item.description || '';
+    const tags = Array.isArray(item.tags) ? item.tags : [];
+    const time = importParsePublishTime(item.publishTime);
+    return `
         <div class="import-preview-card" data-record-key="${escapeAttr(recordKey)}">
           <div class="import-preview-card-head">${escapeHtml(cardTitle || item.noteKey)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+            ${escapeHtml(importFormatTimeLabel(time))} · ${escapeHtml(importPreviewPathLabel(item))}
+          </div>
           <div style="margin-top:8px;">
             <label style="font-size:11px;color:var(--muted);">标题</label>
             <input class="import-preview-title" data-record-key="${escapeAttr(recordKey)}"
@@ -5083,8 +5173,25 @@ function renderImportPreviewCards() {
             ${tags.map(t => `<span style="font-size:11px;background:var(--accent-soft);color:var(--accent);padding:2px 8px;border-radius:12px;">${escapeHtml(t)}</span>`).join('')}
           </div>` : ''}
         </div>`;
-    }
   }
+
+  const grouped = importBuildGroupedPreviewItems(importPreviewData);
+  const cardsHtml = grouped.map(timeGroup => `
+    <section style="margin-bottom:18px;">
+      <div style="position:sticky;top:-12px;z-index:1;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700;color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+        ${escapeHtml(timeGroup.label)}
+      </div>
+      ${timeGroup.accounts.map(accountGroup => `
+        <div style="margin-top:10px;border-left:3px solid var(--accent);padding-left:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:700;color:var(--ink);margin:0 0 8px;">
+            <span>${escapeHtml(accountGroup.label)}</span>
+            <span style="color:var(--muted);font-weight:500;">${accountGroup.items.length} 篇</span>
+          </div>
+          ${accountGroup.items.map(renderPreviewCard).join('')}
+        </div>
+      `).join('')}
+    </section>
+  `).join('');
 
   const confirmDisabled = isImporting ? 'disabled' : '';
   const confirmText = isImporting ? '导入中…' : '确认导入';
