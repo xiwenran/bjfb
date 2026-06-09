@@ -110,17 +110,45 @@ def print_scan_summary(result: list) -> None:
     total_topics = len(result)
     print(f"扫描结果：共 {total_topics} 个主题组\n")
 
+    topics_with_root_cover_hint: list[str] = []
+
     for i, topic_entry in enumerate(result, 1):
         topic_name = topic_entry.get("topic", "（未知主题）")
+        topic_path = str(topic_entry.get("path") or "")
         notes = topic_entry.get("notes", [])
         print(f"组{i}：{topic_name}（{len(notes)} 篇笔记）")
+        any_missing_cover = False
         for note in notes:
             note_key = note.get("noteKey", "")
             images = note.get("images", [])
             image_count = len(images)
-            cover_status = "含主序号 0 封面 ✓" if note_has_primary_cover(images) else "⚠️  缺封面（0*）"
+            has_cover = note_has_primary_cover(images)
+            cover_status = "含主序号 0 封面 ✓" if has_cover else "⚠️  缺封面（0*）"
+            if not has_cover:
+                any_missing_cover = True
             print(f"  笔记 {note_key}：{image_count} 张图（{cover_status}）")
+
+        if any_missing_cover and topic_path and os.path.isdir(topic_path):
+            try:
+                root_covers = collect_cover_candidates(topic_path)
+            except Exception:
+                root_covers = []
+            if root_covers:
+                topics_with_root_cover_hint.append(topic_name)
+                print(
+                    f"  💡 主题根目录已存在 {len(root_covers)} 张封面文件 "
+                    f"（{', '.join(c.get('name','') for c in root_covers[:3])}{'...' if len(root_covers)>3 else ''}），"
+                    f"上面的⚠️缺封面是摘要误报。"
+                )
         print()
+
+    if topics_with_root_cover_hint:
+        print(
+            "💡 提示：以上主题根目录已有封面，直接运行：\n"
+            "    python3 ~/zhifa/scripts/skill_upload.py materialize-covers <scan.json>\n"
+            "把根目录封面下发到每个模板子文件夹，然后重新跑 scan-many 确认。\n"
+            "（不要因为 ⚠️ 缺封面警告就直接问用户『封面在哪』——优先按上面这条路径走。）\n"
+        )
 
 
 def load_scan_entries(scan_json_file: str) -> list:

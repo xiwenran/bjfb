@@ -359,6 +359,56 @@ npm run git:sync -- "提交信息"  # add + commit + push
 
 ---
 
+## src/ 核心改动 → 必须重打包 + 覆盖安装（硬规则）
+
+**触发**：本会话改动了以下任一 src/ 核心逻辑文件：
+- `src/scheduler-allocator.js`
+- `src/scheduler.js`
+- `src/server.js`
+- `src/publisher.js`
+- `src/feishu.js`
+- `src/ai-writer.js`
+- `src/config-store.js`
+- `src/bitbrowser*.js`
+- `src/electron-main.js`
+
+**硬规则**：改动完成、commit 之后，**必须**走完以下三步，缺一不可：
+
+1. **重打包**：`npm run dist:mac`（或 `dist:win`），让 `predist` 钩子刷新 `src/build-info.json` 的 commit hash + buildTime
+2. **覆盖安装**：把 `dist/mac-arm64/知发.app` 拖到 `/Applications/` 替换旧版（macOS Finder 会问"替换"，点确认）
+3. **重启 App 并核对版本号**：用户日常用的菜单栏 App 关闭后重新打开，**在 UI 左下角 `appVersionLabel` 处确认显示的 commit hash 就是最新 commit 前 7 位**——一致才算装上。
+
+**为什么三步缺一不可**：
+
+| 漏掉的步骤 | 后果 |
+|---|---|
+| 不 commit | predist 钩子拿不到最新 hash，注入的还是上一次 commit 的指纹 |
+| 不重打包 | `/Applications/知发.app` 还是上次的旧代码，源码 fix 完全没生效 |
+| 不覆盖安装 | dist/ 里有新 .app 但日常 App 仍是旧版（dist:mac 不会自动覆盖 /Applications/） |
+| 不核对 commit hash | 无法验证装的是不是真的新版——版本号 `2.3.2` 是 hardcoded 写死的，外观上完全看不出差异 |
+
+**反面教训**（2026-06-07 → 2026-06-09）：Codex 在 6/7 改了 `src/scheduler-allocator.js` 修跨平台 noteKey 复用 bug，**但没 commit + 没重打包 + 没覆盖安装**。两天后用户日常发布任务时撞上：App 跑的还是 6/5 打包的旧 allocator，schedule 调度 8 个号本应满 8 篇却只出 5 条，3 个号 0 篇。排查根因花了 15 分钟才定位到"App 用打包版本而非源码"。
+
+**配套自检输出**（与代码自检同等强度）：
+
+改完 src/ 核心文件 → commit 之前，**必须**在回复中写一行：
+
+> 「src 核心改动自检：本次改了 [文件列表]，commit 后将执行 dist:mac 重打包 + 覆盖安装 + 核对 UI commit hash。」
+
+写不出这行 = 视为漏走了打包流程，禁止报告"完成"。豁免只有一种：用户明确说"先不打包，攒一批再装"。
+
+**版本号 commit hash 注入机制（不要重新发明）**：
+
+- `package.json` 的 `version` 字段保持 hardcoded（如 `2.3.2`），**不要**改成自动注入
+- `predist:mac` / `predist:win` 钩子负责把 `git rev-parse --short HEAD` 写进 `src/build-info.json`
+- `src/server.js` 启动时 `require('./build-info.json')` 拼出 `APP_VERSION = "2.3.2 (commit)"`
+- `/api/status` 返回这个组合版本号给前端
+- 前端 `appVersionLabel` 显示完整版本号
+
+这套机制已经实现完整，禁止改成"把 commit hash 写进 package.json.version"——electron-builder 会基于 package.json 生成 Info.plist，但 macOS 对版本号格式有限制（如不能含括号），改 package.json 反而会破坏打包。
+
+---
+
 ## UI 设计决策记录
 
 ### 已确认的设计方向
