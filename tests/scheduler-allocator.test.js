@@ -41,3 +41,47 @@ test('allocateImportSchedule allows note reuse across platforms but not within t
   assert.equal(new Set(dyNoteKeys).size, dyNoteKeys.length);
   assert.ok(dyNoteKeys.some(noteKey => xhsNoteKeys.includes(noteKey)));
 });
+
+test('allocateImportSchedule skips same platform account slots closer than 6 hours by default', () => {
+  const result = allocateImportSchedule({
+    noteFolders: buildNoteFolders('教务类/期末复习', 3),
+    accounts: {
+      xiaohongshu_regular: ['浅浅'],
+      douyin: [],
+    },
+    timeSlots: {
+      regular: ['2026-06-15 09:00', '2026-06-15 12:00', '2026-06-15 15:00'],
+      special: [],
+    },
+    perAccountPerSlot: 1,
+    coverageStrategy: 'minimum',
+  });
+
+  assert.deepEqual(result.schedule.map(item => item.publishTime), [
+    '2026-06-15 09:00',
+    '2026-06-15 15:00',
+  ]);
+  assert.equal(result.stats.scheduledCount, 2);
+  assert.equal(result.stats.unscheduledCount, 1);
+  assert.ok(result.stats.violations.some(item => item.includes('同账号间隔不足 360 分钟')));
+});
+
+test('allocateImportSchedule does not let a lower minSameAccountIntervalMinutes bypass the 6 hour hard guard', () => {
+  const result = allocateImportSchedule({
+    noteFolders: buildNoteFolders('教务类/期末复习', 2),
+    accounts: {
+      xiaohongshu_regular: ['浅浅'],
+      douyin: [],
+    },
+    timeSlots: {
+      regular: ['2026-06-15 09:00', '2026-06-15 09:10'],
+      special: [],
+    },
+    perAccountPerSlot: 1,
+    coverageStrategy: 'minimum',
+    minSameAccountIntervalMinutes: 10,
+  });
+
+  assert.equal(result.stats.scheduledCount, 1);
+  assert.equal(result.stats.unscheduledCount, 1);
+});

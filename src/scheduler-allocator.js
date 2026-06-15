@@ -1,3 +1,10 @@
+const {
+  MIN_SAME_ACCOUNT_INTERVAL_MINUTES,
+  MIN_SAME_ACCOUNT_INTERVAL_MS,
+  canUseSameAccountSlot,
+  parsePublishTimestamp,
+} = require('./publish-guard.js');
+
 function createInputError(message) {
   const error = new Error(message);
   error.statusCode = 400;
@@ -136,6 +143,21 @@ function chooseNote(topic, templatesByTopic, usedPlatformNoteKeys, usedAccountTe
   return null;
 }
 
+function getEffectiveSameAccountIntervalMs(input) {
+  const minutes = Number(input?.minSameAccountIntervalMinutes);
+  const requestedMs = Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : 0;
+  return Math.max(MIN_SAME_ACCOUNT_INTERVAL_MS, requestedMs);
+}
+
+function parseSlotTimestamp(slot) {
+  const value = String(slot || '').trim();
+  const windowMatch = value.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-/);
+  if (windowMatch) {
+    return parsePublishTimestamp(`${windowMatch[1]} ${windowMatch[2]}`);
+  }
+  return parsePublishTimestamp(value);
+}
+
 function allocateImportSchedule(input) {
   const { topics, templatesByTopic, notes } = normalizeNotes(input?.noteFolders);
   const accounts = normalizeAccounts(input?.accounts, input?.timeSlots);
@@ -143,6 +165,8 @@ function allocateImportSchedule(input) {
     ? input.perAccountPerSlot
     : 1;
   const coverageStrategy = normalizeCoverageStrategy(input?.coverageStrategy);
+  const minSameAccountIntervalMs = getEffectiveSameAccountIntervalMs(input);
+  const minSameAccountIntervalMinutes = Math.ceil(minSameAccountIntervalMs / 60000);
 
   const schedule = [];
   const usedNoteKeysByPlatform = new Map();
@@ -150,6 +174,8 @@ function allocateImportSchedule(input) {
   const accountTopics = new Map();
   const accountTemplates = new Map();
   const accountSlotCounts = new Map();
+  const accountLastSlotTime = new Map();
+  const intervalViolations = [];
 
   accounts.forEach((accountInfo, accountIndex) => {
     const accountKey = `${accountInfo.platform}:${accountInfo.account}`;
@@ -163,6 +189,20 @@ function allocateImportSchedule(input) {
 
     for (let slotIndex = 0; slotIndex < accountInfo.slots.length; slotIndex++) {
       for (let slotCopy = 0; slotCopy < perAccountPerSlot; slotCopy++) {
+        const slot = accountInfo.slots[slotIndex];
+        const slotTs = parseSlotTimestamp(slot);
+        const lastSlotTs = accountLastSlotTime.get(accountKey);
+        if (slotTs === null) {
+          intervalViolations.push(`${accountInfo.account}：${slot} 发布时间无法解析，已跳过`);
+          continue;
+        }
+        if (!canUseSameAccountSlot(lastSlotTs, slotTs, minSameAccountIntervalMs)) {
+          intervalViolations.push(
+            `${accountInfo.account}：${slot} 同账号间隔不足 ${minSameAccountIntervalMinutes} 分钟`
+          );
+          continue;
+        }
+
         const planIndex = slotIndex * perAccountPerSlot + slotCopy;
         const preferredTopics = [
           topicPlan[planIndex],
@@ -174,6 +214,7 @@ function allocateImportSchedule(input) {
 
         if (!note) continue;
 
+        accountLastSlotTime.set(accountKey, slotTs);
         usedPlatformNoteKeys.add(note.noteKey);
         usedAnyNoteKeys.add(note.noteKey);
         usedAccountTemplates.add(note.template);
@@ -189,7 +230,7 @@ function allocateImportSchedule(input) {
           noteKey: note.noteKey,
           platform: accountInfo.platform,
           account: accountInfo.account,
-          publishTime: accountInfo.slots[slotIndex],
+          publishTime: slot,
         });
       }
     }
@@ -200,6 +241,7 @@ function allocateImportSchedule(input) {
     .map(note => note.noteKey);
 
   const violations = [];
+  violations.push(...intervalViolations);
   const warnings = [];
   for (const accountInfo of accounts) {
     const accountKey = `${accountInfo.platform}:${accountInfo.account}`;

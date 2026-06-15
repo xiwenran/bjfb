@@ -1,11 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const tempRoot = path.join(os.tmpdir(), 'zhifa-scheduler-test');
+fs.rmSync(tempRoot, { recursive: true, force: true });
 process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
+fs.mkdirSync(process.env.NOTE_PUBLISHER_DATA_DIR, { recursive: true });
+fs.writeFileSync(path.join(process.env.NOTE_PUBLISHER_DATA_DIR, 'publish-ledger.json'), '{}\n');
+fs.writeFileSync(path.join(process.env.NOTE_PUBLISHER_DATA_DIR, 'publish-history.json'), '{}\n');
 
 const Scheduler = require('../src/scheduler.js');
 const publisher = require('../src/publisher.js');
@@ -114,7 +119,7 @@ test('publishRecords should not reprocess a record immediately after a successfu
     videoCover: [],
     contentType: '图文',
     note: '',
-    xiaohongshuAccount: '沐沐老师',
+    xiaohongshuAccount: '最近发布防重测试账号',
     xiaohongshuStatus: '待发布',
     douyinAccount: '',
     douyinStatus: '',
@@ -126,7 +131,7 @@ test('publishRecords should not reprocess a record immediately after a successfu
       success: true,
       skipped: false,
       platform: '小红书',
-      account: '沐沐老师',
+      account: '最近发布防重测试账号',
       accountId: 'xhs-1',
       publishMode: '云发布',
       taskMeta: null,
@@ -276,7 +281,7 @@ test('processSingleRecord should keep cloud submissions in processing status unt
     videoCover: [],
     contentType: '图文',
     note: '',
-    xiaohongshuAccount: '沐沐老师',
+    xiaohongshuAccount: '云发布测试账号',
     xiaohongshuStatus: '待发布',
     douyinAccount: '',
     douyinStatus: '',
@@ -287,7 +292,7 @@ test('processSingleRecord should keep cloud submissions in processing status unt
     finalized: false,
     skipped: false,
     platform: '小红书',
-    account: '沐沐老师',
+    account: '云发布测试账号',
     accountId: 'xhs-1',
     publishMode: '云发布',
     taskMeta: { taskId: 'task-1' },
@@ -316,6 +321,164 @@ test('processSingleRecord should keep cloud submissions in processing status unt
     publisher.getPublishRecords = originalGetPublishRecords;
     publisher.ensureLogin = originalEnsureLogin;
   }
+});
+
+test('processSingleRecord defers same platform account publish when history is within 6 hours', async () => {
+  const scheduler = createScheduler();
+  const originalPublishRecord = publisher.publishRecord;
+  const originalGetPublishRecords = publisher.getPublishRecords;
+  const originalEnsureLogin = publisher.ensureLogin;
+
+  let publishCalled = false;
+  const notes = [];
+
+  scheduler.feishu = {
+    downloadAllAttachments: async () => {
+      throw new Error('guard should run before downloading');
+    },
+    markPlatformStatus: async () => {
+      throw new Error('deferred records should not be marked published or failed');
+    },
+    setNote: async (recordId, note) => {
+      notes.push({ recordId, note });
+    },
+    markPublished: async () => {
+      throw new Error('deferred records should not be marked fully published');
+    },
+  };
+  scheduler.findLatestPublishRecord = async () => null;
+
+  publisher.appendHistory('already-published-record', '小红书', {
+    accountName: '六小时测试账号',
+    accountId: 'xhs-guard',
+    channel: '蚁小二',
+    at: Date.now() - 30 * 60 * 1000,
+    taskId: 'task-guard',
+    contentHash: 'hash-guard',
+  });
+  publisher.publishRecord = async () => {
+    publishCalled = true;
+    return [];
+  };
+  publisher.getPublishRecords = async () => [];
+  publisher.ensureLogin = async () => {};
+
+  const record = {
+    recordId: 'record-too-soon',
+    title: 'Too soon',
+    attachments: [],
+    videoCover: [],
+    contentType: '图文',
+    note: '',
+    xiaohongshuAccount: '六小时测试账号',
+    xiaohongshuStatus: '待发布',
+    douyinAccount: '',
+    douyinStatus: '',
+  };
+
+  try {
+    const result = await scheduler.processSingleRecord(record);
+
+    assert.equal(publishCalled, false);
+    assert.deepEqual(result, { published: 0, failed: 0, deferred: 1 });
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].note, /同平台同账号 6 小时频控/);
+  } finally {
+    publisher.publishRecord = originalPublishRecord;
+    publisher.getPublishRecords = originalGetPublishRecords;
+    publisher.ensureLogin = originalEnsureLogin;
+  }
+});
+
+test('processSingleRecord defers same account while a cloud submission is still in progress', async () => {
+  const scheduler = createScheduler();
+  const originalPublishRecord = publisher.publishRecord;
+  const originalGetPublishRecords = publisher.getPublishRecords;
+  const originalEnsureLogin = publisher.ensureLogin;
+
+  let publishCalls = 0;
+  const notes = [];
+
+  scheduler.feishu = {
+    downloadAllAttachments: async () => [],
+    markPlatformStatus: async () => {},
+    setNote: async (recordId, note) => {
+      notes.push({ recordId, note });
+    },
+    markPublished: async () => {},
+  };
+  scheduler.findLatestPublishRecord = async () => null;
+  publisher.publishRecord = async () => {
+    publishCalls += 1;
+    return [{
+      success: true,
+      finalized: false,
+      skipped: false,
+      platform: '小红书',
+      account: '云提交频控账号',
+      accountId: 'xhs-cloud-guard',
+      publishMode: '云发布',
+      taskMeta: { taskId: 'cloud-guard' },
+      titleMeta: null,
+      musicMeta: null,
+    }];
+  };
+  publisher.getPublishRecords = async () => [];
+  publisher.ensureLogin = async () => {};
+
+  try {
+    const first = await scheduler.processSingleRecord({
+      recordId: 'record-cloud-guard-a',
+      title: 'Cloud Guard A',
+      attachments: [],
+      videoCover: [],
+      contentType: '图文',
+      note: '',
+      xiaohongshuAccount: '云提交频控账号',
+      xiaohongshuStatus: '待发布',
+      douyinAccount: '',
+      douyinStatus: '',
+    });
+    const second = await scheduler.processSingleRecord({
+      recordId: 'record-cloud-guard-b',
+      title: 'Cloud Guard B',
+      attachments: [],
+      videoCover: [],
+      contentType: '图文',
+      note: '',
+      xiaohongshuAccount: '云提交频控账号',
+      xiaohongshuStatus: '待发布',
+      douyinAccount: '',
+      douyinStatus: '',
+    });
+
+    assert.deepEqual(first, { published: 0, failed: 0, submitted: 1 });
+    assert.deepEqual(second, { published: 0, failed: 0, deferred: 1 });
+    assert.equal(publishCalls, 1);
+    assert.match(notes.at(-1).note, /正在发布或刚提交/);
+  } finally {
+    publisher.publishRecord = originalPublishRecord;
+    publisher.getPublishRecords = originalGetPublishRecords;
+    publisher.ensureLogin = originalEnsureLogin;
+  }
+});
+
+test('publishRecords treats same-account guard deferrals as skipped work, not failures', async () => {
+  const scheduler = createScheduler();
+  scheduler.processSingleRecord = async () => ({ published: 0, failed: 0, deferred: 1 });
+
+  const result = await scheduler.publishRecords([{
+    recordId: 'record-deferred',
+    title: 'Deferred',
+    xiaohongshuAccount: '浅浅',
+    xiaohongshuStatus: '待发布',
+  }], 'scheduled');
+
+  assert.deepEqual(result, {
+    published: 0,
+    failed: 0,
+    deferred: 1,
+  });
 });
 
 test('start should perform an immediate scan before waiting for the next window', async () => {

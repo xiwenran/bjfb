@@ -32,6 +32,8 @@ import urllib.request
 from collections import Counter
 
 ZHIFA_BASE = "http://localhost:3210"
+MIN_SAME_ACCOUNT_INTERVAL_MINUTES = 360
+MIN_SAME_ACCOUNT_INTERVAL_SECONDS = MIN_SAME_ACCOUNT_INTERVAL_MINUTES * 60
 SCAN_RESULT_TMP = "/tmp/zhifa_scan_result.json"
 SCAN_MANY_RESULT_TMP = "/tmp/zhifa_scan_many_result.json"
 FAILED_UPLOAD_TMP = "/tmp/zhifa_upload_failed.json"
@@ -471,6 +473,43 @@ def platform_account_values(record: dict) -> list[tuple[str, str, str]]:
     return accounts
 
 
+def find_same_account_interval_violations(records: list) -> list[str]:
+    violations: list[str] = []
+    timed_groups: dict[str, list[tuple[datetime.datetime, str, str]]] = {}
+    if not isinstance(records, list):
+        return ["records 必须是数组，无法执行同账号 6 小时间隔校验"]
+
+    for i, record in enumerate(records):
+        if not isinstance(record, dict):
+            continue
+        accounts = platform_account_values(record)
+        if not accounts:
+            continue
+        try:
+            publish_time = parse_publish_time(record.get("publishTime"))
+        except ValueError as exc:
+            for _, platform, account in accounts:
+                violations.append(f"records[{i}] {platform}:{account} 发布时间无法解析：{exc}")
+            continue
+        note_key = str(record.get("noteKey") or f"records[{i}]")
+        for account_key, platform, account in accounts:
+            group_key = f"{account_key}:{account}"
+            timed_groups.setdefault(group_key, []).append((publish_time, note_key, f"{platform}:{account}"))
+
+    for items in timed_groups.values():
+        items.sort(key=lambda item: item[0])
+        for (prev_time, prev_key, account_label), (next_time, next_key, _) in zip(items, items[1:]):
+            gap_seconds = (next_time - prev_time).total_seconds()
+            if gap_seconds < MIN_SAME_ACCOUNT_INTERVAL_SECONDS:
+                gap_minutes = int(gap_seconds // 60)
+                violations.append(
+                    f"{account_label} 时间间隔不足 {MIN_SAME_ACCOUNT_INTERVAL_MINUTES} 分钟："
+                    f"{prev_key} @ {prev_time.strftime('%Y-%m-%d %H:%M')} 与 "
+                    f"{next_key} @ {next_time.strftime('%Y-%m-%d %H:%M')}（间隔 {gap_minutes} 分钟）"
+                )
+    return violations
+
+
 def validate_records_for_dry_run(records: list) -> bool:
     """Run local validation checks for create --dry-run."""
     check_results = []
@@ -577,6 +616,9 @@ def validate_records_for_dry_run(records: list) -> bool:
                     )
     check_results.append(("Time interval", violations))
 
+    violations = find_same_account_interval_violations(records)
+    check_results.append(("Same account 6 hour guard", violations))
+
     violations = []
     note_platform_seen: set[tuple[str, str]] = set()
     account_time_seen: set[tuple[str, str, str]] = set()
@@ -619,7 +661,7 @@ def validate_records_for_dry_run(records: list) -> bool:
         print(f"\nDry run 失败：共 {len(all_violations)} 个问题。")
         return False
 
-    print(f"\nDry run 通过：{len(records)} 条记录已完成 5 项本地结构校验。")
+    print(f"\nDry run 通过：{len(records)} 条记录已完成 6 项本地结构校验。")
     print("提示：dry-run 不检查标题公式、标题吸引力或文案质量；标题仍需按 ai-writer SYSTEM_PROMPT 单独审查。")
     return True
 
@@ -671,6 +713,8 @@ def validate_records_for_create(records: list) -> bool:
                         violations.append(f"({account_key}, publishTime) 重复：{account} @ {publish_time}")
                     else:
                         account_time_seen.add(time_pair)
+
+    violations.extend(find_same_account_interval_violations(records))
 
     if violations:
         print(f"❌ 上传前硬校验失败：{len(violations)} 个问题")
@@ -1364,6 +1408,7 @@ def cmd_token_summary(
         missing_media: list[str] = []
         duplicate_note_key: list[str] = []
         duplicate_account_time: list[str] = []
+        same_account_interval_violations: list[str] = []
 
         note_platform_seen: set[tuple[str, str]] = set()
         account_time_seen: set[tuple[str, str, str]] = set()
@@ -1412,6 +1457,9 @@ def cmd_token_summary(
         pre["missing_media"] = missing_media
         pre["duplicate_note_key"] = duplicate_note_key
         pre["duplicate_account_time"] = duplicate_account_time
+        same_account_interval_violations = find_same_account_interval_violations(records)
+        pre["same_account_interval_violations"] = same_account_interval_violations
+        pre["same_account_interval_violation_count"] = len(same_account_interval_violations)
 
         summary["pre"] = pre
 

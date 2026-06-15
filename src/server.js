@@ -28,6 +28,10 @@ const {
 const { generateContent, testConnection } = require('./ai-writer.js');
 const { allocateImportSchedule } = require('./scheduler-allocator.js');
 const { archiveImportFolders } = require('./archiver.js');
+const {
+  findSameAccountIntervalViolations,
+  getRecordPlatformAccounts,
+} = require('./publish-guard.js');
 
 // 版本号 + commit hash 拼接：打包时 predist 脚本会生成 build-info.json，运行时读取拼到版本里
 // 开发模式（npm start / npm run desktop）下文件不存在，仅显示 package.json 版本号
@@ -986,6 +990,24 @@ const server = http.createServer(async (req, res) => {
       ensureFeishuConfigReady();
       const body = JSON.parse(await readBody(req) || '{}');
       const { dryRun = false, records = [] } = body;
+
+      const intervalViolations = findSameAccountIntervalViolations(records, {
+        getPlatformAccounts: record => getRecordPlatformAccounts(record),
+        getLabel: record => record.noteKey || record.title || record.recordId,
+      });
+      if (intervalViolations.length > 0) {
+        return sendJson(res, {
+          error: 'same_account_interval_violation',
+          message: '同一平台同一账号两篇发布时间必须至少间隔 6 小时',
+          violations: intervalViolations.map(item => ({
+            platform: item.platformLabel,
+            account: item.account,
+            previous: item.previousLabel || item.label || '',
+            next: item.nextLabel || '',
+            gapMinutes: item.gapMs ? Math.floor(item.gapMs / 60000) : null,
+          })),
+        }, 400);
+      }
 
       // 预取飞书字段列表，用于判断可选字段是否存在（避免 FieldNameNotFound）
       const tableFieldNames = await feishu.getTableFields().catch(() => []);

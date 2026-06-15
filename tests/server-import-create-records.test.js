@@ -98,6 +98,38 @@ test('create-records should enforce trimmed account validation and keep single-p
   assert.equal(uploadCalls, 0);
   assert.equal(createRecordCalls, 0);
 
+  const tooCloseResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: false,
+      records: [
+        {
+          noteKey: '专题A/too-close-1',
+          topic: '专题A',
+          images: [],
+          publishTime: '2026-06-15 09:00',
+          xiaohongshuAccount: '小红书账号A',
+          douyinAccount: '',
+        },
+        {
+          noteKey: '专题A/too-close-2',
+          topic: '专题A',
+          images: [],
+          publishTime: '2026-06-15 10:00',
+          xiaohongshuAccount: '小红书账号A',
+          douyinAccount: '',
+        },
+      ],
+    },
+  });
+
+  assert.equal(tooCloseResponse.statusCode, 400);
+  assert.equal(tooCloseResponse.body.error, 'same_account_interval_violation');
+  assert.equal(tooCloseResponse.body.violations.length, 1);
+  assert.equal(uploadCalls, 0);
+  assert.equal(createRecordCalls, 0);
+
   const douyinOnlyResponse = await requestJson({
     method: 'POST',
     urlPath: '/api/import/create-records',
