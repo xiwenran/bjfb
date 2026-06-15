@@ -21,9 +21,11 @@ python3 ~/zhifa/scripts/skill_upload.py
 python3 ~/zhifa/scripts/skill_upload.py scan-many <topic_dir...> --output <scan.json>
 python3 ~/zhifa/scripts/skill_upload.py materialize-covers <scan.json>
 python3 ~/zhifa/scripts/skill_upload.py schedule <scan.json> <plan.json> --output <schedule.json>
-python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json>
+python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json> --seed <YYYYMMDD-batch-name>
 python3 ~/zhifa/scripts/skill_upload.py create <records.json> --output <create_results.json>
-python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --output <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --batch-size 50 --output <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py summarize-postprocess <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py export-preview <records.json> <preview_dir>
 python3 ~/zhifa/scripts/skill_upload.py archive <source_dir> <target_dir> <schedule.json>
 ```
 
@@ -32,10 +34,37 @@ python3 ~/zhifa/scripts/skill_upload.py archive <source_dir> <target_dir> <sched
 - 主题根目录已有封面时，优先用 `materialize-covers` 批量下发到模板目录，不再在会话里逐条 `cp`
 - 账号排期必须按 `accounts.json.accountGroups` / `accountGroupAliases` 绑定内容分组账号池，不得把所有分组混进全局账号池
 - `schedule` 同时接受两类计划文件：底层原生 `accounts + timeSlots`，以及日常口径 `accounts + timeWindows`
-- 若传 `timeWindows`，脚本会先保留时间窗，再在 `build-records` 阶段展开成随机具体发布时间，避免所有账号卡在同一个时间点
+- 若传 `timeWindows`，脚本会先保留时间窗，再在 `build-records` 阶段展开成随机具体发布时间；必须传 `--seed` 让随机排期可复现
 - `records JSON` 由 `build-records` 生成，不再手工拼装
-- 上传后处理优先走 `postprocess`，不要再在会话里临时拼 FeishuClient 调用
-- 飞书限频补传、上传结果合并、后处理结果文件都应由共享执行层输出；不要再在会话里手写 Node/Python 重试脚本
+- 真实 `create` 必须保留 output；漏传 `--output` 时脚本会自动写 `/tmp/zhifa_upload_create_results_<YYYYMMDD-HHMMSS>.json` 并打印路径
+- 上传后处理优先走 `postprocess --batch-size`，不要再在会话里临时拼 FeishuClient 调用
+- 飞书限频补传、上传结果合并、后处理结果文件、后处理汇总和上传预览都应由共享执行层输出；不要再在会话里手写 Node/Python 重试脚本
+- 当前最小实现只保证时间窗随机可复现；全局每分钟限流仍是下一步产品化项，不在 Skill 会话里临时手写补丁
+
+## Token 节制要求（2026-06-15 起）
+
+进入**上传前冷眼审查（Step 4.5）**和**上传后汇报（Step 6 / 6.8）**前，优先调用 `token-summary` 获取摘要，主会话只读摘要 JSON，不直接读完整 `records.json` / 上传结果 JSON：
+
+```bash
+# 上传前风险摘要（pre）
+python3 ~/zhifa/scripts/skill_upload.py token-summary \
+  --records <records.json> \
+  --phase pre \
+  --output /tmp/zhifa_token_summary_pre.json
+
+# 上传后结果摘要（post）
+python3 ~/zhifa/scripts/skill_upload.py token-summary \
+  --create-results <create_results.json> \
+  --postprocess-results <postprocess_results.json> \
+  --phase post \
+  --output /tmp/zhifa_token_summary_post.json
+```
+
+规则：
+- 主会话只读 `summary.json`（pre：record_count / platform_count / account_count / missing_media / duplicate_note_key / duplicate_account_time；post：created_count / create_failed_count / postprocessed_count / postprocess_failed_count）
+- 只有 summary 标出具体异常时，才回读对应 records 局部
+- 大批量（>20 条）records 不得整体读入主会话上下文
+- **不得为节省 token 跳过 Step 4.5 / Step 5.5 / Step 6 / Step 6.8 等 CRITICAL 冷眼审查节点**
 
 ## 输入目录结构（融景标准输出）
 
@@ -402,7 +431,8 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 
 ```bash
 python3 ~/zhifa/scripts/skill_upload.py schedule <scan.json> <plan.json> --output <schedule.json>
-python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json>
+python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json> --seed <YYYYMMDD-batch-name>
+python3 ~/zhifa/scripts/skill_upload.py export-preview <records.json> <preview_dir>
 ```
 
 构建 records JSON 后、上传前，必须跑校验：JSON、图片路径、模板多样性、时间间隔、重复项均通过，不通过则停下报告。
@@ -437,6 +467,8 @@ find "<folderPath>" -maxdepth 1 -type f \( -iname "0.jpg" -o -iname "0(*).jpg" -
 ```bash
 python3 ~/zhifa/scripts/skill_upload.py create <records.json> --output <create_results.json>
 ```
+
+真实上传必须保存完整结果文件。若漏传 `--output`，脚本会自动写入 `/tmp/zhifa_upload_create_results_<YYYYMMDD-HHMMSS>.json` 并打印路径；上传后审查和后处理必须引用该结果文件。
 
 **字段来源说明**（构建每条 record 时参照）：
 
@@ -523,10 +555,11 @@ python3 ~/zhifa/scripts/skill_upload.py create <records.json> --output <create_r
 **执行方式**：优先使用共享执行层，不在会话里临时拼 FeishuClient 调用。
 
 ```bash
-python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --output <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --batch-size 50 --output <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py summarize-postprocess <postprocess_results.json>
 ```
 
-`create` 必须落完整上传结果 JSON，供 `postprocess`、上传完整性验证和冷眼审查复用；不得再临时手写脚本调用 `/api/import/create-records` 只为保存返回值。`postprocess` 必须只处理 `status === "success"` 且有 `recordId` 的创建结果，并落后处理结果 JSON；空平台不得写状态。若共享命令不可用，才允许把 FeishuClient 直连作为降级兜底，并必须向用户说明“本轮使用降级后处理，不是主路径”。
+`create` 必须落完整上传结果 JSON，供 `postprocess`、上传完整性验证和冷眼审查复用；不得再临时手写脚本调用 `/api/import/create-records` 只为保存返回值。`postprocess` 必须只处理 `status === "success"` 且有 `recordId` 的创建结果，按 `--batch-size` 分批处理大批量，落后处理结果 JSON；空平台不得写状态。完成后必须用 `summarize-postprocess` 汇总 updated、rows、平台状态、topic 空值和账号计数。若共享命令不可用，才允许把 FeishuClient 直连作为降级兜底，并必须向用户说明“本轮使用降级后处理，不是主路径”。
 
 **反面教训（2026-05-14）**：上传 7 篇视频笔记后，笔记主题没清空 + 发布状态没设 + 标题没预填，用户逐一追问才补上。三个遗漏全是"上传后处理"缺位导致。
 

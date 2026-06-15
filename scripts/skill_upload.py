@@ -8,13 +8,17 @@ zhifa Skill 辅助脚本
   python3 skill_upload.py scan-many <folder_path> [<folder_path> ...] [--output result.json]
   python3 skill_upload.py materialize-covers <scan_json_file>
   python3 skill_upload.py schedule <scan_json_file> <plan_json_file> [--output schedule.json]
-  python3 skill_upload.py build-records <scan_json_file> <schedule_json_file> <content_json_file> <output_json_file>
+  python3 skill_upload.py build-records <scan_json_file> <schedule_json_file> <content_json_file> <output_json_file> [--seed SEED]
   python3 skill_upload.py create <records_json_file> [--ai-fallback] [--batch-size N] [--timeout S] [--batch-delay S]
-  python3 skill_upload.py postprocess <records_json_file> <results_json_file>
+  python3 skill_upload.py postprocess <records_json_file> <results_json_file> [--batch-size N] [--output result.json]
+  python3 skill_upload.py summarize-postprocess <postprocess_result.json> [<postprocess_result.json> ...]
+  python3 skill_upload.py export-preview <records_json_file> <output_dir>
   python3 skill_upload.py archive <source_dir> <target_dir> <schedule_json_file>
+  python3 skill_upload.py token-summary --records <records.json> [--phase pre|post|both] [--create-results <r.json>] [--postprocess-results <p.json>] [--output <summary.json>]
 """
 
 import argparse
+import csv
 import datetime
 import json
 import os
@@ -25,6 +29,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 
 ZHIFA_BASE = "http://localhost:3210"
 SCAN_RESULT_TMP = "/tmp/zhifa_scan_result.json"
@@ -69,6 +74,10 @@ def read_json_file(file_path: str):
 def write_json_file(file_path: str, payload) -> None:
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def timestamp_for_path() -> str:
+    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def note_has_primary_cover(images: list | None) -> bool:
@@ -217,7 +226,8 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
     }
 
 
-def resolve_window_publish_times(schedule: list[dict]) -> dict[str, str]:
+def resolve_window_publish_times(schedule: list[dict], rng: random.Random | None = None) -> dict[str, str]:
+    rng = rng or random
     grouped: dict[str, list[str]] = {}
     for item in schedule:
         raw_publish_time = str(item.get("publishTime") or "").strip()
@@ -242,9 +252,9 @@ def resolve_window_publish_times(schedule: list[dict]) -> dict[str, str]:
         if total_minutes < len(note_keys):
             raise ValueError(f"时间窗容量不足：{raw_window} 只有 {total_minutes} 分钟，无法分配 {len(note_keys)} 条记录")
 
-        minute_offsets = sorted(random.sample(range(total_minutes), len(note_keys)))
+        minute_offsets = sorted(rng.sample(range(total_minutes), len(note_keys)))
         shuffled_keys = note_keys[:]
-        random.shuffle(shuffled_keys)
+        rng.shuffle(shuffled_keys)
         for note_key, minute_offset in zip(shuffled_keys, minute_offsets):
             resolved[note_key] = (start_dt + datetime.timedelta(minutes=minute_offset)).strftime("%Y-%m-%d %H:%M")
 
@@ -841,6 +851,7 @@ def cmd_build_records(
     schedule_json_file: str,
     content_json_file: str,
     output_file: str,
+    seed: str | None = None,
 ) -> None:
     scan_entries = load_scan_entries(scan_json_file)
     schedule_json_file = os.path.expanduser(schedule_json_file)
@@ -880,7 +891,8 @@ def cmd_build_records(
         sys.exit(1)
 
     try:
-        resolved_publish_times = resolve_window_publish_times(schedule)
+        rng = random.Random(seed) if seed is not None else None
+        resolved_publish_times = resolve_window_publish_times(schedule, rng=rng)
     except ValueError as exc:
         print(f"调度结果格式错误：{exc}", file=sys.stderr)
         sys.exit(1)
@@ -983,6 +995,10 @@ def cmd_create(
 
     if not validate_records_for_create(records):
         sys.exit(1)
+
+    if not output_file:
+        output_file = f"/tmp/zhifa_upload_create_results_{timestamp_for_path()}.json"
+        print(f"未传 --output，上传结果将写入默认路径：{output_file}")
 
     total = len(records)
     print(f"准备上传 {total} 篇笔记到知发…\n")
@@ -1097,8 +1113,8 @@ def cmd_create(
     save_failed_retry_keys(total_failed)
 
     if output_file:
-      output_path = os.path.expanduser(output_file)
-      write_json_file(output_path, {
+        output_path = os.path.expanduser(output_file)
+        write_json_file(output_path, {
           "recordsFile": records_json_file,
           "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
           "summary": {
@@ -1109,8 +1125,8 @@ def cmd_create(
           },
           "batches": batch_summaries,
           "results": total_results,
-      })
-      print(f"\n（上传结果 JSON 已写入 {output_path}）")
+        })
+        print(f"\n（上传结果 JSON 已写入 {output_path}）")
 
     if total_skipped:
         print("\n跳过（指纹查重命中，已存在）：")
@@ -1125,7 +1141,30 @@ def cmd_create(
             print(f"  - {nk}")
 
 
-def cmd_postprocess(records_json_file: str, results_json_file: str, output_file: str | None = None) -> None:
+def load_records_payload(records_json_file: str) -> list:
+    payload = read_json_file(records_json_file)
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict) and "records" in payload:
+        return payload["records"]
+    print("records JSON 格式错误：需要 {\"records\": [...]} 或直接的数组", file=sys.stderr)
+    sys.exit(1)
+
+
+def record_platform(record: dict) -> str:
+    if str(record.get("xiaohongshuAccount") or "").strip():
+        return "xiaohongshu"
+    if str(record.get("douyinAccount") or "").strip():
+        return "douyin"
+    return "unknown"
+
+
+def cmd_postprocess(
+    records_json_file: str,
+    results_json_file: str,
+    output_file: str | None = None,
+    batch_size: int = 50,
+) -> None:
     records_json_file = os.path.expanduser(records_json_file)
     results_json_file = os.path.expanduser(results_json_file)
     if not os.path.isfile(records_json_file):
@@ -1134,15 +1173,11 @@ def cmd_postprocess(records_json_file: str, results_json_file: str, output_file:
     if not os.path.isfile(results_json_file):
         print(f"上传结果文件不存在：{results_json_file}", file=sys.stderr)
         sys.exit(1)
-
-    payload = read_json_file(records_json_file)
-    if isinstance(payload, list):
-        records = payload
-    elif isinstance(payload, dict) and "records" in payload:
-        records = payload["records"]
-    else:
-        print("records JSON 格式错误：需要 {\"records\": [...]} 或直接的数组", file=sys.stderr)
+    if batch_size < 1:
+        print("--batch-size 必须大于 0", file=sys.stderr)
         sys.exit(1)
+
+    records = load_records_payload(records_json_file)
 
     result_payload = read_json_file(results_json_file)
     result_list = result_payload.get("results") if isinstance(result_payload, dict) else result_payload
@@ -1150,16 +1185,30 @@ def cmd_postprocess(records_json_file: str, results_json_file: str, output_file:
         print(f"上传结果格式错误：{results_json_file} 需要 results 数组", file=sys.stderr)
         sys.exit(1)
 
+    records_by_retry_key = {
+        record_retry_key(r): r
+        for r in records
+        if isinstance(r, dict)
+    }
+    records_by_note_key = {
+        str(r.get("noteKey") or ""): r
+        for r in records
+        if isinstance(r, dict) and r.get("noteKey")
+    }
     updates = []
     for i, item in enumerate(result_list):
         if not isinstance(item, dict):
             continue
         if item.get("status") != "success" or not item.get("recordId"):
             continue
-        if i >= len(records) or not isinstance(records[i], dict):
+        retry_key = str(item.get("__retryKey") or "")
+        note_key = str(item.get("noteKey") or "")
+        record = records_by_retry_key.get(retry_key) or records_by_note_key.get(note_key)
+        if record is None and i < len(records) and isinstance(records[i], dict):
+            record = records[i]
+        if record is None:
             print(f"上传结果第 {i + 1} 条缺少对应 record", file=sys.stderr)
             sys.exit(1)
-        record = records[i]
         updates.append({
             "recordId": item["recordId"],
             "noteKey": record.get("noteKey", ""),
@@ -1167,12 +1216,309 @@ def cmd_postprocess(records_json_file: str, results_json_file: str, output_file:
             "douyinAccount": record.get("douyinAccount", ""),
         })
 
-    result = zhifa_post("/api/import/postprocess", {"updates": updates}, timeout=300)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    batches = [updates[i: i + batch_size] for i in range(0, len(updates), batch_size)]
+    batch_results = []
+    merged_results = []
+    total_updated = 0
+    print(f"准备后处理 {len(updates)} 条记录，分 {len(batches)} 批，每批最多 {batch_size} 条")
+    for batch_idx, batch in enumerate(batches, 1):
+        result = zhifa_post("/api/import/postprocess", {"updates": batch}, timeout=300)
+        updated = int(result.get("updated") or result.get("updatedCount") or 0) if isinstance(result, dict) else 0
+        rows = result.get("results") if isinstance(result, dict) else None
+        if isinstance(rows, list):
+            merged_results.extend(rows)
+        total_updated += updated
+        batch_results.append({
+            "batch": batch_idx,
+            "total": len(batch),
+            "updated": updated,
+            "result": result,
+        })
+        print(f"[后处理 {batch_idx}/{len(batches)}] {len(batch)} 条 → updated={updated}")
+
+    result = {
+        "recordsFile": records_json_file,
+        "resultsFile": results_json_file,
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "summary": {
+            "updates": len(updates),
+            "updated": total_updated,
+            "batches": len(batches),
+        },
+        "batches": batch_results,
+        "results": merged_results,
+    }
+    print(json.dumps(result["summary"], ensure_ascii=False, indent=2))
     if output_file:
         output_path = os.path.expanduser(output_file)
         write_json_file(output_path, result)
         print(f"（后处理结果 JSON 已写入 {output_path}）")
+
+
+def collect_postprocess_rows(payload) -> list:
+    rows = []
+    direct_rows = payload.get("results") if isinstance(payload, dict) else None
+    if isinstance(direct_rows, list):
+        return [r for r in direct_rows if isinstance(r, dict)]
+    batches = payload.get("batches") if isinstance(payload, dict) else None
+    if isinstance(batches, list):
+        for batch in batches:
+            result = batch.get("result") if isinstance(batch, dict) else None
+            batch_rows = result.get("results") if isinstance(result, dict) else None
+            if isinstance(batch_rows, list):
+                rows.extend([r for r in batch_rows if isinstance(r, dict)])
+    return rows
+
+
+def cmd_summarize_postprocess(files: list[str], output_file: str | None = None) -> None:
+    summary = {
+        "files": [],
+        "updated": 0,
+        "rows": 0,
+        "platformStatusCounts": {},
+        "emptyTopicCount": 0,
+        "accountCounts": {},
+    }
+    platform_status = Counter()
+    accounts = Counter()
+    for file_path in files:
+        expanded = os.path.expanduser(file_path)
+        payload = read_json_file(expanded)
+        rows = collect_postprocess_rows(payload)
+        file_updated = 0
+        if isinstance(payload, dict):
+            file_updated = int((payload.get("summary") or {}).get("updated") or payload.get("updated") or 0)
+        summary["files"].append({"path": expanded, "updated": file_updated, "rows": len(rows)})
+        summary["updated"] += file_updated
+        summary["rows"] += len(rows)
+        for row in rows:
+            xhs_status = str(row.get("xiaohongshuStatus") or "").strip()
+            douyin_status = str(row.get("douyinStatus") or "").strip()
+            if xhs_status:
+                platform_status[f"小红书:{xhs_status}"] += 1
+            if douyin_status:
+                platform_status[f"抖音:{douyin_status}"] += 1
+            if not xhs_status and not douyin_status:
+                platform = str(row.get("platform") or row.get("field") or row.get("statusField") or "unknown")
+                status = str(row.get("status") or row.get("value") or row.get("publishStatus") or "unknown")
+                platform_status[f"{platform}:{status}"] += 1
+            topic = row.get("topic")
+            if topic is None or str(topic).strip() == "":
+                summary["emptyTopicCount"] += 1
+            xhs_account = str(row.get("xiaohongshuAccount") or "").strip()
+            douyin_account = str(row.get("douyinAccount") or "").strip()
+            if xhs_account:
+                accounts[f"小红书:{xhs_account}"] += 1
+            if douyin_account:
+                accounts[f"抖音:{douyin_account}"] += 1
+            if not xhs_account and not douyin_account:
+                account = str(row.get("account") or row.get("accountName") or "")
+                if account:
+                    accounts[account] += 1
+    summary["platformStatusCounts"] = dict(sorted(platform_status.items()))
+    summary["accountCounts"] = dict(sorted(accounts.items()))
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if output_file:
+        write_json_file(os.path.expanduser(output_file), summary)
+
+
+def preview_row(record: dict) -> dict:
+    account = str(record.get("xiaohongshuAccount") or record.get("douyinAccount") or "")
+    return {
+        "account": account,
+        "publishTime": str(record.get("publishTime") or ""),
+        "noteKey": str(record.get("noteKey") or ""),
+        "title": str(record.get("title") or ""),
+        "platform": record_platform(record),
+        "topic": str(record.get("topic") or ""),
+    }
+
+
+def cmd_token_summary(
+    scan_json_file: str | None,
+    schedule_json_file: str | None,
+    records_json_file: str | None,
+    create_results_json_file: str | None,
+    postprocess_results_json_file: str | None,
+    phase: str,
+    output_file: str | None,
+) -> None:
+    """生成上传前（pre）或上传后（post）的 token 节制摘要 JSON，供冷眼审查使用。"""
+
+    summary: dict = {"phase": phase}
+
+    # ── pre 阶段：扫 scan / schedule / records，输出风险摘要 ──
+    if phase in ("pre", "both"):
+        pre: dict = {}
+
+        # 从 records 提取基础计数
+        records: list = []
+        if records_json_file:
+            records_json_file = os.path.expanduser(records_json_file)
+            if os.path.isfile(records_json_file):
+                records = load_records_payload(records_json_file)
+
+        record_count = len(records)
+        platforms: set[str] = set()
+        accounts: set[str] = set()
+        missing_media: list[str] = []
+        duplicate_note_key: list[str] = []
+        duplicate_account_time: list[str] = []
+
+        note_platform_seen: set[tuple[str, str]] = set()
+        account_time_seen: set[tuple[str, str, str]] = set()
+
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            note_key = str(rec.get("noteKey") or "")
+            publish_time = str(rec.get("publishTime") or "")
+
+            xhs = str(rec.get("xiaohongshuAccount") or "").strip()
+            dy = str(rec.get("douyinAccount") or "").strip()
+            if xhs:
+                platforms.add("xiaohongshu")
+                accounts.add(f"xiaohongshu:{xhs}")
+            if dy:
+                platforms.add("douyin")
+                accounts.add(f"douyin:{dy}")
+
+            # 缺媒体检查
+            images = rec.get("images") or []
+            videos = rec.get("videos") or []
+            if not images and not videos:
+                missing_media.append(note_key)
+
+            # 重复 (platform, noteKey)
+            for acc_key, acc_val in (("xiaohongshuAccount", xhs), ("douyinAccount", dy)):
+                if not acc_val:
+                    continue
+                pair = (acc_key, note_key)
+                if pair in note_platform_seen:
+                    duplicate_note_key.append(f"{acc_key}:{note_key}")
+                else:
+                    note_platform_seen.add(pair)
+                if publish_time:
+                    time_triple = (acc_key, acc_val, publish_time)
+                    if time_triple in account_time_seen:
+                        duplicate_account_time.append(f"{acc_val}@{publish_time}")
+                    else:
+                        account_time_seen.add(time_triple)
+
+        pre["record_count"] = record_count
+        pre["platform_count"] = len(platforms)
+        pre["platforms"] = sorted(platforms)
+        pre["account_count"] = len(accounts)
+        pre["missing_media"] = missing_media
+        pre["duplicate_note_key"] = duplicate_note_key
+        pre["duplicate_account_time"] = duplicate_account_time
+
+        summary["pre"] = pre
+
+    # ── post 阶段：扫 create_results / postprocess_results，输出结果摘要 ──
+    if phase in ("post", "both"):
+        post: dict = {}
+
+        created_count = 0
+        create_failed_count = 0
+        create_failed_items: list[str] = []
+
+        if create_results_json_file:
+            cr_path = os.path.expanduser(create_results_json_file)
+            if os.path.isfile(cr_path):
+                cr_payload = read_json_file(cr_path)
+                if isinstance(cr_payload, dict):
+                    smry = cr_payload.get("summary") or {}
+                    created_count = int(smry.get("success") or 0)
+                    create_failed_count = int(smry.get("failed") or 0)
+                    results_list = cr_payload.get("results") or []
+                    for item in results_list:
+                        if isinstance(item, dict) and item.get("status") == "failed":
+                            create_failed_items.append(
+                                str(item.get("noteKey") or item.get("__retryKey") or "")
+                            )
+
+        postprocessed_count = 0
+        postprocess_failed_count = 0
+        postprocess_failed_items: list[str] = []
+
+        if postprocess_results_json_file:
+            pp_path = os.path.expanduser(postprocess_results_json_file)
+            if os.path.isfile(pp_path):
+                pp_payload = read_json_file(pp_path)
+                if isinstance(pp_payload, dict):
+                    pp_smry = pp_payload.get("summary") or {}
+                    postprocessed_count = int(pp_smry.get("updated") or 0)
+                    all_updates = int(pp_smry.get("updates") or 0)
+                    postprocess_failed_count = max(0, all_updates - postprocessed_count)
+                    pp_rows = pp_payload.get("results") or []
+                    for row in pp_rows:
+                        if not isinstance(row, dict):
+                            continue
+                        xhs_status = str(row.get("xiaohongshuStatus") or "").strip()
+                        dy_status = str(row.get("douyinStatus") or "").strip()
+                        if "failed" in xhs_status.lower() or "failed" in dy_status.lower():
+                            postprocess_failed_items.append(
+                                str(row.get("noteKey") or row.get("recordId") or "")
+                            )
+
+        post["created_count"] = created_count
+        post["create_failed_count"] = create_failed_count
+        post["create_failed_items"] = create_failed_items
+        post["postprocessed_count"] = postprocessed_count
+        post["postprocess_failed_count"] = postprocess_failed_count
+        post["postprocess_failed_items"] = postprocess_failed_items
+
+        summary["post"] = post
+
+    output_str = json.dumps(summary, ensure_ascii=False, indent=2)
+    print(output_str)
+
+    if output_file:
+        out_path = os.path.expanduser(output_file)
+        write_json_file(out_path, summary)
+        print(f"\n（摘要 JSON 已写入 {out_path}）", file=sys.stderr)
+
+
+def cmd_export_preview(records_json_file: str, output_dir: str) -> None:
+    records_json_file = os.path.expanduser(records_json_file)
+    output_dir = os.path.expanduser(output_dir)
+    if not os.path.isfile(records_json_file):
+        print(f"records 文件不存在：{records_json_file}", file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(output_dir, exist_ok=True)
+    records = load_records_payload(records_json_file)
+    rows = [
+        preview_row(record)
+        for record in records
+        if isinstance(record, dict)
+    ]
+    rows.sort(key=lambda r: (r["account"], r["publishTime"], r["noteKey"], r["title"]))
+
+    csv_path = os.path.join(output_dir, "records-preview.csv")
+    with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["account", "publishTime", "noteKey", "title", "platform", "topic"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    md_path = os.path.join(output_dir, "records-preview.md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("# 知发上传预览\n\n")
+        f.write("| 账号 | 时间 | noteKey | 标题 | 平台 | 主题 |\n")
+        f.write("|---|---|---|---|---|---|\n")
+        for row in rows:
+            f.write(
+                f"| {row['account']} | {row['publishTime']} | {row['noteKey']} | "
+                f"{row['title']} | {row['platform']} | {row['topic']} |\n"
+            )
+    print(json.dumps({
+        "rows": len(rows),
+        "csv": csv_path,
+        "markdown": md_path,
+    }, ensure_ascii=False, indent=2))
 
 
 def main() -> None:
@@ -1202,6 +1548,7 @@ def main() -> None:
     build_records_parser.add_argument("schedule_json", help="schedule 生成的 JSON 文件路径")
     build_records_parser.add_argument("content_json", help="标题/标签映射 JSON 文件路径")
     build_records_parser.add_argument("output_json", help="输出 records JSON 路径")
+    build_records_parser.add_argument("--seed", default=None, help="时间窗随机分散 seed；相同 seed 可复现")
 
     # create 子命令
     create_parser = subparsers.add_parser("create", help="上传 records JSON 到知发")
@@ -1251,11 +1598,38 @@ def main() -> None:
     postprocess_parser.add_argument("records_json", help="records JSON 文件路径")
     postprocess_parser.add_argument("results_json", help="create-records 返回结果 JSON 文件路径")
     postprocess_parser.add_argument("--output", default=None, help="输出后处理结果 JSON 路径")
+    postprocess_parser.add_argument("--batch-size", type=int, default=50, help="每批后处理记录数，默认 50")
+
+    summarize_parser = subparsers.add_parser("summarize-postprocess", help="汇总一个或多个 postprocess 结果 JSON")
+    summarize_parser.add_argument("files", nargs="+", help="postprocess 结果 JSON 路径")
+    summarize_parser.add_argument("--output", default=None, help="输出汇总 JSON 路径")
+
+    preview_parser = subparsers.add_parser("export-preview", help="导出 records 可搜索预览 md/csv")
+    preview_parser.add_argument("records_json", help="records JSON 文件路径")
+    preview_parser.add_argument("output_dir", help="预览输出目录")
 
     archive_parser = subparsers.add_parser("archive", help="根据 schedule 结果调用归档接口")
     archive_parser.add_argument("source_dir", help="原始合成图根目录")
     archive_parser.add_argument("target_dir", help="归档目标根目录")
     archive_parser.add_argument("schedule_json", help="schedule 结果 JSON 文件路径")
+
+    # token-summary 子命令
+    token_summary_parser = subparsers.add_parser(
+        "token-summary",
+        help="生成上传前（pre）/ 上传后（post）风险摘要 JSON，供冷眼审查使用，不触发真实上传",
+    )
+    token_summary_parser.add_argument("--scan", default=None, metavar="SCAN_JSON", help="scan 或 scan-many 输出 JSON（pre 阶段可选）")
+    token_summary_parser.add_argument("--schedule", default=None, metavar="SCHEDULE_JSON", help="schedule 输出 JSON（pre 阶段可选）")
+    token_summary_parser.add_argument("--records", default=None, metavar="RECORDS_JSON", help="records JSON 文件（pre 阶段必填）")
+    token_summary_parser.add_argument("--create-results", default=None, metavar="CREATE_RESULTS_JSON", help="create 上传结果 JSON（post 阶段必填）")
+    token_summary_parser.add_argument("--postprocess-results", default=None, metavar="POSTPROCESS_RESULTS_JSON", help="postprocess 结果 JSON（post 阶段可选）")
+    token_summary_parser.add_argument(
+        "--phase",
+        choices=["pre", "post", "both"],
+        default="pre",
+        help="摘要阶段：pre（上传前风险）/ post（上传后结果）/ both（两者都输出），默认 pre",
+    )
+    token_summary_parser.add_argument("--output", default=None, help="输出 summary JSON 路径（默认仅打印到 stdout）")
 
     args = parser.parse_args()
 
@@ -1268,7 +1642,7 @@ def main() -> None:
     elif args.command == "schedule":
         cmd_schedule(args.scan_json, args.plan_json, output_file=args.output)
     elif args.command == "build-records":
-        cmd_build_records(args.scan_json, args.schedule_json, args.content_json, args.output_json)
+        cmd_build_records(args.scan_json, args.schedule_json, args.content_json, args.output_json, seed=args.seed)
     elif args.command == "create":
         if args.dry_run and args.retry_failed:
             print("错误：--dry-run 和 --retry-failed 不能同时使用", file=sys.stderr)
@@ -1284,9 +1658,23 @@ def main() -> None:
             output_file=args.output,
         )
     elif args.command == "postprocess":
-        cmd_postprocess(args.records_json, args.results_json, output_file=args.output)
+        cmd_postprocess(args.records_json, args.results_json, output_file=args.output, batch_size=args.batch_size)
+    elif args.command == "summarize-postprocess":
+        cmd_summarize_postprocess(args.files, output_file=args.output)
+    elif args.command == "export-preview":
+        cmd_export_preview(args.records_json, args.output_dir)
     elif args.command == "archive":
         cmd_archive(args.source_dir, args.target_dir, args.schedule_json)
+    elif args.command == "token-summary":
+        cmd_token_summary(
+            scan_json_file=args.scan,
+            schedule_json_file=args.schedule,
+            records_json_file=args.records,
+            create_results_json_file=args.create_results,
+            postprocess_results_json_file=args.postprocess_results,
+            phase=args.phase,
+            output_file=args.output,
+        )
 
 
 if __name__ == "__main__":
