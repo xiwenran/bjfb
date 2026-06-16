@@ -68,6 +68,26 @@ def zhifa_post(path: str, payload: dict, timeout: int = 60) -> dict:
         sys.exit(1)
 
 
+def zhifa_get(path: str, timeout: int = 30) -> dict:
+    """GET from zhifa API, return parsed response."""
+    url = ZHIFA_BASE + path
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body)
+    except urllib.error.URLError as e:
+        if "Connection refused" in str(e) or "connection refused" in str(e):
+            print("知发服务未运行，请打开知发 App（localhost:3210）", file=sys.stderr)
+        else:
+            print(f"请求失败：{e}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"HTTP {e.code} 错误：{body}", file=sys.stderr)
+        sys.exit(1)
+
+
 def read_json_file(file_path: str):
     with open(file_path, encoding="utf-8") as f:
         return json.load(f)
@@ -1569,6 +1589,104 @@ def cmd_export_preview(records_json_file: str, output_dir: str) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+def cmd_verify(create_results_json: str, output_file: str | None = None) -> None:
+    """
+    verify 子命令：读取 cmd_create 产出的上传结果 JSON，
+    查知发 /api/records?status=all 按 recordId 比对，
+    落盘结构化 verify JSON 凭据。
+
+    使用 recordId 而非 noteKey，是因为 postprocess 会清空飞书「笔记主题」字段，
+    导致 noteKey 在飞书侧消失，使用 recordId 不受此影响。
+    """
+    create_results_json = os.path.expanduser(create_results_json)
+    if not os.path.isfile(create_results_json):
+        print(f"create 结果文件不存在：{create_results_json}", file=sys.stderr)
+        sys.exit(1)
+
+    create_data = read_json_file(create_results_json)
+
+    # 支持两种格式：直接的 results 数组，或 {results: [...]} 对象
+    if isinstance(create_data, list):
+        all_results = create_data
+    elif isinstance(create_data, dict):
+        # 可能在 batches[*].results 里，或直接在 results 里
+        if "results" in create_data:
+            all_results = create_data["results"]
+        elif "batches" in create_data:
+            all_results = []
+            for batch in create_data.get("batches", []):
+                all_results.extend(batch.get("results", []))
+        else:
+            print("create 结果 JSON 格式不识别，需包含 results 或 batches 字段", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("create 结果 JSON 格式不识别", file=sys.stderr)
+        sys.exit(1)
+
+    # 从 success 条目提取期望 recordId 集合
+    expected_record_ids: set[str] = set()
+    for r in all_results:
+        if isinstance(r, dict) and r.get("status") == "success":
+            rid = r.get("recordId")
+            if rid:
+                expected_record_ids.add(str(rid))
+
+    expected_count = len(expected_record_ids)
+    batch_id = os.path.basename(create_results_json)
+
+    print(f"从 create 结果读取到 {expected_count} 条成功记录（按 recordId），正在查询知发飞书记录...")
+
+    # 查知发 /api/records?status=all 获取当前所有记录
+    resp = zhifa_get("/api/records?status=all")
+    if not resp.get("success"):
+        print(f"知发 API 返回失败：{resp}", file=sys.stderr)
+        sys.exit(1)
+
+    all_feishu_records = resp.get("data", [])
+
+    # 按 recordId 构建实际存在集合（parseRecord 返回字段 recordId = record.record_id）
+    actual_record_ids: set[str] = set()
+    for rec in all_feishu_records:
+        rid = rec.get("recordId") or rec.get("record_id") or ""
+        if rid:
+            actual_record_ids.add(str(rid))
+
+    missing = sorted(expected_record_ids - actual_record_ids)
+    actual_found = len(expected_record_ids & actual_record_ids)
+    status = "ok" if not missing else "mismatch"
+
+    now_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    if not output_file:
+        output_file = f"/tmp/zhifa_verify_{now_str}.json"
+    output_path = os.path.expanduser(output_file)
+
+    verify_data = {
+        "verifiedAt": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "batchId": batch_id,
+        "expected_count": expected_count,
+        "actual_count": actual_found,
+        "missing": missing,
+        "status": status,
+        "timestamp": now_str,
+    }
+
+    write_json_file(output_path, verify_data)
+
+    # 打印摘要
+    ok_symbol = "✅" if status == "ok" else "❌"
+    print(
+        f"\n验证结果：expected_count={expected_count} actual_count={actual_found} "
+        f"缺失={len(missing)} → {ok_symbol} {status.upper()}"
+    )
+    if missing:
+        print(f"\n缺失 recordId（{len(missing)} 条）：")
+        for rid in missing[:20]:
+            print(f"  - {rid}")
+        if len(missing) > 20:
+            print(f"  ...（共 {len(missing)} 条，详见凭据文件）")
+    print(f"\n凭据已写入：{output_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="zhifa Skill 辅助脚本——扫描合成图文件夹 / 上传记录到知发"
@@ -1679,6 +1797,15 @@ def main() -> None:
     )
     token_summary_parser.add_argument("--output", default=None, help="输出 summary JSON 路径（默认仅打印到 stdout）")
 
+    # verify 子命令（U1 防谎报）
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="核查 create 上传结果：按 recordId 查知发飞书记录，落盘结构化凭据 JSON",
+    )
+    verify_parser.add_argument("create_results_json", help="cmd_create 产出的上传结果 JSON 文件路径")
+    verify_parser.add_argument("--output", default=None, help="凭据输出路径（默认 /tmp/zhifa_verify_<时间戳>.json）")
+
+
     args = parser.parse_args()
 
     if args.command == "scan":
@@ -1723,6 +1850,8 @@ def main() -> None:
             phase=args.phase,
             output_file=args.output,
         )
+    elif args.command == "verify":
+        cmd_verify(args.create_results_json, output_file=args.output)
 
 
 if __name__ == "__main__":

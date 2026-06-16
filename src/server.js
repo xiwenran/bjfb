@@ -467,9 +467,13 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/records') {
     try {
       ensureFeishuConfigReady();
-      const records = await feishu.getUnpublishedRecords();
-      const parsed = records.map(r => decorateRecord(feishu.parseRecord(r)));
-      return sendJson(res, { success: true, data: parsed });
+      // ?status=all 时返回所有状态的记录（含待处理/已发布等），供 verify 子命令核查真实写入
+      const statusParam = parsed.query && parsed.query.status;
+      const records = statusParam === 'all'
+        ? await feishu.getRecords()
+        : await feishu.getUnpublishedRecords();
+      const decorated = records.map(r => decorateRecord(feishu.parseRecord(r)));
+      return sendJson(res, { success: true, data: decorated });
     } catch (e) {
       return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
@@ -1029,6 +1033,10 @@ const server = http.createServer(async (req, res) => {
       const results = [];
       const total = records.length;
       let current = 0;
+      // 整批计时（U0 耗时体检）
+      const t_batch_start = Date.now();
+      let totalAiMs = 0, totalUploadMs = 0, totalFeishuMs = 0;
+      let countAi = 0, countUpload = 0, countFeishu = 0;
       // 跟踪每条记录用到的图片路径,本批结束后清掉成功记录的 recovery 缓存,
       // 失败的保留供下次重试复用(B4 断点续传)
       const recordImagesByNoteKey = new Map();
@@ -1217,7 +1225,12 @@ const server = http.createServer(async (req, res) => {
                   douyinAccount: normalizedDouyinAccount,
                   imagePaths: images.map(i => i.path), // 传实际路径供 AI 视觉识别
                 };
+                // U0 耗时埋点：AI 生成
+                const t0_ai = Date.now();
                 const aiResult = await generateContent(aiConfig, aiRecord);
+                const aiMs = Date.now() - t0_ai;
+                totalAiMs += aiMs; countAi++;
+                writeImportLog('AI生成耗时', { noteKey, ms: aiMs });
                 aiTitle = aiResult.title || '';
                 aiDescription = aiResult.description || '';
                 aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
@@ -1273,6 +1286,8 @@ const server = http.createServer(async (req, res) => {
         recordImagesByNoteKey.set(noteKey, imagePathsForRecord);
         let uploadedImageTokens = [];
         try {
+          // U0 耗时埋点：图片上传
+          const t0_upload = Date.now();
           const uploaded = await feishu.uploadLocalImagesToFeishu(
             imagePathsForRecord,
             {
@@ -1284,6 +1299,9 @@ const server = http.createServer(async (req, res) => {
             }
           );
           uploadedImageTokens = uploaded.map(u => ({ file_token: u.fileToken }));
+          const uploadMs = Date.now() - t0_upload;
+          totalUploadMs += uploadMs; countUpload++;
+          writeImportLog('图片上传耗时', { noteKey, imageCount: imagePathsForRecord.length, ms: uploadMs });
         } catch (uploadErr) {
           results.push({ noteKey, status: 'failed', reason: 'upload_error', message: uploadErr.message });
           pushImportProgress(noteKey, 'failed');
@@ -1397,8 +1415,13 @@ const server = http.createServer(async (req, res) => {
           },
         });
         try {
+          // U0 耗时埋点：建/更新飞书记录
+          const t0_feishu = Date.now();
           if (isOverwrite) {
             await feishu.updateRecord(overwriteId, fields);
+            const feishuMs = Date.now() - t0_feishu;
+            totalFeishuMs += feishuMs; countFeishu++;
+            writeImportLog('建飞书记录耗时', { noteKey, op: 'update', ms: feishuMs });
             writeImportLog(`updateRecord 成功 noteKey=${noteKey}`, { recordId: overwriteId });
             results.push({
               noteKey,
@@ -1409,6 +1432,9 @@ const server = http.createServer(async (req, res) => {
             });
           } else {
             const { recordId } = await feishu.createRecord(fields);
+            const feishuMs = Date.now() - t0_feishu;
+            totalFeishuMs += feishuMs; countFeishu++;
+            writeImportLog('建飞书记录耗时', { noteKey, op: 'create', ms: feishuMs });
             writeImportLog(`createRecord 成功 noteKey=${noteKey}`, { recordId });
             results.push({
               noteKey,
@@ -1437,6 +1463,20 @@ const server = http.createServer(async (req, res) => {
           });
           pushImportProgress(noteKey, 'failed');
         }
+      }
+
+      // U0 耗时埋点：整批汇总
+      {
+        const batchMs = Date.now() - t_batch_start;
+        const totalPhaseMs = totalAiMs + totalUploadMs + totalFeishuMs;
+        const pct = (ms) => totalPhaseMs > 0 ? `${((ms / totalPhaseMs) * 100).toFixed(1)}%` : 'N/A';
+        writeImportLog('整批上传耗时汇总', {
+          total: total,
+          batchMs,
+          AI生成: { count: countAi, totalMs: totalAiMs, avgMs: countAi > 0 ? Math.round(totalAiMs / countAi) : 0, pct: pct(totalAiMs) },
+          图片上传: { count: countUpload, totalMs: totalUploadMs, avgMs: countUpload > 0 ? Math.round(totalUploadMs / countUpload) : 0, pct: pct(totalUploadMs) },
+          建飞书记录: { count: countFeishu, totalMs: totalFeishuMs, avgMs: countFeishu > 0 ? Math.round(totalFeishuMs / countFeishu) : 0, pct: pct(totalFeishuMs) },
+        });
       }
 
       // 整批结束:对成功的记录,把对应图片路径从 recovery 缓存清掉(避免长期堆积);
