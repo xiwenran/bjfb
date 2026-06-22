@@ -22,6 +22,7 @@ import csv
 import datetime
 import json
 import os
+import pathlib
 import random
 import re
 import shutil
@@ -248,17 +249,17 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
     }
 
 
-def resolve_window_publish_times(schedule: list[dict], rng: random.Random | None = None) -> dict[str, str]:
+def resolve_window_publish_times(schedule: list[dict], rng: random.Random | None = None) -> dict[int, str]:
     rng = rng or random
-    grouped: dict[str, list[str]] = {}
-    for item in schedule:
+    # 按时间窗字符串分组，值为该时间窗内所有记录的下标（index）
+    grouped: dict[str, list[int]] = {}
+    for i, item in enumerate(schedule):
         raw_publish_time = str(item.get("publishTime") or "").strip()
-        note_key = str(item.get("noteKey") or "").strip()
         if TIME_WINDOW_RE.match(raw_publish_time):
-            grouped.setdefault(raw_publish_time, []).append(note_key)
+            grouped.setdefault(raw_publish_time, []).append(i)
 
-    resolved: dict[str, str] = {}
-    for raw_window, note_keys in grouped.items():
+    resolved: dict[int, str] = {}
+    for raw_window, indices in grouped.items():
         matched = TIME_WINDOW_RE.match(raw_window)
         if not matched:
             continue
@@ -271,14 +272,14 @@ def resolve_window_publish_times(schedule: list[dict], rng: random.Random | None
             raise ValueError(f"非法时间窗：{raw_window}")
 
         total_minutes = int((end_dt - start_dt).total_seconds() // 60)
-        if total_minutes < len(note_keys):
-            raise ValueError(f"时间窗容量不足：{raw_window} 只有 {total_minutes} 分钟，无法分配 {len(note_keys)} 条记录")
+        if total_minutes < len(indices):
+            raise ValueError(f"时间窗容量不足：{raw_window} 只有 {total_minutes} 分钟，无法分配 {len(indices)} 条记录")
 
-        minute_offsets = sorted(rng.sample(range(total_minutes), len(note_keys)))
-        shuffled_keys = note_keys[:]
-        rng.shuffle(shuffled_keys)
-        for note_key, minute_offset in zip(shuffled_keys, minute_offsets):
-            resolved[note_key] = (start_dt + datetime.timedelta(minutes=minute_offset)).strftime("%Y-%m-%d %H:%M")
+        minute_offsets = sorted(rng.sample(range(total_minutes), len(indices)))
+        shuffled_indices = indices[:]
+        rng.shuffle(shuffled_indices)
+        for idx, minute_offset in zip(shuffled_indices, minute_offsets):
+            resolved[idx] = (start_dt + datetime.timedelta(minutes=minute_offset)).strftime("%Y-%m-%d %H:%M")
 
     return resolved
 
@@ -668,6 +669,24 @@ def validate_records_for_dry_run(records: list) -> bool:
                         account_time_seen.add(time_pair)
     check_results.append(("No duplicates", violations))
 
+    violations = []
+    if isinstance(records, list):
+        for i, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            title = record.get("title")
+            title_str = str(title).strip() if title is not None else ""
+            title_len = len(title_str)
+            if title_len == 0:
+                violations.append(
+                    f"records[{i}] title 为空（noteKey={record.get('noteKey', '')}）"
+                )
+            elif not (10 <= title_len <= 20):
+                violations.append(
+                    f"records[{i}] title 字数 {title_len} 不在 10–20 范围内（noteKey={record.get('noteKey', '')}，title={title_str!r}）"
+                )
+    check_results.append(("Title length", violations))
+
     for label, violations in check_results:
         if violations:
             print(f"❌ {label}：{len(violations)} 个问题")
@@ -681,7 +700,7 @@ def validate_records_for_dry_run(records: list) -> bool:
         print(f"\nDry run 失败：共 {len(all_violations)} 个问题。")
         return False
 
-    print(f"\nDry run 通过：{len(records)} 条记录已完成 6 项本地结构校验。")
+    print(f"\nDry run 通过：{len(records)} 条记录已完成 7 项本地结构校验。")
     print("提示：dry-run 不检查标题公式、标题吸引力或文案质量；标题仍需按 ai-writer SYSTEM_PROMPT 单独审查。")
     return True
 
@@ -825,14 +844,33 @@ def cmd_materialize_covers(scan_json_file: str) -> None:
         notes = topic_entry.get("notes") or []
         cover_candidates = collect_cover_candidates(topic_path)
         if not cover_candidates:
-            updated_topics.append({
-                "topic": topic_name,
-                "copied": 0,
-                "skipped": len(notes),
-                "reason": "主题根目录未发现可复制的封面",
-            })
-            total_skipped += len(notes)
-            continue
+            # path 为空或找不到封面时，尝试从各 note 的 folderPath 向上查找（最多 3 层）
+            fallback_candidates: list[dict] = []
+            for note in notes:
+                folder_path = str(note.get("folderPath") or "")
+                if not folder_path:
+                    continue
+                search_path = pathlib.Path(folder_path)
+                for _ in range(3):
+                    search_path = search_path.parent
+                    if not search_path.is_dir():
+                        break
+                    candidates = collect_cover_candidates(str(search_path))
+                    if candidates:
+                        fallback_candidates = candidates
+                        break
+                if fallback_candidates:
+                    break
+            if not fallback_candidates:
+                updated_topics.append({
+                    "topic": topic_name,
+                    "copied": 0,
+                    "skipped": len(notes),
+                    "reason": "主题根目录及 folderPath 向上 3 层均未发现可复制的封面",
+                })
+                total_skipped += len(notes)
+                continue
+            cover_candidates = fallback_candidates
 
         copied_for_topic = 0
         skipped_for_topic = 0
@@ -962,7 +1000,7 @@ def cmd_build_records(
         sys.exit(1)
 
     records = []
-    for item in schedule:
+    for i, item in enumerate(schedule):
         note_key = str(item.get("noteKey") or "")
         note_hit = note_map.get(note_key)
         if not note_hit:
@@ -985,7 +1023,7 @@ def cmd_build_records(
             "videos": note.get("videos") or [],
             "xiaohongshuAccount": account if platform == "xiaohongshu" else "",
             "douyinAccount": account if platform == "douyin" else "",
-            "publishTime": resolved_publish_times.get(note_key, str(item.get("publishTime") or "")),
+            "publishTime": resolved_publish_times.get(i, str(item.get("publishTime") or "")),
             "xiaohongshuChannel": str(content.get("xiaohongshuChannel") or "蚁小二") if platform == "xiaohongshu" else "",
             "title": str(content.get("title") or ""),
             "description": str(content.get("description") or ""),
