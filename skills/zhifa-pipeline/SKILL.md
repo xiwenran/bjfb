@@ -87,26 +87,23 @@ cat ~/Library/Application\ Support/Zhifa/accounts.json
 ```json
 {
   "xiaohongshu": ["账号A", "账号B"],
-  "douyin": ["账号C"],
+  "douyin": ["账号C", "小林老师"],
   "accountGroups": {
-    "教务资料": {
+    "综合类": {
       "xiaohongshu": ["账号A", "账号B"],
       "douyin": ["账号C"]
     },
-    "英语类": {
+    "初高中": {
       "xiaohongshu": ["账号A"],
-      "douyin": [],
-      "douyinMode": "manual"
-    },
-    "综合类": {
-      "xiaohongshu": ["账号B"],
-      "douyin": ["账号C"]
+      "douyin": ["小林老师"]
     }
   },
   "accountGroupAliases": {
-    "教务类": "教务资料",
-    "英语": "英语类",
-    "中考语法": "英语类",
+    "教务类": "综合类",
+    "班会": "综合类",
+    "家长会": "综合类",
+    "英语": "初高中",
+    "中考语法": "初高中",
     "综合组": "综合类"
   }
 }
@@ -117,10 +114,10 @@ cat ~/Library/Application\ Support/Zhifa/accounts.json
 **账号分组优先级**：
 1. 用户本次 CHECKLIST 明确写出的账号 / 分组账号规则，优先级最高
 2. `accounts.json.accountGroups[内容分组]` 命中时，作为默认推荐
-3. 未精确命中时，先查 `accounts.json.accountGroupAliases[内容分组]`；例如 `教务类` → `教务资料`、`中考语法` → `英语类`
+3. 未精确命中时，先查 `accounts.json.accountGroupAliases[内容分组]`；例如 `教务类` → `综合类`、`中考语法` → `初高中`
 4. 别名仍未命中时，允许做规范化模糊匹配：去掉 `类/组/资料/素材` 等泛化后缀后再比较；只能在唯一命中时自动映射，多候选必须回问
 5. 未命中分组配置时，只能把旧版平台平铺账号清单展示为候选，不得自动全选
-6. 内容分组名包含 `英语`、`语法` 或 `中考语法` 时，默认归入 `英语类`；英语类抖音默认 `manual`，不自动生成抖音记录，除非用户明确说“这组也自动发抖音”
+6. 内容分组名包含 `英语`、`语法` 或 `中考语法` 时，默认归入 `初高中`；初高中分组按 `accounts.json` 中配置的小红书/抖音账号自动生成记录
 7. 缺账号、起止日期或时间段时，必须以选项形式追问用户，不能继续调度矩阵生成
 
 **CHECKLIST 未填写 = 不启动流程**。
@@ -236,7 +233,7 @@ python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json
 - 日期、时间窗、首日开始时间、每账号篇数
 - 用户额外约束，如同账号最小间隔、同主题分散要求；共享执行层暂不支持的约束必须标明“本轮人工排期约束”，并在收尾列入待产品化项
 
-**跨平台素材复用**：小红书和抖音是独立发布平台，同一篇素材笔记可以各自生成一条发布记录；排期器只禁止同一平台内重复使用同一 `noteKey`，不得把小红书已用过的素材全局排除给抖音。典型场景：教务类 8 篇真实笔记，小红书 4 个账号 × 2 天 = 8 条，抖音 3 个账号 × 2 天 = 6 条，应该可以同时排满。
+**跨平台素材复用**：小红书和抖音是独立发布平台，同一篇素材笔记可以各自生成一条发布记录；排期器只禁止同一平台内重复使用同一 `noteKey`，不得把小红书已用过的素材全局排除给抖音。典型场景：综合类 8 篇真实笔记，小红书 4 个账号 × 2 天 = 8 条，抖音 3 个账号 × 2 天 = 6 条，应该可以同时排满。
 
 校验不通过 → **立即停下报告，不允许继续上传**。特别是同账号模板严重集中、同一 noteKey 重复、账号+发布时间重复、图片路径不存在，都不能带病上传。
 
@@ -343,7 +340,7 @@ python3 ~/zhifa/scripts/skill_upload.py schedule <scan.json> <plan.json> --outpu
 ```
 
 - `plan.json`：由用户确认后的分组账号规则、覆盖策略、日期、时间窗、每账号篇数构造
-- `accounts`：必须按 `accountGroups` / `accountGroupAliases` 展开到内容分组，英语/语法分组默认不展开抖音账号
+- `accounts`：必须按 `accountGroups` / `accountGroupAliases` 展开到内容分组，英语/语法分组默认映射到 `初高中` 并按配置展开抖音账号
 - `coverageStrategy`：必须来自用户显式确认
 - `timeWindows` / `timeSlots`：允许使用日常时间窗口径；`build-records` 会展开成具体分钟
 
