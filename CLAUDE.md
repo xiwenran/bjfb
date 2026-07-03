@@ -10,7 +10,26 @@
 **定位**：飞书多维表格驱动的笔记多平台自动发布桌面工具（Electron）
 **支持平台**：小红书（蚁小二 API / 比特浏览器 Playwright）、抖音（蚁小二）
 **GitHub**：https://github.com/xiwenran/bjfb
+**本地路径**：`~/zhifa/`（GitHub 仓库名 `bjfb`，本地目录名 `zhifa`，注意映射不一致）
+**主要流程入口**：`zhifa-pipeline`（PPT→做+发全链路）/ `zhifa-upload`（已合成笔记排期发布）
 **用户语言**：中文（与用户沟通请用中文）
+
+---
+
+## 项目坐标（AI 找本项目信息的固定入口）
+
+Obsidian 里本项目名为**知发**（不是 zhifa/bjfb）。找本项目的方案/进度/风险 → 直接读这几个路径，不用扫全库：
+
+| 类别 | 路径 |
+|---|---|
+| 项目主线 roadmap（本地） | `~/zhifa/docs/roadmap.md` |
+| Obsidian 项目主页 | `~/Obsidian/PersonalWiki/项目/知发/README.md` |
+| Obsidian changelog / 进度 | `~/Obsidian/PersonalWiki/项目/知发/changelog/`（按日期命名，取目录列表最新一个） |
+| Obsidian 业务约束 | `~/Obsidian/PersonalWiki/项目/知发/业务约束.md` |
+| Obsidian 已知风险 | `~/Obsidian/PersonalWiki/项目/知发/已知风险.md` |
+| Obsidian 踩坑记录 | `~/Obsidian/PersonalWiki/项目/知发/踩坑记录.md` |
+
+> 坐标卡只存**常青入口的固定路径**；具体内容会变，查最新进度需要实际读文件。
 
 ---
 
@@ -470,12 +489,7 @@ npm run git:sync -- "提交信息"  # add + commit + push
 
 ---
 
-## ⚡ Echo 会话检查清单（每次任务完成前必查）
+## 项目专属护栏（全局规则外的补充）
 
-完成任何实质性改动后，**在报告完成之前**，按顺序检查：
-
-1. **高风险改动**（发布逻辑 / 写库 / 防误操作 / 蚁小二发布链路）→ 冷眼审查（派独立子代理只看 diff + 需求）
-2. **方向性问题**（项目定位、产品路线、架构主线；用户表达「要不要 / 像 A 还是像 B / 感觉但不确定」；或主会话准备列出 ≥2 个互斥方向）→ 先停下，说「这是方向性问题，建议三省讨论」
-3. **有实质改动或有价值讨论** → 先盘点本轮项目事实、经验、决策、方案和思维框架，再按 Obsidian A-I 路由判断写入位置。项目 changelog 只记录项目事实；跨项目经验和思维框架另行进入 `认知/经验性/` 或 `认知/哲科性/`。
-4. **git push 前** → 脱敏扫描（绝对路径 / token / 邮箱 / AppID / 飞书 cli_xxx）
-5. **规则文件改动** → 检查 rule-sync-matrix.yml 同步状态
+- **蚁小二发布链路**属于本项目高风险面，任何涉及它的改动同样触发全局"高风险改动 → 冷眼审查"规则（详见 `~/.claude/CLAUDE.md`）。
+- 其余通用护栏（冷眼审查 / 圆桌 / Obsidian 捕获 / 脱敏 / 规则同步）均以全局 CLAUDE.md 为准，本文件不再重抄，源头改则处处改。
