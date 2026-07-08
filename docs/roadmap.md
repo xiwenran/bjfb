@@ -18,6 +18,8 @@
   - 独立冷眼审查通过；commit 后重打包+覆盖安装+核对 UI commit hash。
 - **阻断条件**：发现方案外功能想法只入发现清单；SKILL 文档与 prompt 不一致时停下对齐。
 - **状态**：✅ 已完成（commit 42d2075。验证：tests/ai-writer-validate 17 pass + server-import-create-records 2 pass；旧口径 grep 零残留；独立冷眼审查有条件通过、P1/P2 已修复复测通过；dist:mac 打包 build-info 注入 42d2075 并已覆盖安装 /Applications。**尾巴**：运行中 App 仍是旧版 13d2da7，待用户重启后在 UI 左下角核对 hash=42d2075；用户计划观察一段时间标题/正文实际效果）
+- **观察期修复**：2026-07-08 场景词越权 bug ✅（主题无场景词的备课课件被写成"暑假预习"；prompt 补课型判断第5-6条 + validateGenerated 场景词机械兜底，正文层按冷眼审查建议收敛防误伤教学动作描述。commit 2e6a785，验证：ai-writer-validate 24 pass + import 2 pass）
+- **待补机械校验**（发现清单）：标题"必须含且仅含一个全角逗号分隔双层"暂无机械检查，标题无逗号时场景词检查退化为整句、可能误伤钩子文案；后续单独补
 
 ---
 
