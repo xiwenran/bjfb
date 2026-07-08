@@ -33,8 +33,6 @@ import urllib.request
 from collections import Counter
 
 ZHIFA_BASE = "http://localhost:3210"
-MIN_SAME_ACCOUNT_INTERVAL_MINUTES = 360
-MIN_SAME_ACCOUNT_INTERVAL_SECONDS = MIN_SAME_ACCOUNT_INTERVAL_MINUTES * 60
 SCAN_RESULT_TMP = "/tmp/zhifa_scan_result.json"
 SCAN_MANY_RESULT_TMP = "/tmp/zhifa_scan_many_result.json"
 FAILED_UPLOAD_TMP = "/tmp/zhifa_upload_failed.json"
@@ -239,7 +237,7 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
     if not isinstance(time_windows, dict):
         raise ValueError("调度参数缺少 timeWindows 对象")
 
-    return {
+    normalized = {
         "accounts": accounts,
         "timeSlots": {
             "regular": [normalize_window_entry(item) for item in (time_windows.get("regular") or [])],
@@ -247,6 +245,9 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
         },
         "perAccountPerSlot": payload.get("perAccountPerSlot", 1),
     }
+    if "minSameAccountIntervalMinutes" in payload:
+        normalized["minSameAccountIntervalMinutes"] = payload.get("minSameAccountIntervalMinutes")
+    return normalized
 
 
 def resolve_window_publish_times(schedule: list[dict], rng: random.Random | None = None) -> dict[int, str]:
@@ -494,44 +495,55 @@ def platform_account_values(record: dict) -> list[tuple[str, str, str]]:
     return accounts
 
 
-def find_same_account_interval_violations(records: list) -> list[str]:
-    violations: list[str] = []
+def extract_constraints(payload) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    constraints = payload.get("constraints")
+    if not isinstance(constraints, dict):
+        return {}
+    return dict(constraints)
+
+
+def get_min_same_account_interval_minutes(constraints: dict | None) -> int:
+    if not isinstance(constraints, dict):
+        return 0
+    value = constraints.get("minSameAccountIntervalMinutes")
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return minutes if minutes > 0 else 0
+
+
+def find_same_account_interval_violations(records: list, min_interval_minutes: int) -> list[str]:
+    violations = []
     timed_groups: dict[str, list[tuple[datetime.datetime, str, str]]] = {}
     if not isinstance(records, list):
-        return ["records 必须是数组，无法执行同账号 6 小时间隔校验"]
-
+        return ["records 必须是数组，无法执行同账号间隔校验"]
     for i, record in enumerate(records):
         if not isinstance(record, dict):
             continue
-        accounts = platform_account_values(record)
-        if not accounts:
-            continue
         try:
             publish_time = parse_publish_time(record.get("publishTime"))
-        except ValueError as exc:
-            for _, platform, account in accounts:
-                violations.append(f"records[{i}] {platform}:{account} 发布时间无法解析：{exc}")
+        except ValueError as e:
+            violations.append(f"records[{i}].publishTime {e}")
             continue
-        note_key = str(record.get("noteKey") or f"records[{i}]")
-        for account_key, platform, account in accounts:
+        for account_key, platform, account in platform_account_values(record):
             group_key = f"{account_key}:{account}"
-            timed_groups.setdefault(group_key, []).append((publish_time, note_key, f"{platform}:{account}"))
-
+            account_label = f"{platform}:{account}"
+            timed_groups.setdefault(group_key, []).append((publish_time, str(record.get("noteKey", "")), account_label))
     for items in timed_groups.values():
         items.sort(key=lambda item: item[0])
         for (prev_time, prev_key, account_label), (next_time, next_key, _) in zip(items, items[1:]):
-            gap_seconds = (next_time - prev_time).total_seconds()
-            if gap_seconds < MIN_SAME_ACCOUNT_INTERVAL_SECONDS:
-                gap_minutes = int(gap_seconds // 60)
+            gap_minutes = (next_time - prev_time).total_seconds() / 60
+            if gap_minutes < min_interval_minutes:
                 violations.append(
-                    f"{account_label} 时间间隔不足 {MIN_SAME_ACCOUNT_INTERVAL_MINUTES} 分钟："
-                    f"{prev_key} @ {prev_time.strftime('%Y-%m-%d %H:%M')} 与 "
-                    f"{next_key} @ {next_time.strftime('%Y-%m-%d %H:%M')}（间隔 {gap_minutes} 分钟）"
+                    f"{account_label} 时间间隔不足 {min_interval_minutes} 分钟：{prev_key} 与 {next_key}"
                 )
     return violations
 
 
-def validate_records_for_dry_run(records: list) -> bool:
+def validate_records_for_dry_run(records: list, constraints: dict | None = None) -> bool:
     """Run local validation checks for create --dry-run."""
     check_results = []
     all_violations = []
@@ -637,8 +649,12 @@ def validate_records_for_dry_run(records: list) -> bool:
                     )
     check_results.append(("Time interval", violations))
 
-    violations = find_same_account_interval_violations(records)
-    check_results.append(("Same account 6 hour guard", violations))
+    min_same_account_interval_minutes = get_min_same_account_interval_minutes(constraints)
+    if min_same_account_interval_minutes > 0:
+        check_results.append((
+            "Conditional same-account interval",
+            find_same_account_interval_violations(records, min_same_account_interval_minutes),
+        ))
 
     violations = []
     note_platform_seen: set[tuple[str, str]] = set()
@@ -700,12 +716,12 @@ def validate_records_for_dry_run(records: list) -> bool:
         print(f"\nDry run 失败：共 {len(all_violations)} 个问题。")
         return False
 
-    print(f"\nDry run 通过：{len(records)} 条记录已完成 7 项本地结构校验。")
+    print(f"\nDry run 通过：{len(records)} 条记录已完成 6 项本地结构校验。")
     print("提示：dry-run 不检查标题公式、标题吸引力或文案质量；标题仍需按 ai-writer SYSTEM_PROMPT 单独审查。")
     return True
 
 
-def validate_records_for_create(records: list) -> bool:
+def validate_records_for_create(records: list, constraints: dict | None = None) -> bool:
     """Run upload-blocking checks that are safe for all supported scan shapes."""
     violations = []
     note_platform_seen: set[tuple[str, str]] = set()
@@ -753,7 +769,9 @@ def validate_records_for_create(records: list) -> bool:
                     else:
                         account_time_seen.add(time_pair)
 
-    violations.extend(find_same_account_interval_violations(records))
+    min_same_account_interval_minutes = get_min_same_account_interval_minutes(constraints)
+    if min_same_account_interval_minutes > 0:
+        violations.extend(find_same_account_interval_violations(records, min_same_account_interval_minutes))
 
     if violations:
         print(f"❌ 上传前硬校验失败：{len(violations)} 个问题")
@@ -942,6 +960,11 @@ def cmd_schedule(scan_json_file: str, plan_json_file: str, output_file: str | No
         "noteFolders": note_folders,
     }
     result = zhifa_post("/api/import/schedule", request_payload)
+    min_same_account_interval_minutes = get_min_same_account_interval_minutes(payload)
+    if isinstance(result, dict) and min_same_account_interval_minutes > 0:
+        result["constraints"] = {
+            "minSameAccountIntervalMinutes": min_same_account_interval_minutes,
+        }
     output_path = os.path.expanduser(output_file) if output_file else "/tmp/zhifa_schedule_result.json"
     write_json_file(output_path, result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -1030,8 +1053,19 @@ def cmd_build_records(
             "tags": content.get("tags") if isinstance(content.get("tags"), list) else [],
         })
 
+    output_payload = {"records": records}
+    min_same_account_interval_minutes = 0
+    if isinstance(schedule_payload, dict):
+        min_same_account_interval_minutes = get_min_same_account_interval_minutes(
+            extract_constraints(schedule_payload)
+        ) or get_min_same_account_interval_minutes(schedule_payload)
+    if min_same_account_interval_minutes > 0:
+        output_payload["constraints"] = {
+            "minSameAccountIntervalMinutes": min_same_account_interval_minutes,
+        }
+
     output_path = os.path.expanduser(output_file)
-    write_json_file(output_path, {"records": records})
+    write_json_file(output_path, output_payload)
     print(f"已生成 {len(records)} 条 records")
     print(f"（records JSON 已写入 {output_path}）")
 
@@ -1074,8 +1108,10 @@ def cmd_create(
     # 支持两种格式：直接的 records 数组，或 {"records": [...]} 对象
     if isinstance(payload, list):
         records = payload
+        constraints = {}
     elif isinstance(payload, dict) and "records" in payload:
         records = payload["records"]
+        constraints = extract_constraints(payload)
     else:
         print("JSON 格式错误：需要 {\"records\": [...]} 或直接的数组", file=sys.stderr)
         sys.exit(1)
@@ -1091,11 +1127,11 @@ def cmd_create(
         print(f"retry-failed：从 {before_retry_filter} 条中过滤出 {len(records)} 条失败记录。")
 
     if dry_run:
-        if validate_records_for_dry_run(records):
+        if validate_records_for_dry_run(records, constraints):
             sys.exit(0)
         sys.exit(1)
 
-    if not validate_records_for_create(records):
+    if not validate_records_for_create(records, constraints):
         sys.exit(1)
 
     if not output_file:
@@ -1466,8 +1502,6 @@ def cmd_token_summary(
         missing_media: list[str] = []
         duplicate_note_key: list[str] = []
         duplicate_account_time: list[str] = []
-        same_account_interval_violations: list[str] = []
-
         note_platform_seen: set[tuple[str, str]] = set()
         account_time_seen: set[tuple[str, str, str]] = set()
 
@@ -1515,10 +1549,6 @@ def cmd_token_summary(
         pre["missing_media"] = missing_media
         pre["duplicate_note_key"] = duplicate_note_key
         pre["duplicate_account_time"] = duplicate_account_time
-        same_account_interval_violations = find_same_account_interval_violations(records)
-        pre["same_account_interval_violations"] = same_account_interval_violations
-        pre["same_account_interval_violation_count"] = len(same_account_interval_violations)
-
         summary["pre"] = pre
 
     # ── post 阶段：扫 create_results / postprocess_results，输出结果摘要 ──

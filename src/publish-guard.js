@@ -194,7 +194,7 @@ function findSameAccountIntervalViolations(entries, options = {}) {
 function canUseSameAccountSlot(lastTimestamp, nextTimestamp, minIntervalMs = MIN_SAME_ACCOUNT_INTERVAL_MS) {
   if (lastTimestamp === null || lastTimestamp === undefined) return true;
   if (!Number.isFinite(lastTimestamp) || !Number.isFinite(nextTimestamp)) return false;
-  return nextTimestamp - lastTimestamp >= Math.max(MIN_SAME_ACCOUNT_INTERVAL_MS, Number(minIntervalMs) || 0);
+  return nextTimestamp - lastTimestamp >= Math.max(0, Number(minIntervalMs) || 0);
 }
 
 module.exports = {

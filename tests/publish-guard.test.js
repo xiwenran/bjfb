@@ -58,7 +58,7 @@ test('old pending status stops keeping the dedupe marker after the guard window'
   assert.equal(keep, false);
 });
 
-test('publish guard exports the 6 hour hard interval', () => {
+test('publish guard exports the explicit 6 hour interval constant', () => {
   assert.equal(MIN_SAME_ACCOUNT_INTERVAL_MINUTES, 360);
   assert.equal(MIN_SAME_ACCOUNT_INTERVAL_MS, 21600000);
 });

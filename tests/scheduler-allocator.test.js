@@ -42,7 +42,7 @@ test('allocateImportSchedule allows note reuse across platforms but not within t
   assert.ok(dyNoteKeys.some(noteKey => xhsNoteKeys.includes(noteKey)));
 });
 
-test('allocateImportSchedule skips same platform account slots closer than 6 hours by default', () => {
+test('allocateImportSchedule allows close same-account slots when no 6 hour plan is requested', () => {
   const result = allocateImportSchedule({
     noteFolders: buildNoteFolders('教务类/期末复习', 3),
     accounts: {
@@ -59,29 +59,39 @@ test('allocateImportSchedule skips same platform account slots closer than 6 hou
 
   assert.deepEqual(result.schedule.map(item => item.publishTime), [
     '2026-06-15 09:00',
+    '2026-06-15 12:00',
     '2026-06-15 15:00',
   ]);
-  assert.equal(result.stats.scheduledCount, 2);
-  assert.equal(result.stats.unscheduledCount, 1);
-  assert.ok(result.stats.violations.some(item => item.includes('同账号间隔不足 360 分钟')));
+  assert.equal(result.stats.scheduledCount, 3);
+  assert.equal(result.stats.unscheduledCount, 0);
+  assert.deepEqual(result.stats.violations, []);
+  assert.equal(result.constraints, undefined);
 });
 
-test('allocateImportSchedule does not let a lower minSameAccountIntervalMinutes bypass the 6 hour hard guard', () => {
+test('allocateImportSchedule applies 6 hour spacing only when explicitly requested', () => {
   const result = allocateImportSchedule({
-    noteFolders: buildNoteFolders('教务类/期末复习', 2),
+    noteFolders: buildNoteFolders('教务类/期末复习', 3),
     accounts: {
       xiaohongshu_regular: ['浅浅'],
       douyin: [],
     },
     timeSlots: {
-      regular: ['2026-06-15 09:00', '2026-06-15 09:10'],
+      regular: ['2026-06-15 09:00', '2026-06-15 12:00', '2026-06-15 15:00'],
       special: [],
     },
     perAccountPerSlot: 1,
     coverageStrategy: 'minimum',
-    minSameAccountIntervalMinutes: 10,
+    minSameAccountIntervalMinutes: 360,
   });
 
-  assert.equal(result.stats.scheduledCount, 1);
+  assert.deepEqual(result.schedule.map(item => item.publishTime), [
+    '2026-06-15 09:00',
+    '2026-06-15 15:00',
+  ]);
+  assert.equal(result.stats.scheduledCount, 2);
   assert.equal(result.stats.unscheduledCount, 1);
+  assert.ok(result.stats.violations.some(item => item.includes('同账号间隔不足 360 分钟')));
+  assert.deepEqual(result.constraints, {
+    minSameAccountIntervalMinutes: 360,
+  });
 });

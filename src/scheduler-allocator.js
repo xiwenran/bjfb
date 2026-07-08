@@ -1,6 +1,4 @@
 const {
-  MIN_SAME_ACCOUNT_INTERVAL_MINUTES,
-  MIN_SAME_ACCOUNT_INTERVAL_MS,
   canUseSameAccountSlot,
   parsePublishTimestamp,
 } = require('./publish-guard.js');
@@ -145,8 +143,7 @@ function chooseNote(topic, templatesByTopic, usedPlatformNoteKeys, usedAccountTe
 
 function getEffectiveSameAccountIntervalMs(input) {
   const minutes = Number(input?.minSameAccountIntervalMinutes);
-  const requestedMs = Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : 0;
-  return Math.max(MIN_SAME_ACCOUNT_INTERVAL_MS, requestedMs);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : 0;
 }
 
 function parseSlotTimestamp(slot) {
@@ -196,7 +193,7 @@ function allocateImportSchedule(input) {
           intervalViolations.push(`${accountInfo.account}：${slot} 发布时间无法解析，已跳过`);
           continue;
         }
-        if (!canUseSameAccountSlot(lastSlotTs, slotTs, minSameAccountIntervalMs)) {
+        if (minSameAccountIntervalMs > 0 && !canUseSameAccountSlot(lastSlotTs, slotTs, minSameAccountIntervalMs)) {
           intervalViolations.push(
             `${accountInfo.account}：${slot} 同账号间隔不足 ${minSameAccountIntervalMinutes} 分钟`
           );
@@ -270,7 +267,7 @@ function allocateImportSchedule(input) {
     }
   }
 
-  return {
+  const result = {
     schedule,
     unscheduled,
     stats: {
@@ -281,6 +278,12 @@ function allocateImportSchedule(input) {
       warnings,
     },
   };
+  if (minSameAccountIntervalMs > 0) {
+    result.constraints = {
+      minSameAccountIntervalMinutes,
+    };
+  }
+  return result;
 }
 
 module.exports = {

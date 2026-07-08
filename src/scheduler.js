@@ -8,14 +8,8 @@ const {
   buildDesiredAccountNamesFromRecords,
   autoMapAccountMappings,
 } = require('./account-mapping.js');
-const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache, getHistoryPath } = require('./config-store.js');
+const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache } = require('./config-store.js');
 const { generateContent } = require('./ai-writer.js');
-const {
-  MIN_SAME_ACCOUNT_INTERVAL_MS,
-  buildSameAccountKey,
-  getRecordPlatformAccounts,
-  normalizePlatformKey,
-} = require('./publish-guard.js');
 const DEFAULT_RECENT_RECORD_GUARD_MS = 24 * 60 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
@@ -34,7 +28,6 @@ class Scheduler {
     this.stopRequested = false;
     this.pendingPublishRecords = new Map();
     this.processingRecordIds = new Set();
-    this.activeSameAccountPublishes = new Map();
     this.recentlyPublishedRecords = new Map();
     this.currentProgress = {
       active: false,
@@ -330,112 +323,6 @@ class Scheduler {
     return Math.max(1, Number(this.config.rules?.publishRecordConcurrency) || 2);
   }
 
-  getSameAccountIntervalMs() {
-    return MIN_SAME_ACCOUNT_INTERVAL_MS;
-  }
-
-  getPendingPlatformAccounts(record) {
-    return getRecordPlatformAccounts(record, {
-      pendingOnly: true,
-      isPending: status => this.isPlatformPending(status),
-    });
-  }
-
-  findRecentSameAccountHistory(platform, account, now = Date.now()) {
-    let history;
-    try {
-      const historyPath = getHistoryPath();
-      history = fs.existsSync(historyPath)
-        ? JSON.parse(fs.readFileSync(historyPath, 'utf-8'))
-        : {};
-    } catch (e) {
-      return [{
-        failClosed: true,
-        message: `读取发布历史失败：${e.message}`,
-      }];
-    }
-
-    const platformKey = normalizePlatformKey(platform);
-    const hits = [];
-    for (const [recordId, byPlatform] of Object.entries(history || {})) {
-      if (!byPlatform || typeof byPlatform !== 'object') continue;
-      for (const [historyPlatform, entries] of Object.entries(byPlatform)) {
-        if (normalizePlatformKey(historyPlatform) !== platformKey) continue;
-        if (!Array.isArray(entries)) continue;
-        for (const entry of entries) {
-          if (String(entry?.accountName || '').trim() !== account) continue;
-          const at = Number(entry?.at);
-          if (!Number.isFinite(at)) {
-            hits.push({
-              recordId,
-              failClosed: true,
-              message: `发布历史缺少有效时间戳(recordId=${recordId})`,
-            });
-            continue;
-          }
-          const ageMs = now - at;
-          if (ageMs >= 0 && ageMs < this.getSameAccountIntervalMs()) {
-            hits.push({ recordId, at, ageMs });
-          }
-        }
-      }
-    }
-    return hits;
-  }
-
-  getSameAccountPublishDeferrals(record, now = Date.now()) {
-    const deferrals = [];
-    for (const item of this.getPendingPlatformAccounts(record)) {
-      const key = buildSameAccountKey(item.platform, item.account);
-      const active = this.activeSameAccountPublishes.get(key);
-      if (active && active.recordId !== record.recordId) {
-        const activeAgeMs = now - Number(active.at || 0);
-        if (Number.isFinite(activeAgeMs) && activeAgeMs < this.getSameAccountIntervalMs()) {
-          const remainMinutes = Math.ceil((this.getSameAccountIntervalMs() - activeAgeMs) / 60000);
-          deferrals.push(`${item.platformLabel}(${item.account}) 当前已有记录《${active.title || active.recordId}》正在发布或刚提交，还需等待约 ${remainMinutes} 分钟`);
-          continue;
-        }
-        this.activeSameAccountPublishes.delete(key);
-      }
-
-      const historyHits = this.findRecentSameAccountHistory(item.platform, item.account, now);
-      for (const hit of historyHits) {
-        if (hit.failClosed) {
-          deferrals.push(`${item.platformLabel}(${item.account}) ${hit.message}`);
-        } else {
-          const remainMinutes = Math.ceil((this.getSameAccountIntervalMs() - hit.ageMs) / 60000);
-          deferrals.push(`${item.platformLabel}(${item.account}) 距离上次发布不足 6 小时(recordId=${hit.recordId})，还需等待约 ${remainMinutes} 分钟`);
-        }
-      }
-    }
-    return deferrals;
-  }
-
-  reserveSameAccountPublishes(record) {
-    const reserved = [];
-    for (const item of this.getPendingPlatformAccounts(record)) {
-      const key = buildSameAccountKey(item.platform, item.account);
-      this.activeSameAccountPublishes.set(key, {
-        recordId: record.recordId,
-        title: record.title,
-        platformLabel: item.platformLabel,
-        account: item.account,
-        at: Date.now(),
-      });
-      reserved.push(key);
-    }
-    return reserved;
-  }
-
-  releaseSameAccountPublishes(keys = [], recordId) {
-    for (const key of keys) {
-      const active = this.activeSameAccountPublishes.get(key);
-      if (!active || active.recordId === recordId) {
-        this.activeSameAccountPublishes.delete(key);
-      }
-    }
-  }
-
   getRecentRecordGuardMs() {
     return Math.max(0, Number(this.config.rules?.recentPublishedRecordGuardMs) || DEFAULT_RECENT_RECORD_GUARD_MS);
   }
@@ -563,32 +450,7 @@ class Scheduler {
       return { published: 0, failed: 0 };
     }
 
-    const deferrals = this.getSameAccountPublishDeferrals(record);
-    if (deferrals.length > 0) {
-      const entry = `同平台同账号 6 小时频控：${deferrals.join('；')}`;
-      this.log('warn', `⏳ 暂缓《${record.title}》：${entry}`);
-      try {
-        const nextNote = this.mergeNoteEntry(record.note, entry);
-        await this.feishu.setNote(record.recordId, nextNote);
-        record.note = nextNote;
-      } catch (noteErr) {
-        this.log('warn', `  ⚠️ 频控备注同步失败: ${noteErr.message}`);
-      }
-      this.setProgress({
-        active: false,
-        stage: 'idle',
-        title: '',
-        recordId: '',
-        platform: '',
-        account: '',
-        detail: `暂缓《${record.title}》（同账号 6 小时频控）`,
-      });
-      return { published: 0, failed: 0, deferred: 1 };
-    }
-
     const tmpDir = getRecordTempDir(record.recordId);
-    const reservedSameAccountKeys = this.reserveSameAccountPublishes(record);
-    let keepSameAccountReservation = false;
     try {
       this.setProgress({
         active: true,
@@ -777,7 +639,6 @@ class Scheduler {
       }
 
       if (hasSubmitted && !results.some(item => !item.success)) {
-        keepSameAccountReservation = true;
         this.setProgress({
           active: true,
           stage: 'submitted',
@@ -809,9 +670,6 @@ class Scheduler {
       await this.feishu.setNote(record.recordId, nextNote);
       return { published: 0, failed: 1 };
     } finally {
-      if (!keepSameAccountReservation) {
-        this.releaseSameAccountPublishes(reservedSameAccountKeys, record.recordId);
-      }
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
     }
   }

@@ -323,27 +323,24 @@ test('processSingleRecord should keep cloud submissions in processing status unt
   }
 });
 
-test('processSingleRecord defers same platform account publish when history is within 6 hours', async () => {
+test('processSingleRecord does not defer same platform account publish when history is within 6 hours', async () => {
   const scheduler = createScheduler();
   const originalPublishRecord = publisher.publishRecord;
   const originalGetPublishRecords = publisher.getPublishRecords;
   const originalEnsureLogin = publisher.ensureLogin;
 
-  let publishCalled = false;
-  const notes = [];
+  let publishCalls = 0;
+  const platformUpdates = [];
+  let recordMarkedPublished = false;
 
   scheduler.feishu = {
-    downloadAllAttachments: async () => {
-      throw new Error('guard should run before downloading');
+    downloadAllAttachments: async () => [],
+    markPlatformStatus: async (recordId, platform, status) => {
+      platformUpdates.push({ recordId, platform, status });
     },
-    markPlatformStatus: async () => {
-      throw new Error('deferred records should not be marked published or failed');
-    },
-    setNote: async (recordId, note) => {
-      notes.push({ recordId, note });
-    },
+    setNote: async () => {},
     markPublished: async () => {
-      throw new Error('deferred records should not be marked fully published');
+      recordMarkedPublished = true;
     },
   };
   scheduler.findLatestPublishRecord = async () => null;
@@ -357,8 +354,19 @@ test('processSingleRecord defers same platform account publish when history is w
     contentHash: 'hash-guard',
   });
   publisher.publishRecord = async () => {
-    publishCalled = true;
-    return [];
+    publishCalls += 1;
+    return [{
+      success: true,
+      finalized: true,
+      skipped: false,
+      platform: '小红书',
+      account: '六小时测试账号',
+      accountId: 'xhs-guard',
+      publishMode: '蚁小二',
+      taskMeta: null,
+      titleMeta: null,
+      musicMeta: null,
+    }];
   };
   publisher.getPublishRecords = async () => [];
   publisher.ensureLogin = async () => {};
@@ -379,10 +387,14 @@ test('processSingleRecord defers same platform account publish when history is w
   try {
     const result = await scheduler.processSingleRecord(record);
 
-    assert.equal(publishCalled, false);
-    assert.deepEqual(result, { published: 0, failed: 0, deferred: 1 });
-    assert.equal(notes.length, 1);
-    assert.match(notes[0].note, /同平台同账号 6 小时频控/);
+    assert.equal(publishCalls, 1);
+    assert.deepEqual(platformUpdates, [{
+      recordId: 'record-too-soon',
+      platform: '小红书',
+      status: '已发布',
+    }]);
+    assert.equal(recordMarkedPublished, true);
+    assert.deepEqual(result, { published: 1, failed: 0 });
   } finally {
     publisher.publishRecord = originalPublishRecord;
     publisher.getPublishRecords = originalGetPublishRecords;
@@ -390,21 +402,21 @@ test('processSingleRecord defers same platform account publish when history is w
   }
 });
 
-test('processSingleRecord defers same account while a cloud submission is still in progress', async () => {
+test('processSingleRecord does not defer same account after a cloud submission', async () => {
   const scheduler = createScheduler();
   const originalPublishRecord = publisher.publishRecord;
   const originalGetPublishRecords = publisher.getPublishRecords;
   const originalEnsureLogin = publisher.ensureLogin;
 
   let publishCalls = 0;
-  const notes = [];
+  const platformUpdates = [];
 
   scheduler.feishu = {
     downloadAllAttachments: async () => [],
-    markPlatformStatus: async () => {},
-    setNote: async (recordId, note) => {
-      notes.push({ recordId, note });
+    markPlatformStatus: async (recordId, platform, status) => {
+      platformUpdates.push({ recordId, platform, status });
     },
+    setNote: async () => {},
     markPublished: async () => {},
   };
   scheduler.findLatestPublishRecord = async () => null;
@@ -453,9 +465,12 @@ test('processSingleRecord defers same account while a cloud submission is still 
     });
 
     assert.deepEqual(first, { published: 0, failed: 0, submitted: 1 });
-    assert.deepEqual(second, { published: 0, failed: 0, deferred: 1 });
-    assert.equal(publishCalls, 1);
-    assert.match(notes.at(-1).note, /正在发布或刚提交/);
+    assert.deepEqual(second, { published: 0, failed: 0, submitted: 1 });
+    assert.equal(publishCalls, 2);
+    assert.deepEqual(platformUpdates, [
+      { recordId: 'record-cloud-guard-a', platform: '小红书', status: '发布中' },
+      { recordId: 'record-cloud-guard-b', platform: '小红书', status: '发布中' },
+    ]);
   } finally {
     publisher.publishRecord = originalPublishRecord;
     publisher.getPublishRecords = originalGetPublishRecords;
@@ -463,7 +478,7 @@ test('processSingleRecord defers same account while a cloud submission is still 
   }
 });
 
-test('publishRecords treats same-account guard deferrals as skipped work, not failures', async () => {
+test('publishRecords preserves deferred results returned by record processing', async () => {
   const scheduler = createScheduler();
   scheduler.processSingleRecord = async () => ({ published: 0, failed: 0, deferred: 1 });
 
