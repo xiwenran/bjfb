@@ -125,3 +125,73 @@ test('validateGenerated rejects tags not starting with #', () => {
   const violations = validateGenerated(content, 'xiaohongshu');
   assert.ok(violations.some(v => v.includes('未以 # 开头')), violations.join('; '));
 });
+
+// ── 场景词越权（topic 参数） ──
+
+test('validateGenerated rejects scene word in title search layer when topic lacks it', () => {
+  const content = baseContent({
+    title: '📌四下语文暑假预习清单，一页讲透省时间',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu', '走进美丽乡村1-西游Q版闯关');
+  assert.ok(violations.some(v => v.includes('场景词') && v.includes('暑假')), violations.join('; '));
+});
+
+test('validateGenerated rejects scene word in description when topic lacks it', () => {
+  const content = baseContent({
+    description:
+      '📌统编版四年级下册《母鸡》第一课时\n' +
+      '📝暑假预习内容，梳理了重点词\n' +
+      '✅问题设计有梯度，整体流程按情境推进\n' +
+      '💡课堂直接可用，备课能省不少时间',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu', '走进美丽乡村1-西游Q版闯关');
+  assert.ok(violations.some(v => v.includes('场景词') && v.includes('暑假')), violations.join('; '));
+});
+
+test('validateGenerated allows scene word when topic explicitly contains it', () => {
+  const content = baseContent({
+    title: '📌四下语文暑假预习清单，一页讲透省时间',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu', '四年级语文暑假预习');
+  assert.ok(!violations.some(v => v.includes('场景词')), violations.join('; '));
+});
+
+test('validateGenerated skips scene word check when topic is not passed', () => {
+  const content = baseContent({
+    title: '📌四下语文暑假预习清单，一页讲透省时间',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu');
+  assert.ok(!violations.some(v => v.includes('场景词')), violations.join('; '));
+});
+
+test('validateGenerated exempts "衔接" hook phrase in hook layer from scene word check', () => {
+  const content = baseContent({
+    title: '📌七升八英语讲义，衔接课备课不愁',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu', '走进美丽乡村1-西游Q版闯关');
+  assert.ok(!violations.some(v => v.includes('场景词')), violations.join('; '));
+});
+
+test('validateGenerated allows teaching-action usage like "复习导入" in description', () => {
+  const content = baseContent({
+    description:
+      '📌统编版四年级下册《母鸡》第一课时\n' +
+      '📝复习导入环节用作者情感变化切入，梳理了重点词\n' +
+      '✅问题设计有梯度，整体流程按情境推进\n' +
+      '💡课堂直接可用，备课能省不少时间',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu', '走进美丽乡村1-西游Q版闯关');
+  assert.ok(!violations.some(v => v.includes('场景词')), violations.join('; '));
+});
+
+test('validateGenerated rejects qualifier phrase "预习笔记" in description when topic lacks 预习', () => {
+  const content = baseContent({
+    description:
+      '📌统编版四年级下册《母鸡》预习笔记\n' +
+      '📝导入环节用作者情感变化切入，梳理了重点词\n' +
+      '✅问题设计有梯度，整体流程按情境推进\n' +
+      '💡课堂直接可用，备课能省不少时间',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu', '走进美丽乡村1-西游Q版闯关');
+  assert.ok(violations.some(v => v.includes('场景词') && v.includes('预习')), violations.join('; '));
+});

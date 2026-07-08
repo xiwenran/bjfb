@@ -562,17 +562,35 @@ def ai_writing_platform_tag_limit(record: dict) -> int:
     return 10
 
 
+# 场景词表：与 src/ai-writer.js SCENE_WORDS 保持一致，不含"衔接"（钩子⑤"衔接课备课不愁"是允许保留的固定文案）
+# 本表用于标题搜索词层的裸词检查；正文层口径见 AI_WRITING_DESC_SCENE_TIME_WORDS / AI_WRITING_DESC_SCENE_QUALIFIER_PATTERN
+AI_WRITING_SCENE_WORDS = ("预习", "复习", "暑假", "寒假", "假期")
+# 正文层裸词检查只保留时段词
+AI_WRITING_DESC_SCENE_TIME_WORDS = ("暑假", "寒假", "假期")
+# 正文层"预习/复习"只匹配把资料本身定性为预习/复习资料的强定性搭配——
+# "复习导入""带学生预习课文"这类教学动作描述不算越权（与 ai-writer.js DESC_SCENE_QUALIFIER_REGEX 一致）
+AI_WRITING_DESC_SCENE_QUALIFIER_PATTERN = re.compile("(预习|复习)(笔记|资料|讲义|清单|专用|合集)")
+
+
+def ai_writing_title_search_layer(title: str) -> str:
+    """取标题的搜索词层（第一个全角逗号之前的部分），与 ai-writer.js getTitleSearchLayer 一致。"""
+    idx = title.find("，")
+    return title[:idx] if idx >= 0 else title
+
+
 def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, list[str]]]:
     """校验标题 emoji/标点、正文字数与换行、标签平台上限，返回 (label, violations) 列表。"""
     title_violations: list[str] = []
     description_violations: list[str] = []
     tag_violations: list[str] = []
+    scene_word_violations: list[str] = []
 
     if not isinstance(records, list):
         return [
             ("AI writing title format", ["records 必须是数组，无法执行标题 emoji/标点校验"]),
             ("AI writing description format", ["records 必须是数组，无法执行正文字数/换行校验"]),
             ("AI writing tag platform limit", ["records 必须是数组，无法执行标签上限校验"]),
+            ("AI writing scene word overreach", ["records 必须是数组，无法执行场景词越权校验"]),
         ]
 
     for i, record in enumerate(records):
@@ -619,10 +637,36 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
                     f"records[{i}] tags 数量 {len(tags)} 超过平台上限 {limit}（noteKey={note_key}）"
                 )
 
+        # 场景词越权校验：record 无 topic 字段时跳过（不强制要求所有调用方都带主题）
+        # 标题搜索词层：裸词全表；正文：时段词裸词 + "预习/复习"仅强定性搭配
+        topic = record.get("topic")
+        topic_str = str(topic).strip() if topic is not None else ""
+        if topic_str and (title_str or description_str):
+            search_layer = ai_writing_title_search_layer(title_str)
+            desc_hits = {
+                word for word in AI_WRITING_DESC_SCENE_TIME_WORDS if word in description_str
+            }
+            desc_hits.update(
+                m.group(1)
+                for m in AI_WRITING_DESC_SCENE_QUALIFIER_PATTERN.finditer(description_str)
+            )
+            for word in AI_WRITING_SCENE_WORDS:
+                if word in topic_str:
+                    continue
+                in_title = word in search_layer
+                in_description = word in desc_hits
+                if in_title or in_description:
+                    where = "标题和正文" if (in_title and in_description) else ("标题" if in_title else "正文")
+                    scene_word_violations.append(
+                        f"records[{i}] 场景词「{word}」越权：主题未包含「{word}」，不得在{where}中使用"
+                        f"（noteKey={note_key}，topic={topic_str!r}）"
+                    )
+
     return [
         ("AI writing title format", title_violations),
         ("AI writing description format", description_violations),
         ("AI writing tag platform limit", tag_violations),
+        ("AI writing scene word overreach", scene_word_violations),
     ]
 
 
