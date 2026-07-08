@@ -543,6 +543,89 @@ def find_same_account_interval_violations(records: list, min_interval_minutes: i
     return violations
 
 
+# ─────────────────────────────────────────────
+# AI 写作规范机械检查（与 src/ai-writer.js SYSTEM_PROMPT / validateGenerated 对应）
+# 独立新增块：只读 records，不改动上方已有的间隔/重复/结构校验逻辑
+# ─────────────────────────────────────────────
+AI_WRITING_TITLE_EMOJI_WHITELIST = ("📌", "🔥", "✅", "💡", "✨", "📝")
+AI_WRITING_PUNCT_PATTERN = re.compile(
+    "[，。！？、；：“”‘’（）\\-—,.!?;:()]"
+)
+
+
+def ai_writing_platform_tag_limit(record: dict) -> int:
+    """抖音标签上限 5，小红书（含未指定）上限 10，与 ai-writer.js platformTagLimit 一致。"""
+    douyin_account = str(record.get("douyinAccount") or "").strip()
+    xhs_account = str(record.get("xiaohongshuAccount") or "").strip()
+    if douyin_account and not xhs_account:
+        return 5
+    return 10
+
+
+def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, list[str]]]:
+    """校验标题 emoji/标点、正文字数与换行、标签平台上限，返回 (label, violations) 列表。"""
+    title_violations: list[str] = []
+    description_violations: list[str] = []
+    tag_violations: list[str] = []
+
+    if not isinstance(records, list):
+        return [
+            ("AI writing title format", ["records 必须是数组，无法执行标题 emoji/标点校验"]),
+            ("AI writing description format", ["records 必须是数组，无法执行正文字数/换行校验"]),
+            ("AI writing tag platform limit", ["records 必须是数组，无法执行标签上限校验"]),
+        ]
+
+    for i, record in enumerate(records):
+        if not isinstance(record, dict):
+            continue
+        note_key = record.get("noteKey", "")
+
+        title = record.get("title")
+        title_str = str(title).strip() if title is not None else ""
+        if title_str:
+            emoji_count = sum(1 for ch in title_str if ch in AI_WRITING_TITLE_EMOJI_WHITELIST)
+            if emoji_count != 1:
+                title_violations.append(
+                    f"records[{i}] title 白名单emoji数量为 {emoji_count}，必须恰好1个（noteKey={note_key}，title={title_str!r}）"
+                )
+            punct_count = len(AI_WRITING_PUNCT_PATTERN.findall(title_str))
+            if punct_count > 1:
+                title_violations.append(
+                    f"records[{i}] title 标点符号 {punct_count} 个，最多1个（不含书名号和emoji，noteKey={note_key}，title={title_str!r}）"
+                )
+
+        description = record.get("description")
+        description_str = str(description).strip() if description is not None else ""
+        if not description_str:
+            description_violations.append(
+                f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
+            )
+        else:
+            desc_len = len(description_str)
+            if not (50 <= desc_len <= 150):
+                description_violations.append(
+                    f"records[{i}] description 字数 {desc_len} 不在 50–150 范围内（noteKey={note_key}）"
+                )
+            if "\n" not in description_str:
+                description_violations.append(
+                    f"records[{i}] description 未包含换行分行（noteKey={note_key}）"
+                )
+
+        tags = record.get("tags")
+        if isinstance(tags, list) and tags:
+            limit = ai_writing_platform_tag_limit(record)
+            if len(tags) > limit:
+                tag_violations.append(
+                    f"records[{i}] tags 数量 {len(tags)} 超过平台上限 {limit}（noteKey={note_key}）"
+                )
+
+    return [
+        ("AI writing title format", title_violations),
+        ("AI writing description format", description_violations),
+        ("AI writing tag platform limit", tag_violations),
+    ]
+
+
 def validate_records_for_dry_run(records: list, constraints: dict | None = None) -> bool:
     """Run local validation checks for create --dry-run."""
     check_results = []
@@ -703,6 +786,8 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
                 )
     check_results.append(("Title length", violations))
 
+    check_results.extend(validate_ai_writing_output_for_dry_run(records))
+
     for label, violations in check_results:
         if violations:
             print(f"❌ {label}：{len(violations)} 个问题")
@@ -716,7 +801,7 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
         print(f"\nDry run 失败：共 {len(all_violations)} 个问题。")
         return False
 
-    print(f"\nDry run 通过：{len(records)} 条记录已完成 6 项本地结构校验。")
+    print(f"\nDry run 通过：{len(records)} 条记录已完成全部 {len(check_results)} 项本地结构校验。")
     print("提示：dry-run 不检查标题公式、标题吸引力或文案质量；标题仍需按 ai-writer SYSTEM_PROMPT 单独审查。")
     return True
 

@@ -269,8 +269,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
             "publishTime": "2026-06-15 09:00",
             "xiaohongshuAccount": "账号A",
             "douyinAccount": "",
-            "title": "这是一个合规测试标题",
-            "description": "",
+            "title": "📌四下《母鸡》讲义一页讲透省时间",
+            "description": "📌统编版四年级下册《母鸡》第一课时\\n📝导入环节用作者情感变化切入梳理重点词\\n✅问题设计有梯度整体流程按情境推进\\n💡课堂直接可用备课能省不少时间",
             "tags": ["#测试"],
         },
         {
@@ -280,8 +280,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
             "publishTime": "2026-06-15 10:00",
             "xiaohongshuAccount": "账号A",
             "douyinAccount": "",
-            "title": "这是第二个合规测试标题",
-            "description": "",
+            "title": "📝七升八英语时态讲义备课少熬一晚",
+            "description": "📌七升八英语动词时态讲义整理\\n📝覆盖一般现在时与一般过去时对比讲解\\n✅配套例句和课堂练习可直接展示\\n🔥衔接课备课这份能省下不少时间",
             "tags": ["#测试"],
         },
     ]
