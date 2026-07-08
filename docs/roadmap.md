@@ -2,11 +2,11 @@
 
 > 本文件记录知发项目所有阶段的规划与执行状态。
 > 状态说明：✅ 已完成 / 🚧 进行中 / ⏸ 待启动
-> 最后更新：2026-07-08（启动标题/标签/正文撰写规范重构，🚧 施工中）
+> 最后更新：2026-07-08（标题/标签/正文撰写规范重构完成，commit 42d2075，待用户重启 App 核对 UI hash 并观察一段时间）
 
 ---
 
-## 🚧 2026-07-08 — 标题/标签/正文撰写规范重构（单一源头 ai-writer.js）
+## ✅ 2026-07-08 — 标题/标签/正文撰写规范重构（单一源头 ai-writer.js，commit 42d2075）
 
 - **目标**：标题改「搜索词层（系列词+资料词+细分主题）+ 钩子层（老师收益向封闭菜单）」双层结构并必带 1 个 emoji；正文从留空/50 字改为小红书换行排版（3-5 行、行首 emoji、50-150 字、首行含系列词/英文课题名）；统一字数口径（16-20 为主，硬边界 10-20）消灭 prompt 内部矛盾；生成后机械校验+重试 1 次，dry-run 加机械检查。样品已经用户三轮确认（老师收益向、Unit 名标题压缩正文补全、emoji+换行排版）。
 - **涉及文件**：`src/ai-writer.js`、`scripts/skill_upload.py`（dry-run 检查）、`tests/ai-writer-validate.test.js`（新建）、`skills/zhifa-upload/SKILL.md`、`skills/zhifa-pipeline/SKILL.md`、`skills/zhifa-pipeline/CHECKLIST-用户提需求模板.md`。
@@ -17,7 +17,7 @@
   - 两个 SKILL.md 与 CHECKLIST 与新 prompt 一致（description 留空条款删除、公式编号修正）。
   - 独立冷眼审查通过；commit 后重打包+覆盖安装+核对 UI commit hash。
 - **阻断条件**：发现方案外功能想法只入发现清单；SKILL 文档与 prompt 不一致时停下对齐。
-- **状态**：🚧 施工中（用户已批准执行，先测试观察一段时间）
+- **状态**：✅ 已完成（commit 42d2075。验证：tests/ai-writer-validate 17 pass + server-import-create-records 2 pass；旧口径 grep 零残留；独立冷眼审查有条件通过、P1/P2 已修复复测通过；dist:mac 打包 build-info 注入 42d2075 并已覆盖安装 /Applications。**尾巴**：运行中 App 仍是旧版 13d2da7，待用户重启后在 UI 左下角核对 hash=42d2075；用户计划观察一段时间标题/正文实际效果）
 
 ---
 
