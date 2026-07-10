@@ -13,7 +13,7 @@
 - **进度**：
   - ✅ `src/ai-writer.js` SYSTEM_PROMPT + validateGenerated 重写、`tests/ai-writer-validate.test.js` 重写 17 用例全过（验证：node --test 17 pass；账号映射 1 例失败为 HEAD 既有问题与本次无关）
   - ✅ 冒烟回归：3 个代表主题（含 07-09 踩坑的带括号课名《分数除法（一）》）真实 AI 调用一次通过，无编造属性、家长会品类自动适配
-  - 🚧 skill 文档旧口径清理（zhifa-upload/zhifa-pipeline SKILL.md、CHECKLIST 模板）
+  - ✅ skill 文档旧口径清理：3 文件 16 处改写，旧关键词 grep 零残留（子代理施工，主会话抽查行号引用与残留通过）
   - ⏸ dist:mac 重打包 + 覆盖安装 + 核对 UI hash
 
 ---
