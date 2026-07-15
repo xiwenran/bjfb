@@ -1233,6 +1233,104 @@ def cmd_archive(source_dir: str, target_dir: str, schedule_json_file: str) -> No
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def cmd_move_arranged(
+    source_dir: str,
+    target_dir: str,
+    schedule_json_file: str,
+    scan_json_file: str,
+    dry_run: bool = False,
+) -> None:
+    """把 schedule 里已排的（去重）笔记文件夹从源目录 mv 移出到目标目录（Step 6-B「移出已排期」）。
+
+    与 archive（服务端 cpSync 复制、保留源目录）不同：本命令在本地真移动，源目录不再保留，
+    避免后续批次重复排期。移动前做干跑校验：源缺失或目标冲突则整体停止、不动任何文件。
+    """
+    import shutil
+
+    source_dir = os.path.expanduser(source_dir)
+    target_dir = os.path.expanduser(target_dir)
+    schedule_json_file = os.path.expanduser(schedule_json_file)
+    scan_json_file = os.path.expanduser(scan_json_file)
+    if not os.path.isdir(source_dir):
+        print(f"源目录不存在或不是目录：{source_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    sched_payload = read_json_file(schedule_json_file)
+    schedule = sched_payload.get("schedule") if isinstance(sched_payload, dict) else None
+    if not isinstance(schedule, list):
+        print(f"调度结果格式错误：{schedule_json_file} 缺少 schedule 数组", file=sys.stderr)
+        sys.exit(1)
+
+    scan_entries = load_scan_entries(scan_json_file)
+    nk2fp = {}
+    for topic_entry in scan_entries:
+        for note in (topic_entry.get("notes") or []):
+            nk2fp[str(note.get("noteKey") or "")] = os.path.expanduser(str(note.get("folderPath") or ""))
+
+    uniq = sorted({str(it.get("noteKey") or "") for it in schedule if it.get("noteKey")})
+    moves = []
+    missing = []
+    conflict = []
+    for note_key in uniq:
+        folder = nk2fp.get(note_key)
+        if not folder and "/" in note_key:
+            topic, template = note_key.rsplit("/", 1)
+            folder = os.path.join(source_dir, topic, template)
+        if not folder or not os.path.isdir(folder):
+            missing.append(note_key)
+            continue
+        rel = os.path.relpath(folder, source_dir)
+        destination = os.path.join(target_dir, rel)
+        if os.path.exists(destination):
+            conflict.append(destination)
+        moves.append((folder, destination))
+
+    print(f"已排唯一 noteKey：{len(uniq)}；待移动：{len(moves)}；源缺失：{len(missing)}；目标冲突：{len(conflict)}")
+    for note_key in missing[:10]:
+        print(f"  源缺失：{note_key}", file=sys.stderr)
+    for destination in conflict[:10]:
+        print(f"  目标冲突：{destination}", file=sys.stderr)
+    if missing or conflict:
+        print("存在源缺失或目标冲突，已停止，未移动任何文件。请核对后重试。", file=sys.stderr)
+        sys.exit(1)
+
+    if dry_run:
+        print("dry-run：仅预览移动清单，未实际移动。样例：")
+        for source, destination in moves[:5]:
+            print(f"  {source}\n   -> {destination}")
+        return
+
+    done = 0
+    errors = []
+    for source, destination in moves:
+        try:
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            shutil.move(source, destination)
+            done += 1
+        except Exception as exc:  # noqa: BLE001 - 移动失败逐条记录，不整体中断
+            errors.append({"source": source, "error": str(exc)})
+
+    residual = [source for source, _ in moves if os.path.isdir(source)]
+    os.makedirs(target_dir, exist_ok=True)
+    manifest = {
+        "movedCount": done,
+        "expected": len(moves),
+        "failed": len(errors),
+        "sourceResidual": len(residual),
+        "sourceDir": source_dir,
+        "targetDir": target_dir,
+        "errors": errors,
+        "noteKeys": uniq,
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    write_json_file(os.path.join(target_dir, "_moved_manifest.json"), manifest)
+    print(f"已移动 {done}/{len(moves)}；失败 {len(errors)}；源残留 {len(residual)}")
+    for item in errors[:10]:
+        print(f"  失败：{item['source']} → {item['error']}", file=sys.stderr)
+    if errors or residual:
+        sys.exit(1)
+
+
 def cmd_create(
     records_json_file: str,
     ai_fallback: bool = False,
@@ -1444,11 +1542,28 @@ def record_platform(record: dict) -> str:
     return "unknown"
 
 
+def _postprocess_send_with_split(batch: list, timeout: int = 300) -> tuple[int, list, list]:
+    """POST 一批后处理；失败时二分重试到单条，返回 (updated, rows, failed_updates)。全程非致命，不 sys.exit。"""
+    result = zhifa_post_batch("/api/import/postprocess", {"updates": batch}, timeout=timeout)
+    if isinstance(result, dict):
+        updated = int(result.get("updated") or result.get("updatedCount") or 0)
+        rows = result.get("results") if isinstance(result.get("results"), list) else []
+        return updated, rows, []
+    # 请求失败（超时/限频/HTTP 5xx）：能拆就二分重试，缩小单请求飞书调用数
+    if len(batch) > 1:
+        mid = len(batch) // 2
+        u1, r1, f1 = _postprocess_send_with_split(batch[:mid], timeout)
+        u2, r2, f2 = _postprocess_send_with_split(batch[mid:], timeout)
+        return u1 + u2, r1 + r2, f1 + f2
+    # 单条仍失败，记录失败项，不中止整体
+    return 0, [], list(batch)
+
+
 def cmd_postprocess(
     records_json_file: str,
     results_json_file: str,
     output_file: str | None = None,
-    batch_size: int = 50,
+    batch_size: int = 10,
 ) -> None:
     records_json_file = os.path.expanduser(records_json_file)
     results_json_file = os.path.expanduser(results_json_file)
@@ -1505,21 +1620,28 @@ def cmd_postprocess(
     batch_results = []
     merged_results = []
     total_updated = 0
+    failed_updates = []
     print(f"准备后处理 {len(updates)} 条记录，分 {len(batches)} 批，每批最多 {batch_size} 条")
     for batch_idx, batch in enumerate(batches, 1):
-        result = zhifa_post("/api/import/postprocess", {"updates": batch}, timeout=300)
-        updated = int(result.get("updated") or result.get("updatedCount") or 0) if isinstance(result, dict) else 0
-        rows = result.get("results") if isinstance(result, dict) else None
-        if isinstance(rows, list):
-            merged_results.extend(rows)
+        updated, rows, failed = _postprocess_send_with_split(batch)
+        merged_results.extend(rows)
         total_updated += updated
+        failed_updates.extend(failed)
         batch_results.append({
             "batch": batch_idx,
             "total": len(batch),
             "updated": updated,
-            "result": result,
+            "failed": len(failed),
         })
-        print(f"[后处理 {batch_idx}/{len(batches)}] {len(batch)} 条 → updated={updated}")
+        note = f" ⚠️失败{len(failed)}" if failed else ""
+        print(f"[后处理 {batch_idx}/{len(batches)}] {len(batch)} 条 → updated={updated}{note}")
+
+    if failed_updates:
+        preview = "、".join(str(u.get("recordId")) for u in failed_updates[:20])
+        print(
+            f"⚠️ 有 {len(failed_updates)} 条后处理失败（已二分重试到单条仍失败）：{preview}",
+            file=sys.stderr,
+        )
 
     result = {
         "recordsFile": records_json_file,
@@ -1528,9 +1650,11 @@ def cmd_postprocess(
         "summary": {
             "updates": len(updates),
             "updated": total_updated,
+            "failed": len(failed_updates),
             "batches": len(batches),
         },
         "batches": batch_results,
+        "failedUpdates": failed_updates,
         "results": merged_results,
     }
     print(json.dumps(result["summary"], ensure_ascii=False, indent=2))
@@ -1979,7 +2103,7 @@ def main() -> None:
     postprocess_parser.add_argument("records_json", help="records JSON 文件路径")
     postprocess_parser.add_argument("results_json", help="create-records 返回结果 JSON 文件路径")
     postprocess_parser.add_argument("--output", default=None, help="输出后处理结果 JSON 路径")
-    postprocess_parser.add_argument("--batch-size", type=int, default=50, help="每批后处理记录数，默认 50")
+    postprocess_parser.add_argument("--batch-size", type=int, default=10, help="每批后处理记录数，默认 10（每条 2 次飞书调用，批次过大易触发服务端 500）")
 
     summarize_parser = subparsers.add_parser("summarize-postprocess", help="汇总一个或多个 postprocess 结果 JSON")
     summarize_parser.add_argument("files", nargs="+", help="postprocess 结果 JSON 路径")
@@ -1989,10 +2113,20 @@ def main() -> None:
     preview_parser.add_argument("records_json", help="records JSON 文件路径")
     preview_parser.add_argument("output_dir", help="预览输出目录")
 
-    archive_parser = subparsers.add_parser("archive", help="根据 schedule 结果调用归档接口")
+    archive_parser = subparsers.add_parser("archive", help="根据 schedule 结果调用归档接口（服务端复制，保留源目录）")
     archive_parser.add_argument("source_dir", help="原始合成图根目录")
     archive_parser.add_argument("target_dir", help="归档目标根目录")
     archive_parser.add_argument("schedule_json", help="schedule 结果 JSON 文件路径")
+
+    move_parser = subparsers.add_parser(
+        "move-arranged",
+        help="把已排 schedule 的（去重）笔记文件夹 mv 移出源目录（Step 6-B 移出已排期，本地移动不保留源）",
+    )
+    move_parser.add_argument("source_dir", help="素材源根目录")
+    move_parser.add_argument("target_dir", help="移出目标目录（建议源目录同级或其下 _已排期移出/）")
+    move_parser.add_argument("schedule_json", help="schedule 结果 JSON 文件路径")
+    move_parser.add_argument("scan_json", help="scan / scan-many 结果 JSON（按 noteKey 解析真实 folderPath）")
+    move_parser.add_argument("--dry-run", action="store_true", help="仅预览移动清单，不实际移动")
 
     # token-summary 子命令
     token_summary_parser = subparsers.add_parser(
@@ -2055,6 +2189,14 @@ def main() -> None:
         cmd_export_preview(args.records_json, args.output_dir)
     elif args.command == "archive":
         cmd_archive(args.source_dir, args.target_dir, args.schedule_json)
+    elif args.command == "move-arranged":
+        cmd_move_arranged(
+            args.source_dir,
+            args.target_dir,
+            args.schedule_json,
+            args.scan_json,
+            dry_run=args.dry_run,
+        )
     elif args.command == "token-summary":
         cmd_token_summary(
             scan_json_file=args.scan,

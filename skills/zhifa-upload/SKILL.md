@@ -23,10 +23,11 @@ python3 ~/zhifa/scripts/skill_upload.py materialize-covers <scan.json>
 python3 ~/zhifa/scripts/skill_upload.py schedule <scan.json> <plan.json> --output <schedule.json>
 python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json> --seed <YYYYMMDD-batch-name>
 python3 ~/zhifa/scripts/skill_upload.py create <records.json> --output <create_results.json>
-python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --batch-size 50 --output <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --batch-size 10 --output <postprocess_results.json>
 python3 ~/zhifa/scripts/skill_upload.py summarize-postprocess <postprocess_results.json>
 python3 ~/zhifa/scripts/skill_upload.py export-preview <records.json> <preview_dir>
-python3 ~/zhifa/scripts/skill_upload.py archive <source_dir> <target_dir> <schedule.json>
+python3 ~/zhifa/scripts/skill_upload.py archive <source_dir> <target_dir> <schedule.json>            # 服务端复制，保留源目录（归档留档用）
+python3 ~/zhifa/scripts/skill_upload.py move-arranged <source_dir> <target_dir> <schedule.json> <scan.json> [--dry-run]   # 本地 mv 移出已排期，源目录不保留（Step 6-B）
 ```
 
 规则：
@@ -573,7 +574,7 @@ python3 ~/zhifa/scripts/skill_upload.py create <records.json> --output <create_r
 **执行方式**：优先使用共享执行层，不在会话里临时拼 FeishuClient 调用。
 
 ```bash
-python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --batch-size 50 --output <postprocess_results.json>
+python3 ~/zhifa/scripts/skill_upload.py postprocess <records.json> <create_results.json> --batch-size 10 --output <postprocess_results.json>
 python3 ~/zhifa/scripts/skill_upload.py summarize-postprocess <postprocess_results.json>
 ```
 
@@ -643,15 +644,18 @@ cp -R "<合成图根目录>/<主题全称>/<原编号>" \
 
 **移动方式与目标路径**：默认 `mv`（真移走，源目录不再保留），默认目标 `<素材根目录>/_已排期移出/`（在源目录同级）。用户指定了路径或要求 `cp` 时按用户的来——`mv` 是不可逆写操作，Step 0 第 9 项确认时必须让用户显式认可方式和路径。
 
-**操作**：读本轮 `records.json`，对每个去重 `noteKey` 取 `folderPath`（源模板子文件夹绝对路径），保留「素材根下相对层级」（如 `科目/主题/模板号`）mv 到目标目录：
+**操作**：用共享执行层 `move-arranged` 命令，它读 `schedule.json` 的去重 noteKey，按 `scan.json` 的 `folderPath` 定位真实源文件夹（避免主题名全角/半角括号导致路径拼错），保留「素材根下相对层级」（如 `科目/主题/模板号`）本地 `mv` 到目标目录。先 `--dry-run` 干跑校验（源缺失 / 目标冲突则整体停止、不动任何文件），确认无误再真移：
 
 ```bash
-# 伪代码：对每个 noteKey 的 folderPath
-# rel = folderPath 相对 <素材根目录> 的路径（如 数学课件/<主题>/<模板号>）
-# mkdir -p <目标>/<rel 的父目录>；mv <folderPath> <目标>/<rel>
+# 先干跑
+python3 ~/zhifa/scripts/skill_upload.py move-arranged <素材根目录> <素材根目录>/_已排期移出 <schedule.json> <scan.json> --dry-run
+# 干跑无「源缺失 / 目标冲突」再真移
+python3 ~/zhifa/scripts/skill_upload.py move-arranged <素材根目录> <素材根目录>/_已排期移出 <schedule.json> <scan.json>
 ```
 
-移完必须校验两条并在回复里报告：① 目标目录下模板子文件夹数 = N；② 源目录里这 N 个 folderPath 已 0 残留（`os.path.isdir` 逐个复检）。
+> ⚠️ 不要用 `archive` 命令做移出——`archive` 走服务端 `cpSync` 是**复制**、会**保留源目录**，达不到「移出避免重复排期」的目的；`move-arranged` 才是本地真移动。
+
+命令内部已校验并在结束时报告：① 已移动数 = 去重 noteKey 数；② 源目录 0 残留（`os.path.isdir` 逐个复检）；③ 目标目录写 `_moved_manifest.json` 留档。主会话据此在回复里粘贴「已移出 N 篇」和残留核验结论。
 
 **写 README**：在 `_已排期移出/` 根目录写 `README.md`：
 - 本期日期 + 项目名 + 上传条数 + verify 凭据结论
