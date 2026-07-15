@@ -1336,6 +1336,26 @@ const server = http.createServer(async (req, res) => {
               const f = existingRec?.fields || {};
               existingStatus = String(f['小红书发布状态'] || f['抖音发布状态'] || '');
             } catch (_) {}
+            if (!dryRun) {
+              try {
+                const topicIndex = readTopicIndex();
+                if (!topicIndex.records[existingRecordId]) {
+                  upsertTopicIndexRecord(existingRecordId, buildImportedTopicIndexEntry({
+                    topic, topicOverride, contentGroup, accountGroup, pptTopic, noteKey,
+                  }));
+                }
+              } catch (indexError) {
+                results.push({
+                  noteKey,
+                  status: 'failed',
+                  reason: 'topic_index_write_failed',
+                  recordId: existingRecordId,
+                  message: `飞书记录已存在，但主题索引补写失败，已停止本批且未重复建单: ${indexError.message}`,
+                });
+                pushImportProgress(noteKey, 'failed');
+                break;
+              }
+            }
             results.push({ noteKey, status: 'skipped', reason: 'fingerprint_exists', recordId: existingRecordId, existingStatus });
             if (!dryRun) pushImportProgress(noteKey, 'skipped');
             continue;

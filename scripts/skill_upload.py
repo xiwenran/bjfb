@@ -248,13 +248,27 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
         return normalized
 
     time_windows = payload.get("timeWindows")
-    if not isinstance(time_windows, dict):
-        raise ValueError("调度参数缺少 timeWindows 对象")
-    normalized["timeSlots"] = {
-        "regular": [normalize_window_entry(item) for item in (time_windows.get("regular") or [])],
-        "special": [normalize_window_entry(item) for item in (time_windows.get("special") or [])],
-    }
-    return normalized
+    if isinstance(time_windows, dict):
+        normalized["timeSlots"] = {
+            "regular": [normalize_window_entry(item) for item in (time_windows.get("regular") or [])],
+            "special": [normalize_window_entry(item) for item in (time_windows.get("special") or [])],
+        }
+        return normalized
+
+    time_hint = re.sub(r"\s+", "", str(payload.get("timeHint") or ""))
+    date_text = str(payload.get("date") or "").strip()
+    if time_hint == "早上9点左右" and date_text:
+        try:
+            datetime.date.fromisoformat(date_text)
+        except ValueError:
+            pass
+        else:
+            normalized["timeSlots"] = {
+                "regular": [f"{date_text} 08:00-12:00"],
+                "special": [],
+            }
+            return normalized
+    raise ValueError('缺少明确时间窗；“早上9点左右”仅可解释为 08:00—12:00')
 
 
 def zhifa_post_batch(path: str, payload: dict, timeout: int = 300) -> dict | None:

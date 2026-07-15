@@ -137,11 +137,31 @@ function formatMinute(timestamp) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function parseStrictTimestamp(value) {
+  const text = String(value || '').trim();
+  const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (dateMatch) {
+    const year = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const day = Number(dateMatch[3]);
+    const calendarDate = new Date(year, month - 1, day);
+    if (calendarDate.getFullYear() !== year || calendarDate.getMonth() !== month - 1 || calendarDate.getDate() !== day) {
+      return null;
+    }
+    if (dateMatch[4] !== undefined) {
+      const hour = Number(dateMatch[4]);
+      const minute = Number(dateMatch[5]);
+      if (hour > 23 || minute > 59) return null;
+    }
+  }
+  return parsePublishTimestamp(value);
+}
+
 function parseWindow(value) {
   const match = String(value || '').trim().match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
   if (!match) return null;
-  const start = parsePublishTimestamp(`${match[1]} ${match[2]}`);
-  const end = parsePublishTimestamp(`${match[1]} ${match[3]}`);
+  const start = parseStrictTimestamp(`${match[1]} ${match[2]}`);
+  const end = parseStrictTimestamp(`${match[1]} ${match[3]}`);
   if (start === null || end === null || end < start) throw createInputError(`时间窗无效: ${value}`);
   return { start, end };
 }
@@ -149,7 +169,7 @@ function parseWindow(value) {
 function buildSegments(slotValue, count, rng) {
   const window = parseWindow(slotValue);
   if (!window) {
-    const timestamp = parsePublishTimestamp(slotValue);
+    const timestamp = parseStrictTimestamp(slotValue);
     if (timestamp === null) throw createInputError(`发布时间无法解析: ${slotValue}`);
     if (count !== 1) {
       throw createInputError(`精确分钟槽 ${slotValue} 不足：需要 ${count} 个唯一分钟，只有 1 个`);
@@ -182,7 +202,7 @@ function normalizeExistingReservations(value) {
   return value.map(item => {
     const platform = String(item?.platform || '').trim();
     const account = String(item?.account || '').trim();
-    const timestamp = parsePublishTimestamp(item?.publishTime);
+    const timestamp = parseStrictTimestamp(item?.publishTime);
     if (!SUPPORTED_PLATFORMS.has(platform) || !account || timestamp === null) {
       throw createInputError('已有排期记录缺少合法 platform、account 或 publishTime');
     }

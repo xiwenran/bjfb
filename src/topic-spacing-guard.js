@@ -86,6 +86,24 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
   );
   const facts = new Map();
 
+  const getPublishedEntries = recordId => {
+    if (!Object.prototype.hasOwnProperty.call(history || {}, recordId)) return [];
+    const recordHistory = history[recordId];
+    if (!recordHistory || typeof recordHistory !== 'object' || Array.isArray(recordHistory)) {
+      throw createError(`发布历史 ${recordId} 无效：记录必须是对象`, 500);
+    }
+    if (!Object.prototype.hasOwnProperty.call(recordHistory, '小红书')) return [];
+    if (!Array.isArray(recordHistory['小红书'])) {
+      throw createError(`发布历史 ${recordId}.小红书 无效：必须是数组`, 500);
+    }
+    for (const [index, entry] of recordHistory['小红书'].entries()) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        throw createError(`发布历史 ${recordId}.小红书[${index}] 无效：必须是对象`, 500);
+      }
+    }
+    return recordHistory['小红书'];
+  };
+
   const buildReservation = ({ recordId, indexed, accountValue, timeValue, state }) => {
     const account = String(accountValue ?? '').trim();
     if (!account) {
@@ -120,9 +138,7 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
     const recordId = String(rawRecordId);
     const feishuRecord = feishuById.get(recordId);
     const status = String(feishuRecord?.xiaohongshuStatus ?? feishuRecord?.status ?? '').trim();
-    const publishedEntries = Array.isArray(history?.[recordId]?.['小红书'])
-      ? history[recordId]['小红书']
-      : [];
+    const publishedEntries = getPublishedEntries(recordId);
     const publishedAccounts = new Set();
     for (const entry of publishedEntries) {
       const reservation = buildReservation({
