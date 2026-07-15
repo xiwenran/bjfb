@@ -35,12 +35,16 @@ python3 ~/zhifa/scripts/skill_upload.py archive <source_dir> <target_dir> <sched
 - 如果向上查找不到任何主序号 `0*` 封面，默认该批图文素材不需要单独封面；不要停下追问，也不要把非 `0*` 图片移动/复制进去冒充封面
 - 账号排期必须按用户确认的店铺分组账号池执行，不得把所有账号混进全局账号池
 - `schedule` 同时接受两类计划文件：底层原生 `accounts + timeSlots`，以及日常口径 `accounts + timeWindows`
-- 若传 `timeWindows`，脚本会先保留时间窗，再在 `build-records` 阶段展开成随机具体发布时间；必须传 `--seed` 让随机排期可复现
+- 排期前必须确认账号、账号→店铺组映射、日期、时间窗和非空 `seed`；用户只说“9 点左右”时统一解释为 `08:00—12:00`，不得擅自收窄
+- `schedule` 先检查同店铺跨账号同主题冲突，一次性展示全部冲突并让用户选择 `auto_space`、调整时间窗或 `allow_conflicts`；确认绑定本轮输入 fingerprint，输入变化后必须重问
+- `timeWindows` 由 `schedule` 交给服务端展开；服务端按固定 `seed` 分层随机生成具体分钟，同批分钟全局唯一；`build-records` 直接使用结果，不二次随机
+- 同一平台同一账号任意相邻笔记固定至少间隔 361 分钟，这是不可放行硬约束；dry-run 和真实 create 都执行同一校验
+- 主题检查只纳入功能上线后写入主题索引的记录；旧记录不回填、不推断。主题索引、飞书记录或发布历史读取异常时立即停止
 - `records JSON` 由 `build-records` 生成，不再手工拼装
 - 真实 `create` 必须保留 output；漏传 `--output` 时脚本会自动写 `/tmp/zhifa_upload_create_results_<YYYYMMDD-HHMMSS>.json` 并打印路径
 - 上传后处理优先走 `postprocess --batch-size`，不要再在会话里临时拼 FeishuClient 调用
 - 飞书限频补传、上传结果合并、后处理结果文件、后处理汇总和上传预览都应由共享执行层输出；不要再在会话里手写 Node/Python 重试脚本
-- 当前最小实现只保证时间窗随机可复现；全局每分钟限流仍是下一步产品化项，不在 Skill 会话里临时手写补丁
+- 服务端返回的 `constraints`（含 361 分钟、分钟唯一和 seed）必须原样传到 records；Python 不得覆盖或降级
 
 ## Token 节制要求（2026-06-15 起）
 
@@ -201,6 +205,8 @@ cat ~/Library/Application\ Support/Zhifa/accounts.json
 | 9 | 归档口径 | `归档未排期`（默认，把没排上的笔记归档备用）/ `移出已排期`（把本轮排进飞书的笔记 mv 移出源目录，未排期的留在原处后续再安排）/ `不归档`。详见 Step 6 |
 
 以上 9 项在用户第一条消息里全部确认，**执行过程中不再反复调整**。若用户消息缺项，先追问补全再继续。第 9 项用户没提时默认 `归档未排期`，但涉及 `移出已排期`（mv 真移走源文件）时必须让用户显式确认移动方式（mv/cp）和目标路径。
+
+进入排期前还必须确认固定 `seed`。`<plan.json>.accountGroups` 的唯一服务端格式是 `{账号名: 店铺组名}`；即使 `accounts.json` 以“店铺组→账号列表”保存，构造计划时也必须反转为账号→店铺组，禁止把原嵌套结构直接传给服务端。
 
 **Step 0 封面参数识别**：读取用户参数时，若发现"按模板分配封面"、"轮转封面"、"(template-x)%n"、"封面变体"、"不同模板用不同封面"等描述，**直接忽略该规格，按默认处理**——每个模板子文件夹放完整封面组合，不询问用户。
 
@@ -390,7 +396,7 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 1. 模板分配：共享 `schedule/build-records` 的模板分散是否正确？每账号模板种类是否足够、是否存在某账号模板过度集中？
 2. 标题质量：是否以搜索关键词为主体、自然流畅表达（见 SYSTEM_PROMPT 三原则）？字数 8-20字？emoji 是否≤1个？同主题不同笔记角度是否不同？有无年级词 / 缩写课文名 / 编造属性等违规？
 2.5 正文质量：是否撰写（非空）？是否按首行搜索词展开/中间列内容的结构写（末行可选，不强制）？有无「图片即为完整内容/完整内容见图/翻图查看/按图整理」等完整性话术（有即打回）？
-3. 调度合理性：时间分布是否均匀？同账号同时段无重复？用户若明确要求同账号间隔 6 小时，是否已写入计划并执行？
+3. 调度合理性：服务端分层随机是否覆盖用户窗口？同批分钟是否唯一？同平台同账号相邻笔记是否至少间隔 361 分钟？
 4. 数据完整性：总数 = 账号数 × 每账号篇数？各账号篇数一致？
 5. 封面完整性：存在 `0*` 封面源的主题，每个 folderPath 下主序号 0 封面数量是否一致；没有 `0*` 封面源的图文素材不因此阻断
 
@@ -435,15 +441,15 @@ cp "<第3张路径>" "<folderPath>/0(2).jpg"
 
 **规则三：时间约束写入 plan**
 
-用户给出的时间窗、首日开始时间、同账号最小间隔、同主题分散要求，都必须写进 `<plan.json>`。当前共享执行层不能表达的约束，必须在上传前明确标为“本轮人工排期约束”，并在最终盘点里列为待产品化项；不得假装脚本已经原生支持。
+用户给出的日期、时间窗、固定 `seed` 和同主题处理选择必须写进 `<plan.json>`。`accountGroups` 只能使用账号名→店铺组名。排期前先走主题检查：有冲突时一次性展示全部冲突并询问三种选择；没有有效确认不得生成 schedule。主题索引、飞书或发布历史异常时停止，不以空数据继续。
 
-**同账号 6 小时排期（用户明确提出时启用）**：只有用户本轮明确要求同一平台 + 同一账号两篇笔记间隔 6 小时时，才在 `<plan.json>` 写入 `minSameAccountIntervalMinutes: 360`，由排期生成阶段执行。用户未提到时，不默认套用 6 小时限制；发布执行阶段也不因同账号 6 小时未到而阻止原本符合发布条件的待发布记录。
+同平台同账号相邻笔记固定至少间隔 361 分钟，同批所有任务的具体分钟全局唯一；两者都是服务端和上传前校验共同执行的硬约束，不接受人工放行。`allow_conflicts` 只放行同店铺跨账号同主题冲突，不能绕过 361 分钟或分钟唯一。
 
 **执行方式**：
 
 ```bash
 python3 ~/zhifa/scripts/skill_upload.py schedule <scan.json> <plan.json> --output <schedule.json>
-python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json> --seed <YYYYMMDD-batch-name>
+python3 ~/zhifa/scripts/skill_upload.py build-records <scan.json> <schedule.json> <content.json> <records.json> --seed <与 plan.json 相同的 seed>
 python3 ~/zhifa/scripts/skill_upload.py export-preview <records.json> <preview_dir>
 ```
 

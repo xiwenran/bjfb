@@ -23,7 +23,6 @@ import datetime
 import json
 import os
 import pathlib
-import random
 import re
 import shutil
 import sys
@@ -38,7 +37,7 @@ SCAN_MANY_RESULT_TMP = "/tmp/zhifa_scan_many_result.json"
 FAILED_UPLOAD_TMP = "/tmp/zhifa_upload_failed.json"
 COVER_NAME_RE = re.compile(r"^0(?:(?:\(\d+\))|(?:（\d+）)|(?:\.\d+))?$", re.IGNORECASE)
 COVER_BASENAMES = {"0", "cover", "封面"}
-TIME_WINDOW_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$")
+MIN_SAME_ACCOUNT_INTERVAL_MINUTES = 361
 
 
 def zhifa_post(path: str, payload: dict, timeout: int = 60) -> dict:
@@ -227,62 +226,35 @@ def normalize_window_entry(entry: dict) -> str:
 
 
 def normalize_schedule_plan_payload(payload: dict) -> dict:
-    if "timeSlots" in payload:
-        return payload
-
+    if not isinstance(payload, dict):
+        raise ValueError("调度参数必须是 JSON 对象")
+    normalized = {**payload}
+    seed = str(payload.get("seed") or "").strip()
+    if not seed:
+        raise ValueError("调度参数缺少非空 seed")
+    normalized["seed"] = seed
     accounts = payload.get("accounts")
-    time_windows = payload.get("timeWindows")
     if not isinstance(accounts, dict):
         raise ValueError("调度参数缺少 accounts 对象")
+    account_groups = payload.get("accountGroups")
+    if not isinstance(account_groups, dict):
+        raise ValueError("调度参数缺少 accountGroups 对象")
+    for account, store_group in account_groups.items():
+        if not str(account or "").strip() or not isinstance(store_group, str) or not store_group.strip():
+            raise ValueError("accountGroups 必须使用账号名→店铺组名格式")
+    if "timeSlots" in payload:
+        if not isinstance(payload.get("timeSlots"), dict):
+            raise ValueError("timeSlots 必须是对象")
+        return normalized
+
+    time_windows = payload.get("timeWindows")
     if not isinstance(time_windows, dict):
         raise ValueError("调度参数缺少 timeWindows 对象")
-
-    normalized = {
-        "accounts": accounts,
-        "timeSlots": {
-            "regular": [normalize_window_entry(item) for item in (time_windows.get("regular") or [])],
-            "special": [normalize_window_entry(item) for item in (time_windows.get("special") or [])],
-        },
-        "perAccountPerSlot": payload.get("perAccountPerSlot", 1),
+    normalized["timeSlots"] = {
+        "regular": [normalize_window_entry(item) for item in (time_windows.get("regular") or [])],
+        "special": [normalize_window_entry(item) for item in (time_windows.get("special") or [])],
     }
-    if "minSameAccountIntervalMinutes" in payload:
-        normalized["minSameAccountIntervalMinutes"] = payload.get("minSameAccountIntervalMinutes")
     return normalized
-
-
-def resolve_window_publish_times(schedule: list[dict], rng: random.Random | None = None) -> dict[int, str]:
-    rng = rng or random
-    # 按时间窗字符串分组，值为该时间窗内所有记录的下标（index）
-    grouped: dict[str, list[int]] = {}
-    for i, item in enumerate(schedule):
-        raw_publish_time = str(item.get("publishTime") or "").strip()
-        if TIME_WINDOW_RE.match(raw_publish_time):
-            grouped.setdefault(raw_publish_time, []).append(i)
-
-    resolved: dict[int, str] = {}
-    for raw_window, indices in grouped.items():
-        matched = TIME_WINDOW_RE.match(raw_window)
-        if not matched:
-            continue
-        date_text, start_text, end_text = matched.groups()
-        start_hour, start_minute = parse_hhmm(start_text)
-        end_hour, end_minute = parse_hhmm(end_text)
-        start_dt = datetime.datetime.strptime(f"{date_text} {start_hour:02d}:{start_minute:02d}", "%Y-%m-%d %H:%M")
-        end_dt = datetime.datetime.strptime(f"{date_text} {end_hour:02d}:{end_minute:02d}", "%Y-%m-%d %H:%M")
-        if end_dt <= start_dt:
-            raise ValueError(f"非法时间窗：{raw_window}")
-
-        total_minutes = int((end_dt - start_dt).total_seconds() // 60)
-        if total_minutes < len(indices):
-            raise ValueError(f"时间窗容量不足：{raw_window} 只有 {total_minutes} 分钟，无法分配 {len(indices)} 条记录")
-
-        minute_offsets = sorted(rng.sample(range(total_minutes), len(indices)))
-        shuffled_indices = indices[:]
-        rng.shuffle(shuffled_indices)
-        for idx, minute_offset in zip(shuffled_indices, minute_offsets):
-            resolved[idx] = (start_dt + datetime.timedelta(minutes=minute_offset)).strftime("%Y-%m-%d %H:%M")
-
-    return resolved
 
 
 def zhifa_post_batch(path: str, payload: dict, timeout: int = 300) -> dict | None:
@@ -776,12 +748,14 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
                     )
     check_results.append(("Time interval", violations))
 
-    min_same_account_interval_minutes = get_min_same_account_interval_minutes(constraints)
-    if min_same_account_interval_minutes > 0:
-        check_results.append((
-            "Conditional same-account interval",
-            find_same_account_interval_violations(records, min_same_account_interval_minutes),
-        ))
+    min_same_account_interval_minutes = max(
+        MIN_SAME_ACCOUNT_INTERVAL_MINUTES,
+        get_min_same_account_interval_minutes(constraints),
+    )
+    check_results.append((
+        "Same-account 361-minute interval",
+        find_same_account_interval_violations(records, min_same_account_interval_minutes),
+    ))
 
     violations = []
     note_platform_seen: set[tuple[str, str]] = set()
@@ -898,9 +872,11 @@ def validate_records_for_create(records: list, constraints: dict | None = None) 
                     else:
                         account_time_seen.add(time_pair)
 
-    min_same_account_interval_minutes = get_min_same_account_interval_minutes(constraints)
-    if min_same_account_interval_minutes > 0:
-        violations.extend(find_same_account_interval_violations(records, min_same_account_interval_minutes))
+    min_same_account_interval_minutes = max(
+        MIN_SAME_ACCOUNT_INTERVAL_MINUTES,
+        get_min_same_account_interval_minutes(constraints),
+    )
+    violations.extend(find_same_account_interval_violations(records, min_same_account_interval_minutes))
 
     if violations:
         print(f"❌ 上传前硬校验失败：{len(violations)} 个问题")
@@ -1088,12 +1064,38 @@ def cmd_schedule(scan_json_file: str, plan_json_file: str, output_file: str | No
         **payload,
         "noteFolders": note_folders,
     }
+    check_result = zhifa_post("/api/import/topic-spacing-check", request_payload)
+    conflicts = check_result.get("conflicts") if isinstance(check_result, dict) else None
+    conflicts = conflicts if isinstance(conflicts, list) else []
+    fingerprint = str(check_result.get("inputFingerprint") or "") if isinstance(check_result, dict) else ""
+    confirmation = payload.get("confirmation")
+
+    if isinstance(confirmation, dict):
+        confirmed_fingerprint = str(confirmation.get("inputFingerprint") or "")
+        if not fingerprint or confirmed_fingerprint != fingerprint:
+            print("排期确认已失效：输入 fingerprint 已变化，请重新检查并确认。", file=sys.stderr)
+            sys.exit(1)
+
+    expected_conflict_ids = {str(item.get("id") or "") for item in conflicts}
+    confirmed_conflict_ids = {
+        str(value) for value in (confirmation.get("conflictIds") or [])
+    } if isinstance(confirmation, dict) else set()
+    confirmation_valid = (
+        isinstance(confirmation, dict)
+        and confirmation.get("decision") in {"auto_space", "allow_conflicts"}
+        and confirmed_conflict_ids == expected_conflict_ids
+    )
+    if conflicts and not confirmation_valid:
+        print("检测到以下同店铺跨账号同主题冲突：")
+        for conflict in conflicts:
+            topic = str(conflict.get("displayTopic") or conflict.get("topicKey") or "未命名主题")
+            store_group = str(conflict.get("storeGroup") or "未命名店铺组")
+            accounts = "、".join(str(value) for value in (conflict.get("accounts") or []))
+            print(f"- {topic}｜{store_group}｜账号：{accounts}｜冲突 ID：{conflict.get('id', '')}")
+        print("请选择后重新运行：auto_space（自动错开）／调整时间窗／allow_conflicts（允许冲突）。")
+        sys.exit(1)
+
     result = zhifa_post("/api/import/schedule", request_payload)
-    min_same_account_interval_minutes = get_min_same_account_interval_minutes(payload)
-    if isinstance(result, dict) and min_same_account_interval_minutes > 0:
-        result["constraints"] = {
-            "minSameAccountIntervalMinutes": min_same_account_interval_minutes,
-        }
     output_path = os.path.expanduser(output_file) if output_file else "/tmp/zhifa_schedule_result.json"
     write_json_file(output_path, result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -1144,15 +1146,18 @@ def cmd_build_records(
         print(f"文案映射格式错误：{content_json_file} 需要 JSON 对象或数组", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        rng = random.Random(seed) if seed is not None else None
-        resolved_publish_times = resolve_window_publish_times(schedule, rng=rng)
-    except ValueError as exc:
-        print(f"调度结果格式错误：{exc}", file=sys.stderr)
-        sys.exit(1)
+    constraints = extract_constraints(schedule_payload)
+    if seed is not None:
+        expected_seed = str(constraints.get("seed") or "")
+        if str(seed) != expected_seed:
+            print(
+                f"build-records seed 与服务端排期不一致：传入 {seed!r}，排期为 {expected_seed!r}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     records = []
-    for i, item in enumerate(schedule):
+    for item in schedule:
         note_key = str(item.get("noteKey") or "")
         note_hit = note_map.get(note_key)
         if not note_hit:
@@ -1162,6 +1167,12 @@ def cmd_build_records(
         note = note_hit["note"]
         platform = str(item.get("platform") or "").strip()
         account = str(item.get("account") or "").strip()
+        publish_time = str(item.get("publishTime") or "").strip()
+        try:
+            parse_publish_time(publish_time)
+        except ValueError as exc:
+            print(f"调度结果格式错误：{exc}", file=sys.stderr)
+            sys.exit(1)
         records.append({
             "topic": note_hit["topic"],
             "topicOverride": str(content.get("topicOverride") or ""),
@@ -1175,7 +1186,7 @@ def cmd_build_records(
             "videos": note.get("videos") or [],
             "xiaohongshuAccount": account if platform == "xiaohongshu" else "",
             "douyinAccount": account if platform == "douyin" else "",
-            "publishTime": resolved_publish_times.get(i, str(item.get("publishTime") or "")),
+            "publishTime": publish_time,
             "xiaohongshuChannel": str(content.get("xiaohongshuChannel") or "蚁小二") if platform == "xiaohongshu" else "",
             "title": str(content.get("title") or ""),
             "description": str(content.get("description") or ""),
@@ -1183,15 +1194,8 @@ def cmd_build_records(
         })
 
     output_payload = {"records": records}
-    min_same_account_interval_minutes = 0
-    if isinstance(schedule_payload, dict):
-        min_same_account_interval_minutes = get_min_same_account_interval_minutes(
-            extract_constraints(schedule_payload)
-        ) or get_min_same_account_interval_minutes(schedule_payload)
-    if min_same_account_interval_minutes > 0:
-        output_payload["constraints"] = {
-            "minSameAccountIntervalMinutes": min_same_account_interval_minutes,
-        }
+    if constraints:
+        output_payload["constraints"] = constraints
 
     output_path = os.path.expanduser(output_file)
     write_json_file(output_path, output_payload)

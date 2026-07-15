@@ -449,7 +449,7 @@ test('topic spacing endpoints use indexed server context and fresh confirmation'
 });
 });
 
-test('skill_upload keeps 6 hour interval optional unless records constraints opt in', () => {
+test('skill_upload gates scheduling and preserves server-owned time constraints', () => {
   const pythonCheck = `
 import contextlib
 import io
@@ -460,22 +460,35 @@ import tempfile
 from scripts import skill_upload
 
 payload = {
-    "accounts": {"xiaohongshu": ["账号A"]},
+    "seed": "batch-seed",
+    "accounts": {"xiaohongshu_regular": ["账号A"], "xiaohongshu_special": [], "douyin": []},
+    "accountGroups": {"账号A": "店铺A"},
+    "coverageStrategy": "minimum",
+    "confirmation": {"inputFingerprint": "fp-ok", "decision": "allow_conflicts", "conflictIds": ["c1"]},
     "timeWindows": {
         "regular": [{"date": "2026-06-15", "start": "09:00", "end": "12:00"}],
         "special": [],
     },
-    "minSameAccountIntervalMinutes": 360,
 }
 normalized = skill_upload.normalize_schedule_plan_payload(payload)
-assert normalized["minSameAccountIntervalMinutes"] == 360
+assert normalized["seed"] == "batch-seed"
+assert normalized["accountGroups"] == {"账号A": "店铺A"}
+assert normalized["coverageStrategy"] == "minimum"
+assert normalized["confirmation"]["inputFingerprint"] == "fp-ok"
+assert normalized["timeSlots"]["regular"] == ["2026-06-15 09:00-12:00"]
+
+try:
+    skill_upload.normalize_schedule_plan_payload({**payload, "seed": ""})
+    raise AssertionError("empty seed should fail")
+except ValueError:
+    pass
 
 with tempfile.TemporaryDirectory() as tmpdir:
     image_path = os.path.join(tmpdir, "1.png")
     with open(image_path, "wb") as f:
         f.write(b"png")
 
-    records = [
+    close_records = [
         {
             "noteKey": "专题A/001",
             "folderPath": tmpdir,
@@ -499,20 +512,16 @@ with tempfile.TemporaryDirectory() as tmpdir:
             "tags": ["#测试"],
         },
     ]
-    assert skill_upload.validate_records_for_dry_run(records) is True
-    assert skill_upload.validate_records_for_create(records) is True
-    constraints = {"minSameAccountIntervalMinutes": 360}
-    assert skill_upload.validate_records_for_dry_run(records, constraints) is False
-    assert skill_upload.validate_records_for_create(records, constraints) is False
+    assert skill_upload.validate_records_for_dry_run(close_records) is False
+    assert skill_upload.validate_records_for_create(close_records) is False
 
     scan_path = os.path.join(tmpdir, "scan.json")
+    plan_path = os.path.join(tmpdir, "plan.json")
     schedule_path = os.path.join(tmpdir, "schedule.json")
     content_path = os.path.join(tmpdir, "content.json")
     output_path = os.path.join(tmpdir, "records.json")
     note_dir_a = os.path.join(tmpdir, "note1")
-    note_dir_b = os.path.join(tmpdir, "note2")
     os.makedirs(note_dir_a, exist_ok=True)
-    os.makedirs(note_dir_b, exist_ok=True)
 
     with open(scan_path, "w", encoding="utf-8") as f:
         json.dump([{
@@ -522,28 +531,80 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 "folderPath": note_dir_a,
                 "images": [{"name": "1.png", "path": image_path}],
             }],
-        }, {
-            "topic": "专题B",
-            "notes": [{
-                "noteKey": "专题B/001",
-                "folderPath": note_dir_b,
-                "images": [{"name": "1.png", "path": image_path}],
-            }],
         }], f, ensure_ascii=False)
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+    calls = []
+    def conflict_post(path, request_payload, timeout=60):
+        calls.append(path)
+        return {
+            "inputFingerprint": "fp-ok",
+            "requiresConfirmation": True,
+            "conflicts": [{"id": "c1", "displayTopic": "专题A", "storeGroup": "店铺A", "accounts": ["账号A", "账号B"]}],
+            "choices": ["auto_space", "adjust_window", "allow_conflicts"],
+        }
+
+    original_post = skill_upload.zhifa_post
+    skill_upload.zhifa_post = conflict_post
+    no_confirmation_plan = {**payload}
+    no_confirmation_plan.pop("confirmation")
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(no_confirmation_plan, f, ensure_ascii=False)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            skill_upload.cmd_schedule(scan_path, plan_path, schedule_path)
+        raise AssertionError("missing confirmation should stop")
+    except SystemExit as exc:
+        assert exc.code == 1
+    assert calls == ["/api/import/topic-spacing-check"]
+    assert not os.path.exists(schedule_path)
+
+    calls.clear()
+    def schedule_post(path, request_payload, timeout=60):
+        calls.append(path)
+        if path == "/api/import/topic-spacing-check":
+            return {"inputFingerprint": "fp-ok", "requiresConfirmation": True, "conflicts": [{"id": "c1"}]}
+        return {
+            "schedule": [{"noteKey": "专题A/001", "platform": "xiaohongshu", "account": "账号A", "publishTime": "2026-06-15 09:17"}],
+            "unscheduled": [],
+            "constraints": {"minSameAccountIntervalMinutes": 361, "uniqueMinuteAcrossBatch": True, "seed": "batch-seed"},
+        }
+    skill_upload.zhifa_post = schedule_post
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    with contextlib.redirect_stdout(io.StringIO()):
+        skill_upload.cmd_schedule(scan_path, plan_path, schedule_path)
+    assert calls == ["/api/import/topic-spacing-check", "/api/import/schedule"]
+    with open(schedule_path, encoding="utf-8") as f:
+        scheduled = json.load(f)
+    assert scheduled["constraints"]["minSameAccountIntervalMinutes"] == 361
+
+    calls.clear()
+    def stale_post(path, request_payload, timeout=60):
+        calls.append(path)
+        return {"inputFingerprint": "fp-changed", "requiresConfirmation": True, "conflicts": [{"id": "c1"}]}
+    skill_upload.zhifa_post = stale_post
+    os.remove(schedule_path)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            skill_upload.cmd_schedule(scan_path, plan_path, schedule_path)
+        raise AssertionError("stale fingerprint should stop")
+    except SystemExit as exc:
+        assert exc.code == 1
+    assert calls == ["/api/import/topic-spacing-check"]
+    assert not os.path.exists(schedule_path)
+    skill_upload.zhifa_post = original_post
+
     with open(schedule_path, "w", encoding="utf-8") as f:
         json.dump({
             "schedule": [{
                 "noteKey": "专题A/001",
                 "platform": "xiaohongshu",
                 "account": "账号A",
-                "publishTime": "2026-06-15 09:00-10:00",
-            }, {
-                "noteKey": "专题B/001",
-                "platform": "xiaohongshu",
-                "account": "账号A",
-                "publishTime": "2026-06-15 09:00-10:00",
+                "publishTime": "2026-06-15 09:17",
             }],
-            "minSameAccountIntervalMinutes": 360,
+            "constraints": {"minSameAccountIntervalMinutes": 361, "uniqueMinuteAcrossBatch": True, "seed": "batch-seed"},
         }, f, ensure_ascii=False)
     with open(content_path, "w", encoding="utf-8") as f:
         json.dump({
@@ -552,24 +613,22 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 "description": "描述",
                 "tags": ["#测试"],
             },
-            "专题B/001": {
-                "title": "这是第二个合规测试标题",
-                "description": "描述",
-                "tags": ["#测试"],
-            }
         }, f, ensure_ascii=False)
 
     with contextlib.redirect_stdout(io.StringIO()):
-        skill_upload.cmd_build_records(scan_path, schedule_path, content_path, output_path, seed="unit-test")
+        skill_upload.cmd_build_records(scan_path, schedule_path, content_path, output_path, seed="batch-seed")
     with open(output_path, encoding="utf-8") as f:
         output_payload = json.load(f)
-    assert output_payload["constraints"]["minSameAccountIntervalMinutes"] == 360
-    assert len(output_payload["records"]) == 2
+    assert output_payload["constraints"] == {"minSameAccountIntervalMinutes": 361, "uniqueMinuteAcrossBatch": True, "seed": "batch-seed"}
+    assert len(output_payload["records"]) == 1
     assert output_payload["records"][0]["xiaohongshuAccount"] == "账号A"
-    assert skill_upload.validate_records_for_dry_run(
-        output_payload["records"],
-        output_payload["constraints"],
-    ) is False
+    assert output_payload["records"][0]["publishTime"] == "2026-06-15 09:17"
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            skill_upload.cmd_build_records(scan_path, schedule_path, content_path, output_path, seed="wrong-seed")
+        raise AssertionError("seed mismatch should stop")
+    except SystemExit as exc:
+        assert exc.code == 1
 `;
 
   const result = spawnSync('python3', ['-c', pythonCheck], {
