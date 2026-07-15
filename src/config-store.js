@@ -7,6 +7,7 @@ const LEGACY_APP_DIRECTORY_NAMES = ['NotePublisher'];
 const WORKSPACE_ROOT = path.join(__dirname, '..');
 const LEGACY_CONFIG_PATH = path.join(WORKSPACE_ROOT, 'config.json');
 const LEGACY_LEDGER_PATH = path.join(WORKSPACE_ROOT, 'publish-ledger.json');
+const TOPIC_INDEX_VERSION = 1;
 
 const DEFAULT_CONFIG = {
   feishu: {
@@ -155,6 +156,7 @@ function getRuntimePaths() {
     historyPath: path.join(dataDir, 'publish-history.json'),
     aiWritingCachePath: path.join(dataDir, 'ai-writing-cache.json'),
     importRecoveryPath: path.join(dataDir, 'import-recovery.json'),
+    topicIndexPath: path.join(dataDir, 'topic-index.json'),
     legacyConfigPath: LEGACY_CONFIG_PATH,
     legacyLedgerPath: LEGACY_LEDGER_PATH,
     legacyNamedConfigPaths: LEGACY_APP_DIRECTORY_NAMES.map((name) => path.join(configBaseDir, name, 'config.json')),
@@ -375,6 +377,148 @@ function saveImportRecovery(data) {
   writeJsonFileAtomic(paths.importRecoveryPath, data || {});
 }
 
+function validateTopicIndexEntry(entry, recordId) {
+  if (!isPlainObject(entry)) {
+    throw new Error(`主题索引记录无效: ${recordId}`);
+  }
+
+  for (const field of ['topicKey', 'displayTopic', 'noteKey']) {
+    if (typeof entry[field] !== 'string' || !entry[field].trim()) {
+      throw new Error(`主题索引记录无效: ${recordId}.${field}`);
+    }
+  }
+
+  if (!Number.isFinite(entry.createdAt)) {
+    throw new Error(`主题索引记录无效: ${recordId}.createdAt`);
+  }
+
+  if (entry.source !== 'import') {
+    throw new Error(`主题索引记录无效: ${recordId}.source`);
+  }
+}
+
+function validateTopicIndex(index) {
+  if (!isPlainObject(index)) {
+    throw new Error('主题索引格式无效');
+  }
+  if (index.version !== TOPIC_INDEX_VERSION) {
+    throw new Error(`主题索引版本不支持: ${index.version}`);
+  }
+  if (!isPlainObject(index.records)) {
+    throw new Error('主题索引 records 无效');
+  }
+
+  for (const [recordId, entry] of Object.entries(index.records)) {
+    if (!recordId.trim()) {
+      throw new Error('主题索引 recordId 无效');
+    }
+    validateTopicIndexEntry(entry, recordId);
+  }
+  return index;
+}
+
+function readTopicIndexUnlocked(paths) {
+  if (!fs.existsSync(paths.topicIndexPath)) {
+    return { version: TOPIC_INDEX_VERSION, records: {} };
+  }
+
+  const index = readJsonFile(paths.topicIndexPath, null, { throwOnError: true });
+  return validateTopicIndex(index);
+}
+
+function readTopicIndex() {
+  return readTopicIndexUnlocked(getRuntimePaths());
+}
+
+function createTopicIndexLock(lockPath) {
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const fd = fs.openSync(lockPath, 'wx');
+  try {
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, token }), 'utf-8');
+  } catch (error) {
+    fs.closeSync(fd);
+    fs.unlinkSync(lockPath);
+    throw error;
+  }
+  fs.closeSync(fd);
+  return { lockPath, token };
+}
+
+function acquireTopicIndexLock(paths) {
+  ensureRuntimeDirs(paths);
+  const lockPath = `${paths.topicIndexPath}.lock`;
+  try {
+    return createTopicIndexLock(lockPath);
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      throw new Error('主题索引写锁已存在，请确认没有知发进程写入后人工处理');
+    }
+    throw error;
+  }
+}
+
+function releaseTopicIndexLock(lock) {
+  let current;
+  try {
+    current = JSON.parse(fs.readFileSync(lock.lockPath, 'utf-8'));
+  } catch (_) {
+    return;
+  }
+  if (current.token === lock.token) {
+    fs.unlinkSync(lock.lockPath);
+  }
+}
+
+function withTopicIndexLock(paths, operation) {
+  const lock = acquireTopicIndexLock(paths);
+  try {
+    return operation();
+  } finally {
+    releaseTopicIndexLock(lock);
+  }
+}
+
+function writeTopicIndexUnlocked(paths, index) {
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tmpPath = `${paths.topicIndexPath}.tmp-${suffix}`;
+  try {
+    fs.writeFileSync(tmpPath, `${JSON.stringify(index, null, 2)}\n`, 'utf-8');
+    fs.renameSync(tmpPath, paths.topicIndexPath);
+  } finally {
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+  }
+}
+
+function saveTopicIndex(index) {
+  const paths = getRuntimePaths();
+  const validated = validateTopicIndex(index);
+  return withTopicIndexLock(paths, () => {
+    writeTopicIndexUnlocked(paths, validated);
+    return validated;
+  });
+}
+
+function upsertTopicIndexRecord(recordId, entry) {
+  if (typeof recordId !== 'string' || !recordId.trim()) {
+    throw new Error('主题索引 recordId 无效');
+  }
+  validateTopicIndexEntry(entry, recordId);
+
+  const paths = getRuntimePaths();
+  return withTopicIndexLock(paths, () => {
+    const current = readTopicIndexUnlocked(paths);
+    const updated = validateTopicIndex({
+      version: TOPIC_INDEX_VERSION,
+      records: {
+        ...current.records,
+        [recordId]: entry,
+      },
+    });
+    writeTopicIndexUnlocked(paths, updated);
+    return updated;
+  });
+}
+
 function appendDiagnosticEvent(event = {}) {
   const paths = getRuntimePaths();
   ensureRuntimeDirs(paths);
@@ -410,6 +554,7 @@ function isYixiaoerConfigured(config = {}) {
 module.exports = {
   APP_DIRECTORY_NAME,
   DEFAULT_CONFIG,
+  TOPIC_INDEX_VERSION,
   getRuntimePaths,
   initializeAppStorage,
   loadConfig,
@@ -427,6 +572,9 @@ module.exports = {
   saveAiWritingCache,
   readImportRecovery,
   saveImportRecovery,
+  readTopicIndex,
+  saveTopicIndex,
+  upsertTopicIndexRecord,
   appendDiagnosticEvent,
   saveRuntimeState,
 };
