@@ -338,6 +338,14 @@ function readHistory() {
   return readJsonFile(paths.historyPath, {}) || {};
 }
 
+function readHistoryStrict() {
+  const paths = getRuntimePaths();
+  if (!fs.existsSync(paths.historyPath)) return {};
+  const history = readJsonFile(paths.historyPath, null, { throwOnError: true });
+  if (!isPlainObject(history)) throw new Error('发布历史格式无效');
+  return history;
+}
+
 function saveHistory(data) {
   const paths = getRuntimePaths();
   ensureRuntimeDirs(paths);
@@ -562,6 +570,7 @@ module.exports = {
   readLedger,
   saveLedger,
   readHistory,
+  readHistoryStrict,
   saveHistory,
   getHistoryPath,
   getRecordTempDir,

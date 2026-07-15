@@ -22,11 +22,21 @@ const {
   isYixiaoerConfigured,
   readAiWritingCache,
   saveAiWritingCache,
+  readHistoryStrict,
+  readTopicIndex,
+  upsertTopicIndexRecord,
   appendDiagnosticEvent,
   saveRuntimeState,
 } = require('./config-store.js');
 const { generateContent, testConnection } = require('./ai-writer.js');
 const { allocateImportSchedule } = require('./scheduler-allocator.js');
+const {
+  normalizeTopicKey,
+  buildTopicCheckFingerprint,
+  collectIndexedReservations,
+  findCrossAccountTopicConflicts,
+  validateTopicConfirmation,
+} = require('./topic-spacing-guard.js');
 const { archiveImportFolders } = require('./archiver.js');
 
 // 版本号 + commit hash 拼接：打包时 predist 脚本会生成 build-info.json，运行时读取拼到版本里
@@ -204,6 +214,146 @@ function ensureFeishuConfigReady() {
 function ensureYixiaoerConfigReady() {
   if (isYixiaoerConfigured(config)) return;
   throw createConfigError(`请先在配置文件中补全蚁小二 API Key 和 Team ID：${getRuntimePaths().configPath}`);
+}
+
+function buildImportedTopicIndexEntry({ topic, topicOverride, contentGroup, accountGroup, pptTopic, noteKey }) {
+  const displayTopic = String(pptTopic || topicOverride || topic || '').trim();
+  const topicKey = normalizeTopicKey([
+    contentGroup || accountGroup || topic,
+    pptTopic || topicOverride,
+  ].filter(Boolean).join('/'));
+  return {
+    topicKey,
+    displayTopic,
+    noteKey: String(noteKey || '').trim(),
+    createdAt: Date.now(),
+    source: 'import',
+  };
+}
+
+function normalizeTopicSpacingInput(payload) {
+  if (!String(payload?.seed || '').trim()) throw createConfigError('排期检查需要 seed');
+  if (!Array.isArray(payload?.noteFolders) || payload.noteFolders.length === 0) {
+    throw createConfigError('排期检查需要非空 noteFolders');
+  }
+  const accounts = payload?.accounts;
+  if (!accounts || typeof accounts !== 'object' || Array.isArray(accounts)) {
+    throw createConfigError('排期检查需要 accounts');
+  }
+  const candidateAccounts = [...new Set([
+    ...(Array.isArray(accounts.xiaohongshu_regular) ? accounts.xiaohongshu_regular : []),
+    ...(Array.isArray(accounts.xiaohongshu_special) ? accounts.xiaohongshu_special : []),
+  ].map(value => String(value || '').trim()).filter(Boolean))];
+  if (candidateAccounts.length === 0) throw createConfigError('排期检查需要候选小红书账号');
+  if (!payload.accountGroups || typeof payload.accountGroups !== 'object' || Array.isArray(payload.accountGroups)) {
+    throw createConfigError('排期检查需要 accountGroups');
+  }
+  const hasTimeInput = payload.timeSlots && typeof payload.timeSlots === 'object'
+    || payload.timeWindows && typeof payload.timeWindows === 'object';
+  if (!hasTimeInput) throw createConfigError('排期检查需要时间输入');
+  return candidateAccounts;
+}
+
+function describeCurrentTopics(payload, candidateAccounts) {
+  const topicGroups = new Map();
+  const currentItems = [];
+  for (const [folderIndex, folder] of payload.noteFolders.entries()) {
+    const displayTopic = String(folder?.pptTopic || folder?.topicOverride || folder?.topic || '').trim();
+    const topicKey = normalizeTopicKey([
+      folder?.contentGroup || folder?.accountGroup || folder?.topic,
+      folder?.pptTopic || folder?.topicOverride,
+    ].filter(Boolean).join('/'));
+    const templates = Array.isArray(folder?.templates)
+      ? folder.templates.map(value => String(value || '').trim()).filter(Boolean)
+      : [];
+    if (!topicKey || !displayTopic || templates.length === 0) {
+      throw createConfigError(`noteFolders[${folderIndex}] 缺少具体主题或模板`);
+    }
+    const key = topicKey;
+    if (!topicGroups.has(key)) topicGroups.set(key, { topicKey, displayTopic, noteKeys: [] });
+    const group = topicGroups.get(key);
+    for (const template of templates) {
+      const noteKey = `${String(folder.topic || '').trim()}/${template}`;
+      group.noteKeys.push(noteKey);
+      currentItems.push({ noteKey, topicKey, displayTopic });
+    }
+  }
+  return { topicGroups: [...topicGroups.values()], currentItems };
+}
+
+function buildPotentialConflictItems({ topicGroups, candidateAccounts, accountGroups, reservations }) {
+  const accountsByStore = new Map();
+  for (const account of candidateAccounts) {
+    const storeGroup = String(accountGroups[account] || '').trim();
+    if (!storeGroup) throw createConfigError(`账号“${account}”未配置店铺组，无法检查同主题间隔`);
+    if (!accountsByStore.has(storeGroup)) accountsByStore.set(storeGroup, []);
+    accountsByStore.get(storeGroup).push(account);
+  }
+
+  const currentItems = [];
+  for (const topic of topicGroups) {
+    for (const [storeGroup, accounts] of accountsByStore) {
+      const existing = reservations.filter(item => item.topicKey === topic.topicKey && item.storeGroup === storeGroup);
+      const shouldCompareAllAccounts = (topic.noteKeys.length >= 2 && accounts.length >= 2) || existing.length > 0;
+      const selectedAccounts = shouldCompareAllAccounts ? accounts : accounts.slice(0, 1);
+      for (const [index, account] of selectedAccounts.entries()) {
+        currentItems.push({
+          noteKey: topic.noteKeys[index % topic.noteKeys.length],
+          topicKey: topic.topicKey,
+          displayTopic: topic.displayTopic,
+          account,
+          storeGroup,
+          potential: true,
+        });
+      }
+    }
+  }
+  return currentItems;
+}
+
+async function loadTopicSpacingContext(payload) {
+  const candidateAccounts = normalizeTopicSpacingInput(payload);
+  const { topicGroups, currentItems } = describeCurrentTopics(payload, candidateAccounts);
+  let topicIndex;
+  try {
+    topicIndex = readTopicIndex();
+  } catch (error) {
+    throw new Error(`读取主题索引失败: ${error.message}`);
+  }
+  let rawRecords;
+  try {
+    rawRecords = await feishu.getRecords();
+  } catch (error) {
+    throw new Error(`读取飞书新增记录失败: ${error.message}`);
+  }
+  let history;
+  try {
+    history = readHistoryStrict();
+  } catch (error) {
+    throw new Error(`读取发布历史失败: ${error.message}`);
+  }
+  const indexedIds = new Set(Object.keys(topicIndex.records || {}));
+  const parsedRecords = (Array.isArray(rawRecords) ? rawRecords : [])
+    .filter(record => indexedIds.has(String(record?.record_id || record?.recordId || '')))
+    .map(record => feishu.parseRecord(record));
+  const reservations = collectIndexedReservations({
+    topicIndex,
+    feishuRecords: parsedRecords,
+    history,
+    accountGroups: payload.accountGroups,
+  });
+  const potentialItems = buildPotentialConflictItems({
+    topicGroups,
+    candidateAccounts,
+    accountGroups: payload.accountGroups,
+    reservations,
+  });
+  return {
+    currentItems,
+    reservations,
+    conflicts: findCrossAccountTopicConflicts({ currentItems: potentialItems, reservations }),
+    inputFingerprint: buildTopicCheckFingerprint(payload),
+  };
 }
 
 // 安全：维护用户已扫描的素材根目录白名单（in-memory，进程重启后清空）。
@@ -876,11 +1026,58 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (pathname === '/api/import/schedule' && req.method === 'POST') {
-    readBody(req).then((body) => {
+  if (pathname === '/api/import/topic-spacing-check' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
       try {
+        ensureFeishuConfigReady();
         const payload = JSON.parse(body || '{}');
-        return sendJson(res, allocateImportSchedule(payload));
+        const context = await loadTopicSpacingContext(payload);
+        return sendJson(res, {
+          inputFingerprint: context.inputFingerprint,
+          requiresConfirmation: context.conflicts.length > 0,
+          conflicts: context.conflicts,
+          reservationCount: context.reservations.length,
+          choices: ['auto_space', 'adjust_window', 'allow_conflicts'],
+        });
+      } catch (e) {
+        return sendJson(res, { error: e.message }, e.statusCode || (e instanceof SyntaxError ? 400 : 500));
+      }
+    }).catch(e => sendJson(res, { error: e.message }, e.statusCode || 500));
+    return;
+  }
+
+  if (pathname === '/api/import/schedule' && req.method === 'POST') {
+    readBody(req).then(async (body) => {
+      try {
+        ensureFeishuConfigReady();
+        const payload = JSON.parse(body || '{}');
+        const context = await loadTopicSpacingContext(payload);
+        try {
+          validateTopicConfirmation({
+            fingerprint: context.inputFingerprint,
+            conflicts: context.conflicts,
+            confirmation: payload.confirmation,
+          });
+        } catch (error) {
+          return sendJson(res, {
+            error: error.message,
+            code: 'topic_confirmation_required',
+            inputFingerprint: context.inputFingerprint,
+            conflicts: context.conflicts,
+          }, 409);
+        }
+        return sendJson(res, allocateImportSchedule({
+          ...payload,
+          currentItems: context.currentItems,
+          existingReservations: context.reservations.map(item => ({
+            platform: 'xiaohongshu',
+            account: item.account,
+            publishTime: item.publishTime,
+            topicKey: item.topicKey,
+            storeGroup: item.storeGroup,
+          })),
+          topicDecision: payload.confirmation?.decision || 'none',
+        }));
       } catch (e) {
         return sendJson(res, { error: e.message }, e.statusCode || (e instanceof SyntaxError ? 400 : 500));
       }
@@ -1019,13 +1216,7 @@ const server = http.createServer(async (req, res) => {
       // 失败的保留供下次重试复用(B4 断点续传)
       const recordImagesByNoteKey = new Map();
       // 同主题 AI 结果缓存：topic → {title, description, tags}
-      // key 用归一化后的字符串(全角空格→半角、连续空白合并、去首尾空白),
-      // 防止「主题A 」「主题A」「主题A 」(尾随全角空格)被当成不同 key 重复调 AI
       const topicAiCache = new Map();
-      const normalizeTopicKey = (s) => String(s || '')
-        .replace(/　/g, ' ')   // 全角空格 → 半角
-        .replace(/\s+/g, ' ')      // 连续空白合并
-        .trim();
 
       // SSE 进度推送辅助函数（仅 dryRun=false 时使用）
       const pushImportProgress = (noteKey, status) => {
@@ -1401,6 +1592,21 @@ const server = http.createServer(async (req, res) => {
             totalFeishuMs += feishuMs; countFeishu++;
             writeImportLog('建飞书记录耗时', { noteKey, op: 'update', ms: feishuMs });
             writeImportLog(`updateRecord 成功 noteKey=${noteKey}`, { recordId: overwriteId });
+            try {
+              upsertTopicIndexRecord(overwriteId, buildImportedTopicIndexEntry({
+                topic, topicOverride, contentGroup, accountGroup, pptTopic, noteKey,
+              }));
+            } catch (indexError) {
+              results.push({
+                noteKey,
+                status: 'failed',
+                reason: 'topic_index_write_failed',
+                recordId: overwriteId,
+                message: `飞书记录已更新，但主题索引写入失败，已停止本批且未回滚飞书记录: ${indexError.message}`,
+              });
+              pushImportProgress(noteKey, 'failed');
+              break;
+            }
             results.push({
               noteKey,
               status: 'success',
@@ -1414,6 +1620,21 @@ const server = http.createServer(async (req, res) => {
             totalFeishuMs += feishuMs; countFeishu++;
             writeImportLog('建飞书记录耗时', { noteKey, op: 'create', ms: feishuMs });
             writeImportLog(`createRecord 成功 noteKey=${noteKey}`, { recordId });
+            try {
+              upsertTopicIndexRecord(recordId, buildImportedTopicIndexEntry({
+                topic, topicOverride, contentGroup, accountGroup, pptTopic, noteKey,
+              }));
+            } catch (indexError) {
+              results.push({
+                noteKey,
+                status: 'failed',
+                reason: 'topic_index_write_failed',
+                recordId,
+                message: `飞书记录已创建，但主题索引写入失败，已停止本批且未回滚飞书记录: ${indexError.message}`,
+              });
+              pushImportProgress(noteKey, 'failed');
+              break;
+            }
             results.push({
               noteKey,
               status: 'success',

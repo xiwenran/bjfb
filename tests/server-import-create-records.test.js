@@ -1,11 +1,13 @@
-const test = require('node:test');
+const { test, describe, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawnSync } = require('child_process');
 
 const tempRoot = path.join(os.tmpdir(), 'zhifa-server-import-test');
+fs.rmSync(tempRoot, { recursive: true, force: true });
 process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
 
@@ -42,6 +44,10 @@ function requestJson({ method, urlPath, body }) {
   });
 }
 
+describe('server import integration', { concurrency: false }, () => {
+after(async () => {
+  await stopServer();
+});
 test('create-records should enforce trimmed account validation and keep single-platform behavior unchanged', { concurrency: false }, async (t) => {
   config.feishu = { appId: 'app', appSecret: 'secret', appToken: 'token', tableId: 'table' };
 
@@ -67,7 +73,6 @@ test('create-records should enforce trimmed account validation and keep single-p
 
   await startServer({ port: 3211, host: '127.0.0.1', silent: true });
   t.after(async () => {
-    await stopServer();
     FeishuClient.prototype.getTableFields = originalGetTableFields;
     FeishuClient.prototype.createTextField = originalCreateTextField;
     FeishuClient.prototype.uploadLocalImagesToFeishu = originalUploadLocalImagesToFeishu;
@@ -233,6 +238,215 @@ test('create-records should enforce trimmed account validation and keep single-p
   assert.equal(sameFolderNameDifferentPptTopicResponse.body.results[1].status, 'success');
   assert.equal(createRecordCalls, 7);
   assert.notEqual(createRecordFields[5]['导入指纹'], createRecordFields[6]['导入指纹']);
+
+  const topicIndexPath = path.join(tempRoot, 'data', 'topic-index.json');
+  const indexedCreateResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      records: [{
+        noteKey: '教务资料/期末家长会/001',
+        topic: '教务资料',
+        contentGroup: '教务资料',
+        accountGroup: '教师店',
+        pptTopic: '期末家长会',
+        title: '期末家长会资料',
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(indexedCreateResponse.body.results[0].status, 'success');
+  const indexed = JSON.parse(fs.readFileSync(topicIndexPath, 'utf8')).records.rec_1;
+  assert.equal(indexed.topicKey, '教务资料/期末家长会');
+  assert.equal(indexed.displayTopic, '期末家长会');
+  assert.equal(indexed.noteKey, '教务资料/期末家长会/001');
+  assert.equal(indexed.source, 'import');
+  assert.ok(Number.isFinite(indexed.createdAt));
+
+  fs.rmSync(topicIndexPath, { force: true });
+  const dryRunResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: true,
+      records: [{
+        noteKey: '教务资料/期末家长会/preview',
+        topic: '教务资料',
+        pptTopic: '期末家长会',
+        title: '期末家长会预览',
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(dryRunResponse.body.results[0].status, 'preview');
+  assert.equal(fs.existsSync(topicIndexPath), false);
+
+  fs.mkdirSync(path.dirname(topicIndexPath), { recursive: true });
+  fs.writeFileSync(`${topicIndexPath}.lock`, '{}', 'utf8');
+  const callsBeforeLockedBatch = createRecordCalls;
+  const lockedIndexResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      records: [
+        { noteKey: '锁测试/001', topic: '锁测试', title: '锁测试一', images: [], xiaohongshuAccount: '小红书账号A' },
+        { noteKey: '锁测试/002', topic: '锁测试', title: '锁测试二', images: [], xiaohongshuAccount: '小红书账号A' },
+      ],
+    },
+  });
+  assert.equal(lockedIndexResponse.body.results[0].status, 'failed');
+  assert.equal(lockedIndexResponse.body.results[0].reason, 'topic_index_write_failed');
+  assert.equal(lockedIndexResponse.body.results[0].recordId, 'rec_1');
+  assert.equal(createRecordCalls, callsBeforeLockedBatch + 1);
+  fs.rmSync(`${topicIndexPath}.lock`, { force: true });
+});
+
+test('topic spacing endpoints use indexed server context and fresh confirmation', { concurrency: false }, async (t) => {
+  config.feishu = { appId: 'app', appSecret: 'secret', appToken: 'token', tableId: 'table' };
+  const dataDir = path.join(tempRoot, 'data');
+  const topicIndexPath = path.join(dataDir, 'topic-index.json');
+  const historyPath = path.join(dataDir, 'publish-history.json');
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  let rawRecords = [];
+  const originalGetRecords = FeishuClient.prototype.getRecords;
+  FeishuClient.prototype.getRecords = async () => rawRecords;
+  await startServer({ port: 3211, host: '127.0.0.1', silent: true });
+  t.after(async () => {
+    FeishuClient.prototype.getRecords = originalGetRecords;
+    fs.rmSync(topicIndexPath, { force: true });
+    fs.rmSync(historyPath, { force: true });
+  });
+
+  fs.writeFileSync(topicIndexPath, JSON.stringify({
+    version: 1,
+    records: {
+      rec_pending: {
+        topicKey: '教务资料/定语从句',
+        displayTopic: '定语从句',
+        noteKey: '教务资料/定语从句/旧篇',
+        createdAt: 1,
+        source: 'import',
+      },
+    },
+  }), 'utf8');
+  fs.writeFileSync(historyPath, '{}', 'utf8');
+  rawRecords = [
+    {
+      record_id: 'rec_old',
+      fields: {
+        标题: '旧记录',
+        小红书账号: ['错误多选不应解析'],
+        小红书发布状态: '待发布',
+        发布时间: Date.parse('2026-07-16 09:00'),
+      },
+    },
+    {
+      record_id: 'rec_pending',
+      fields: {
+        标题: '索引内记录',
+        小红书账号: '可乐',
+        小红书发布状态: '待发布',
+        发布时间: Date.parse('2026-07-16 09:00'),
+      },
+    },
+  ];
+
+  const payload = {
+    seed: 'batch-20260715',
+    noteFolders: [{ topic: '教务资料', pptTopic: '定语从句', templates: ['001'] }],
+    accounts: { xiaohongshu_regular: ['拉面卷卷'], xiaohongshu_special: [], douyin: [] },
+    accountGroups: { 拉面卷卷: '教师店', 可乐: '教师店' },
+    timeSlots: { regular: ['2026-07-16 16:00'], special: [] },
+    coverageStrategy: 'minimum',
+  };
+  const checkResponse = await requestJson({ method: 'POST', urlPath: '/api/import/topic-spacing-check', body: payload });
+  assert.equal(checkResponse.statusCode, 200);
+  assert.equal(checkResponse.body.requiresConfirmation, true);
+  assert.equal(checkResponse.body.conflicts.length, 1);
+  assert.equal(checkResponse.body.reservationCount, 1);
+  assert.match(checkResponse.body.inputFingerprint, /^[a-f0-9]{64}$/);
+
+  const missingConfirmation = await requestJson({ method: 'POST', urlPath: '/api/import/schedule', body: payload });
+  assert.equal(missingConfirmation.statusCode, 409);
+  assert.equal(missingConfirmation.body.code, 'topic_confirmation_required');
+
+  const confirmation = {
+    inputFingerprint: checkResponse.body.inputFingerprint,
+    decision: 'allow_conflicts',
+    conflictIds: checkResponse.body.conflicts.map(item => item.id),
+  };
+  const allowed = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/schedule',
+    body: { ...payload, existingReservations: [], confirmation },
+  });
+  assert.equal(allowed.statusCode, 200, JSON.stringify(allowed.body));
+  assert.equal(allowed.body.schedule.length, 1);
+
+  const stale = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/schedule',
+    body: { ...payload, seed: 'changed-seed', confirmation },
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.equal(stale.body.code, 'topic_confirmation_required');
+
+  rawRecords = [{
+    record_id: 'rec_pending',
+    fields: {
+      标题: '同账号索引内记录',
+      小红书账号: '拉面卷卷',
+      小红书发布状态: '待发布',
+      发布时间: Date.parse('2026-07-16 09:00'),
+    },
+  }];
+  const spacingFailure = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/schedule',
+    body: { ...payload, timeSlots: { regular: ['2026-07-16 15:00'], special: [] }, existingReservations: [] },
+  });
+  assert.equal(spacingFailure.statusCode, 400);
+  assert.match(spacingFailure.body.error, /361/);
+
+  fs.writeFileSync(topicIndexPath, JSON.stringify({ version: 1, records: {} }), 'utf8');
+  rawRecords = [];
+  const multiCandidatePayload = {
+    ...payload,
+    accounts: { xiaohongshu_regular: ['拉面卷卷', '可乐'], xiaohongshu_special: [], douyin: [] },
+  };
+  const oneNoteNoExisting = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/topic-spacing-check',
+    body: multiCandidatePayload,
+  });
+  assert.equal(oneNoteNoExisting.statusCode, 200);
+  assert.equal(oneNoteNoExisting.body.requiresConfirmation, false);
+
+  const twoNotesSameTopic = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/topic-spacing-check',
+    body: {
+      ...multiCandidatePayload,
+      noteFolders: [{ topic: '教务资料', pptTopic: '定语从句', templates: ['001', '002'] }],
+    },
+  });
+  assert.equal(twoNotesSameTopic.statusCode, 200);
+  assert.equal(twoNotesSameTopic.body.requiresConfirmation, true);
+
+  fs.writeFileSync(topicIndexPath, '{broken', 'utf8');
+  const brokenIndex = await requestJson({ method: 'POST', urlPath: '/api/import/topic-spacing-check', body: payload });
+  assert.equal(brokenIndex.statusCode, 500);
+  assert.match(brokenIndex.body.error, /主题索引|JSON/);
+
+  fs.writeFileSync(topicIndexPath, JSON.stringify({ version: 1, records: {} }), 'utf8');
+  fs.writeFileSync(historyPath, '{broken', 'utf8');
+  const brokenHistory = await requestJson({ method: 'POST', urlPath: '/api/import/topic-spacing-check', body: payload });
+  assert.equal(brokenHistory.statusCode, 500);
+  assert.match(brokenHistory.body.error, /发布历史|JSON/);
+});
 });
 
 test('skill_upload keeps 6 hour interval optional unless records constraints opt in', () => {
