@@ -7,3 +7,4 @@ publish-history.json
 src/build-info.json
 .claude/
 __pycache__/
+.worktrees/
