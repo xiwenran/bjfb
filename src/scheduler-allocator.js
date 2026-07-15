@@ -1,7 +1,8 @@
-const {
-  canUseSameAccountSlot,
-  parsePublishTimestamp,
-} = require('./publish-guard.js');
+const { parsePublishTimestamp } = require('./publish-guard.js');
+
+const MIN_SAME_ACCOUNT_INTERVAL_MINUTES = 361;
+const MIN_INTERVAL_MS = MIN_SAME_ACCOUNT_INTERVAL_MINUTES * 60 * 1000;
+const SUPPORTED_PLATFORMS = new Set(['xiaohongshu', 'douyin']);
 
 function createInputError(message) {
   const error = new Error(message);
@@ -9,11 +10,26 @@ function createInputError(message) {
   return error;
 }
 
-function shuffle(items) {
+function createSeededRandom(seed) {
+  let state = 2166136261;
+  for (const char of String(seed)) {
+    state ^= char.charCodeAt(0);
+    state = Math.imul(state, 16777619);
+  }
+  return () => {
+    state += 0x6D2B79F5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffle(items, rng) {
   const copy = items.slice();
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
+  for (let index = copy.length - 1; index > 0; index--) {
+    const target = Math.floor(rng() * (index + 1));
+    [copy[index], copy[target]] = [copy[target], copy[index]];
   }
   return copy;
 }
@@ -24,268 +40,339 @@ function normalizeStringArray(value, fieldName) {
 }
 
 function normalizeCoverageStrategy(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return 'minimum';
-
-  const aliasMap = new Map([
-    ['strict', 'strict'],
-    ['严格覆盖', 'strict'],
-    ['balanced', 'balanced'],
-    ['尽量覆盖', 'balanced'],
-    ['minimum', 'minimum'],
-    ['只保底发布', 'minimum'],
+  const raw = String(value || '').trim() || 'minimum';
+  const aliases = new Map([
+    ['strict', 'strict'], ['严格覆盖', 'strict'],
+    ['balanced', 'balanced'], ['尽量覆盖', 'balanced'],
+    ['minimum', 'minimum'], ['只保底发布', 'minimum'],
   ]);
-
-  const normalized = aliasMap.get(raw);
+  const normalized = aliases.get(raw);
   if (!normalized) {
     throw createInputError('coverageStrategy 仅支持 strict/严格覆盖、balanced/尽量覆盖、minimum/只保底发布');
   }
   return normalized;
 }
 
-function normalizeNotes(noteFolders) {
+function normalizeNotes(noteFolders, currentItems) {
   if (!Array.isArray(noteFolders) || noteFolders.length === 0) {
     throw createInputError('noteFolders 必须是非空数组');
+  }
+  const topicByNoteKey = new Map();
+  if (Array.isArray(currentItems)) {
+    for (const item of currentItems) {
+      const noteKey = String(item?.noteKey || '').trim();
+      const topicKey = String(item?.topicKey || '').trim();
+      if (noteKey && topicKey) topicByNoteKey.set(noteKey, topicKey);
+    }
   }
 
   const notes = [];
   const topics = [];
-  const templatesByTopic = new Map();
+  const seenTopics = new Set();
   const seenNoteKeys = new Set();
-
   for (const folder of noteFolders) {
     const topic = String(folder?.topic || '').trim();
     if (!topic) throw createInputError('noteFolders 中存在空 topic');
     const templates = normalizeStringArray(folder.templates, `noteFolders[${topic}].templates`);
-    if (templates.length === 0) continue;
-
-    if (!templatesByTopic.has(topic)) {
-      topics.push(topic);
-      templatesByTopic.set(topic, []);
-    }
-
     for (const template of templates) {
       const noteKey = `${topic}/${template}`;
       if (seenNoteKeys.has(noteKey)) continue;
       seenNoteKeys.add(noteKey);
-      templatesByTopic.get(topic).push(template);
-      notes.push({ topic, template, noteKey });
+      const topicKey = topicByNoteKey.get(noteKey) || topic;
+      if (!seenTopics.has(topicKey)) {
+        seenTopics.add(topicKey);
+        topics.push(topicKey);
+      }
+      notes.push({ topic, topicKey, template, noteKey });
     }
   }
-
   if (notes.length === 0) throw createInputError('noteFolders 中没有可调度模板');
-  return { notes, topics, templatesByTopic };
+  return { notes, topics };
 }
 
-function normalizeAccounts(accounts, timeSlots) {
+function normalizeAccounts(input, rng) {
+  const accounts = input?.accounts;
+  const timeSlots = input?.timeSlots;
   if (!accounts || typeof accounts !== 'object' || Array.isArray(accounts)) {
     throw createInputError('accounts 必须是对象');
   }
   if (!timeSlots || typeof timeSlots !== 'object' || Array.isArray(timeSlots)) {
     throw createInputError('timeSlots 必须是对象');
   }
-
   const regularSlots = normalizeStringArray(timeSlots.regular || [], 'timeSlots.regular');
   const specialSlots = normalizeStringArray(timeSlots.special || [], 'timeSlots.special');
-  const accountGroups = [
-    {
-      platform: 'xiaohongshu',
-      slotType: 'regular',
-      accounts: normalizeStringArray(accounts.xiaohongshu_regular || [], 'accounts.xiaohongshu_regular'),
-      slots: regularSlots,
-    },
-    {
-      platform: 'xiaohongshu',
-      slotType: 'special',
-      accounts: normalizeStringArray(accounts.xiaohongshu_special || [], 'accounts.xiaohongshu_special'),
-      slots: specialSlots,
-    },
-    {
-      platform: 'douyin',
-      slotType: 'regular',
-      accounts: normalizeStringArray(accounts.douyin || [], 'accounts.douyin'),
-      slots: regularSlots,
-    },
+  const accountGroups = input?.accountGroups && typeof input.accountGroups === 'object' && !Array.isArray(input.accountGroups)
+    ? input.accountGroups
+    : {};
+  const definitions = [
+    ['xiaohongshu', 'regular', accounts.xiaohongshu_regular || [], regularSlots],
+    ['xiaohongshu', 'special', accounts.xiaohongshu_special || [], specialSlots],
+    ['douyin', 'regular', accounts.douyin || [], regularSlots],
   ];
-
   const normalized = [];
-  for (const group of accountGroups) {
-    if (group.accounts.length > 0 && group.slots.length === 0) {
-      throw createInputError(`${group.slotType} 时段为空，无法调度 ${group.platform} 账号`);
+  const seenAccountKeys = new Set();
+  for (const [platform, slotType, rawAccounts, slots] of definitions) {
+    const names = normalizeStringArray(rawAccounts, `accounts.${platform}_${slotType}`);
+    if (names.length > 0 && slots.length === 0) {
+      throw createInputError(`${slotType} 时段为空，无法调度 ${platform} 账号`);
     }
-    for (const account of shuffle(group.accounts)) {
-      normalized.push({ platform: group.platform, account, slots: group.slots });
+    for (const account of shuffle(names, rng)) {
+      const accountKey = `${platform}:${account}`;
+      if (seenAccountKeys.has(accountKey)) throw createInputError(`账号重复: ${accountKey}`);
+      seenAccountKeys.add(accountKey);
+      const storeGroup = String(accountGroups[account] || '').trim();
+      if (platform === 'xiaohongshu' && input.topicDecision === 'auto_space' && !storeGroup) {
+        throw createInputError(`小红书账号 ${account} 缺少店铺组映射`);
+      }
+      normalized.push({ platform, account, accountKey, storeGroup, slots, slotType });
     }
   }
-
   if (normalized.length === 0) throw createInputError('accounts 中没有可调度账号');
-  return shuffle(normalized);
+  return shuffle(normalized, rng);
 }
 
-function buildTopicPlan(topics, totalCount, accountIndex) {
-  const shuffledTopics = shuffle(topics);
-  const plan = [];
-  for (let i = 0; i < totalCount; i++) {
-    plan.push(shuffledTopics[(i + accountIndex) % shuffledTopics.length]);
+function formatMinute(timestamp) {
+  const date = new Date(timestamp);
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function parseWindow(value) {
+  const match = String(value || '').trim().match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
+  if (!match) return null;
+  const start = parsePublishTimestamp(`${match[1]} ${match[2]}`);
+  const end = parsePublishTimestamp(`${match[1]} ${match[3]}`);
+  if (start === null || end === null || end < start) throw createInputError(`时间窗无效: ${value}`);
+  return { start, end };
+}
+
+function buildSegments(slotValue, count, rng) {
+  const window = parseWindow(slotValue);
+  if (!window) {
+    const timestamp = parsePublishTimestamp(slotValue);
+    if (timestamp === null) throw createInputError(`发布时间无法解析: ${slotValue}`);
+    if (count !== 1) {
+      throw createInputError(`精确分钟槽 ${slotValue} 不足：需要 ${count} 个唯一分钟，只有 1 个`);
+    }
+    return [[timestamp]];
   }
-  return plan;
-}
-
-function chooseNote(topic, templatesByTopic, usedPlatformNoteKeys, usedAccountTemplates) {
-  const templates = shuffle(templatesByTopic.get(topic) || []);
-  for (const template of templates) {
-    const noteKey = `${topic}/${template}`;
-    if (usedPlatformNoteKeys.has(noteKey) || usedAccountTemplates.has(template)) continue;
-    return { topic, template, noteKey };
+  const totalMinutes = Math.floor((window.end - window.start) / 60000) + 1;
+  if (totalMinutes < count) {
+    throw createInputError(`时间窗 ${slotValue} 的唯一分钟不足：需要 ${count}，只有 ${totalMinutes}`);
   }
-  return null;
-}
-
-function getEffectiveSameAccountIntervalMs(input) {
-  const minutes = Number(input?.minSameAccountIntervalMinutes);
-  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : 0;
-}
-
-function parseSlotTimestamp(slot) {
-  const value = String(slot || '').trim();
-  const windowMatch = value.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-/);
-  if (windowMatch) {
-    return parsePublishTimestamp(`${windowMatch[1]} ${windowMatch[2]}`);
+  const segments = [];
+  for (let index = 0; index < count; index++) {
+    const segmentStart = Math.floor(index * totalMinutes / count);
+    const segmentEnd = Math.floor((index + 1) * totalMinutes / count) - 1;
+    const length = segmentEnd - segmentStart + 1;
+    const startOffset = Math.floor(rng() * length);
+    const candidates = [];
+    for (let offset = 0; offset < length; offset++) {
+      const minuteOffset = segmentStart + ((startOffset + offset) % length);
+      candidates.push(window.start + minuteOffset * 60000);
+    }
+    segments.push(candidates);
   }
-  return parsePublishTimestamp(value);
+  return shuffle(segments, rng);
+}
+
+function normalizeExistingReservations(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw createInputError('existingReservations 必须是数组');
+  return value.map(item => {
+    const platform = String(item?.platform || '').trim();
+    const account = String(item?.account || '').trim();
+    const timestamp = parsePublishTimestamp(item?.publishTime);
+    if (!SUPPORTED_PLATFORMS.has(platform) || !account || timestamp === null) {
+      throw createInputError('已有排期记录缺少合法 platform、account 或 publishTime');
+    }
+    return {
+      platform,
+      account,
+      accountKey: `${platform}:${account}`,
+      timestamp,
+      topicKey: String(item?.topicKey || '').trim(),
+      storeGroup: String(item?.storeGroup || '').trim(),
+    };
+  });
+}
+
+function canPlaceAccountTime(times, candidate) {
+  return (times || []).every(existing => Math.abs(candidate - existing) >= MIN_INTERVAL_MS);
 }
 
 function allocateImportSchedule(input) {
-  const { topics, templatesByTopic, notes } = normalizeNotes(input?.noteFolders);
-  const accounts = normalizeAccounts(input?.accounts, input?.timeSlots);
+  const seed = String(input?.seed || '').trim();
+  if (!seed) throw createInputError('seed 不能为空，排期必须可复算');
+  const rng = createSeededRandom(seed);
+  const { notes, topics } = normalizeNotes(input?.noteFolders, input?.currentItems);
+  const accounts = normalizeAccounts(input, rng);
+  const reservations = normalizeExistingReservations(input?.existingReservations);
+  const coverageStrategy = normalizeCoverageStrategy(input?.coverageStrategy);
   const perAccountPerSlot = Number.isInteger(input?.perAccountPerSlot) && input.perAccountPerSlot > 0
     ? input.perAccountPerSlot
     : 1;
-  const coverageStrategy = normalizeCoverageStrategy(input?.coverageStrategy);
-  const minSameAccountIntervalMs = getEffectiveSameAccountIntervalMs(input);
-  const minSameAccountIntervalMinutes = Math.ceil(minSameAccountIntervalMs / 60000);
 
-  const schedule = [];
-  const usedNoteKeysByPlatform = new Map();
-  const usedAnyNoteKeys = new Set();
-  const accountTopics = new Map();
-  const accountTemplates = new Map();
-  const accountSlotCounts = new Map();
-  const accountLastSlotTime = new Map();
-  const intervalViolations = [];
-
-  accounts.forEach((accountInfo, accountIndex) => {
-    const accountKey = `${accountInfo.platform}:${accountInfo.account}`;
-    const usedAccountTemplates = new Set();
-    if (!usedNoteKeysByPlatform.has(accountInfo.platform)) {
-      usedNoteKeysByPlatform.set(accountInfo.platform, new Set());
-    }
-    const usedPlatformNoteKeys = usedNoteKeysByPlatform.get(accountInfo.platform);
-    const totalForAccount = accountInfo.slots.length * perAccountPerSlot;
-    const topicPlan = buildTopicPlan(topics, totalForAccount, accountIndex);
-
-    for (let slotIndex = 0; slotIndex < accountInfo.slots.length; slotIndex++) {
-      for (let slotCopy = 0; slotCopy < perAccountPerSlot; slotCopy++) {
-        const slot = accountInfo.slots[slotIndex];
-        const slotTs = parseSlotTimestamp(slot);
-        const lastSlotTs = accountLastSlotTime.get(accountKey);
-        if (slotTs === null) {
-          intervalViolations.push(`${accountInfo.account}：${slot} 发布时间无法解析，已跳过`);
-          continue;
-        }
-        if (minSameAccountIntervalMs > 0 && !canUseSameAccountSlot(lastSlotTs, slotTs, minSameAccountIntervalMs)) {
-          intervalViolations.push(
-            `${accountInfo.account}：${slot} 同账号间隔不足 ${minSameAccountIntervalMinutes} 分钟`
-          );
-          continue;
-        }
-
-        const planIndex = slotIndex * perAccountPerSlot + slotCopy;
-        const preferredTopics = [
-          topicPlan[planIndex],
-          ...shuffle(topics.filter(topic => topic !== topicPlan[planIndex])),
-        ];
-        const note = preferredTopics
-          .map(topic => chooseNote(topic, templatesByTopic, usedPlatformNoteKeys, usedAccountTemplates))
-          .find(Boolean);
-
-        if (!note) continue;
-
-        accountLastSlotTime.set(accountKey, slotTs);
-        usedPlatformNoteKeys.add(note.noteKey);
-        usedAnyNoteKeys.add(note.noteKey);
-        usedAccountTemplates.add(note.template);
-        if (!accountTopics.has(accountKey)) accountTopics.set(accountKey, new Set());
-        if (!accountTemplates.has(accountKey)) accountTemplates.set(accountKey, []);
-        accountTopics.get(accountKey).add(note.topic);
-        accountTemplates.get(accountKey).push(note.template);
-
-        const slotKey = `${accountKey}:${accountInfo.slots[slotIndex]}`;
-        accountSlotCounts.set(slotKey, (accountSlotCounts.get(slotKey) || 0) + 1);
-        schedule.push({
-          topic: note.topic,
-          noteKey: note.noteKey,
-          platform: accountInfo.platform,
-          account: accountInfo.account,
-          publishTime: slot,
-        });
+  const poolsByValue = new Map();
+  for (const account of accounts) {
+    for (const slot of account.slots) {
+      if (!poolsByValue.has(slot)) poolsByValue.set(slot, { value: slot, tasks: [] });
+      const pool = poolsByValue.get(slot);
+      for (let copy = 0; copy < perAccountPerSlot; copy++) {
+        pool.tasks.push({ ...account, placementIndex: copy });
       }
     }
-  });
+  }
 
-  const unscheduled = notes
-    .filter(note => !usedAnyNoteKeys.has(note.noteKey))
-    .map(note => note.noteKey);
+  const tasks = [];
+  for (const pool of poolsByValue.values()) {
+    pool.segments = buildSegments(pool.value, pool.tasks.length, rng);
+    pool.usedSegments = new Set();
+    for (const task of shuffle(pool.tasks, rng)) tasks.push({ ...task, pool });
+  }
+  const orderedTasks = shuffle(tasks, rng);
+
+  const usedMinutes = new Set();
+  const accountTimes = new Map();
+  const topicTimes = new Map();
+  for (const reservation of reservations) {
+    if (!accountTimes.has(reservation.accountKey)) accountTimes.set(reservation.accountKey, []);
+    accountTimes.get(reservation.accountKey).push(reservation.timestamp);
+    if (reservation.platform === 'xiaohongshu' && reservation.storeGroup && reservation.topicKey) {
+      const key = `${reservation.storeGroup}\u0000${reservation.topicKey}`;
+      if (!topicTimes.has(key)) topicTimes.set(key, []);
+      topicTimes.get(key).push({ timestamp: reservation.timestamp, account: reservation.account });
+    }
+  }
+
+  const usedNotesByPlatform = new Map([
+    ['xiaohongshu', new Set()],
+    ['douyin', new Set()],
+  ]);
+  const usedTemplatesByAccount = new Map();
+  const usedAnyNotes = new Set();
+  const coveredTopicsByAccount = new Map();
+  const schedule = [];
+  const noteOrder = shuffle(notes, rng);
+
+  function candidateNotes(task) {
+    const startTopic = (orderedTasks.indexOf(task) + task.placementIndex) % topics.length;
+    const topicOrder = topics.slice(startTopic).concat(topics.slice(0, startTopic));
+    const topicRank = new Map(topicOrder.map((topic, index) => [topic, index]));
+    return noteOrder.slice().sort((left, right) => topicRank.get(left.topicKey) - topicRank.get(right.topicKey));
+  }
+
+  function search(taskIndex) {
+    if (taskIndex === orderedTasks.length) {
+      if (notes.some(note => !usedAnyNotes.has(note.noteKey))) return false;
+      if (coverageStrategy === 'strict' && accounts.some(account => (
+        (coveredTopicsByAccount.get(account.accountKey) || new Set()).size < topics.length
+      ))) return false;
+      return true;
+    }
+    const task = orderedTasks[taskIndex];
+    const platformNotes = usedNotesByPlatform.get(task.platform);
+    const accountTemplates = usedTemplatesByAccount.get(task.accountKey) || new Set();
+    const maxSegmentLength = Math.max(...task.pool.segments.map(segment => segment.length));
+    for (let candidateIndex = 0; candidateIndex < maxSegmentLength; candidateIndex++) {
+      for (let segmentIndex = 0; segmentIndex < task.pool.segments.length; segmentIndex++) {
+        if (task.pool.usedSegments.has(segmentIndex)) continue;
+        const timestamp = task.pool.segments[segmentIndex][candidateIndex];
+        if (timestamp === undefined) continue;
+        const minute = formatMinute(timestamp);
+        if (usedMinutes.has(minute)) continue;
+        const times = accountTimes.get(task.accountKey) || [];
+        if (!canPlaceAccountTime(times, timestamp)) continue;
+        for (const note of candidateNotes(task)) {
+          if (platformNotes.has(note.noteKey) || accountTemplates.has(note.template)) continue;
+          const topicKey = `${task.storeGroup}\u0000${note.topicKey}`;
+          const tracksTopic = task.platform === 'xiaohongshu' && Boolean(task.storeGroup);
+          const relevantTopicTimes = topicTimes.get(topicKey) || [];
+          if (task.platform === 'xiaohongshu' && input.topicDecision === 'auto_space' && relevantTopicTimes.some(item => (
+            item.account !== task.account && Math.abs(timestamp - item.timestamp) < MIN_INTERVAL_MS
+          ))) continue;
+
+          task.pool.usedSegments.add(segmentIndex);
+          usedMinutes.add(minute);
+          times.push(timestamp);
+          accountTimes.set(task.accountKey, times);
+          platformNotes.add(note.noteKey);
+          accountTemplates.add(note.template);
+          usedTemplatesByAccount.set(task.accountKey, accountTemplates);
+          usedAnyNotes.add(note.noteKey);
+          if (!coveredTopicsByAccount.has(task.accountKey)) coveredTopicsByAccount.set(task.accountKey, new Set());
+          coveredTopicsByAccount.get(task.accountKey).add(note.topicKey);
+          if (tracksTopic) {
+            if (!topicTimes.has(topicKey)) topicTimes.set(topicKey, []);
+            topicTimes.get(topicKey).push({ timestamp, account: task.account });
+          }
+          schedule.push({
+            topic: note.topic,
+            topicKey: note.topicKey,
+            noteKey: note.noteKey,
+            platform: task.platform,
+            account: task.account,
+            storeGroup: task.storeGroup,
+            publishTime: minute,
+          });
+
+          if (search(taskIndex + 1)) return true;
+
+          schedule.pop();
+          if (tracksTopic) topicTimes.get(topicKey).pop();
+          const covered = coveredTopicsByAccount.get(task.accountKey);
+          if (!schedule.some(item => `${item.platform}:${item.account}` === task.accountKey && item.topicKey === note.topicKey)) {
+            covered.delete(note.topicKey);
+          }
+          if (!schedule.some(item => item.noteKey === note.noteKey)) usedAnyNotes.delete(note.noteKey);
+          accountTemplates.delete(note.template);
+          platformNotes.delete(note.noteKey);
+          times.pop();
+          usedMinutes.delete(minute);
+          task.pool.usedSegments.delete(segmentIndex);
+        }
+      }
+    }
+    return false;
+  }
+
+  if (!search(0)) {
+    throw createInputError('给定时间资源无法安排全部笔记：同账号必须至少间隔 361 分钟、全局分钟不能重复，且自动错开时同店同主题也须至少间隔 361 分钟');
+  }
+  const unscheduled = notes.filter(note => !usedAnyNotes.has(note.noteKey)).map(note => note.noteKey);
+  if (unscheduled.length > 0) {
+    throw createInputError(`给定时间资源无法安排全部笔记：仍有 ${unscheduled.length} 篇未排`);
+  }
 
   const violations = [];
-  violations.push(...intervalViolations);
   const warnings = [];
-  for (const accountInfo of accounts) {
-    const accountKey = `${accountInfo.platform}:${accountInfo.account}`;
-    const coveredTopics = accountTopics.get(accountKey) || new Set();
-    const templates = accountTemplates.get(accountKey) || [];
-    const duplicateTemplates = templates.filter((template, index) => templates.indexOf(template) !== index);
-
-    if (coveredTopics.size < topics.length) {
-      const message = `${accountInfo.account}：只覆盖 ${coveredTopics.size}/${topics.length} 个主题`;
-      if (coverageStrategy === 'strict') {
-        violations.push(message);
-      } else if (coverageStrategy === 'balanced') {
-        warnings.push(message);
-      }
-    }
-    if (duplicateTemplates.length > 0) {
-      violations.push(`${accountInfo.account}：模板重复 ${Array.from(new Set(duplicateTemplates)).join(',')}`);
-    }
-    for (const slot of accountInfo.slots) {
-      const count = accountSlotCounts.get(`${accountKey}:${slot}`) || 0;
-      if (count > perAccountPerSlot) {
-        violations.push(`${accountInfo.account}：${slot} 超过 ${perAccountPerSlot} 篇`);
-      } else if (count < perAccountPerSlot) {
-        violations.push(`${accountInfo.account}：${slot} 只安排 ${count}/${perAccountPerSlot} 篇`);
-      }
+  for (const account of accounts) {
+    const coveredCount = (coveredTopicsByAccount.get(account.accountKey) || new Set()).size;
+    if (coveredCount < topics.length) {
+      const message = `${account.account}：只覆盖 ${coveredCount}/${topics.length} 个主题`;
+      if (coverageStrategy === 'strict') violations.push(message);
+      if (coverageStrategy === 'balanced') warnings.push(message);
     }
   }
+  if (violations.length > 0) throw createInputError(`给定时间资源无法满足严格覆盖：${violations.join('；')}`);
 
-  const result = {
+  schedule.sort((left, right) => left.publishTime.localeCompare(right.publishTime) || left.platform.localeCompare(right.platform) || left.account.localeCompare(right.account));
+  return {
     schedule,
-    unscheduled,
+    unscheduled: [],
     stats: {
       scheduledCount: schedule.length,
-      unscheduledCount: unscheduled.length,
+      unscheduledCount: 0,
       coverageStrategy,
-      violations,
+      violations: [],
       warnings,
     },
+    constraints: {
+      minSameAccountIntervalMinutes: MIN_SAME_ACCOUNT_INTERVAL_MINUTES,
+      uniqueMinuteAcrossBatch: true,
+      seed,
+    },
   };
-  if (minSameAccountIntervalMs > 0) {
-    result.constraints = {
-      minSameAccountIntervalMinutes,
-    };
-  }
-  return result;
 }
 
-module.exports = {
-  allocateImportSchedule,
-};
+module.exports = { allocateImportSchedule };
