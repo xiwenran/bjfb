@@ -285,6 +285,19 @@ test('only indexed records become scheduled or published reservations', () => {
   assert.ok(reservations.every(item => Number.isFinite(item.publishTime)));
 });
 
+test('indexed history rejects malformed record, platform list, and list item', () => {
+  const topicIndex = { version: 1, records: { rec_1: validEntry({ topicKey: '定语从句' }) } };
+  const args = history => ({ topicIndex, feishuRecords: [], history, accountGroups: {} });
+  for (const history of [
+    { rec_1: 'broken' },
+    { rec_1: { 小红书: 'broken' } },
+    { rec_1: { 小红书: [null] } },
+  ]) {
+    assert.throws(() => collectIndexedReservations(args(history)), /发布历史.*无效/);
+  }
+  assert.deepEqual(collectIndexedReservations(args({})), []);
+});
+
 test('indexed reservation rejects missing store group, account, or valid time', () => {
   const index = {
     version: 1,

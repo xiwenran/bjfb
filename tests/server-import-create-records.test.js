@@ -58,6 +58,9 @@ test('create-records should enforce trimmed account validation and keep single-p
   const originalCreateTextField = FeishuClient.prototype.createTextField;
   const originalUploadLocalImagesToFeishu = FeishuClient.prototype.uploadLocalImagesToFeishu;
   const originalCreateRecord = FeishuClient.prototype.createRecord;
+  const originalFindRecordByFingerprint = FeishuClient.prototype.findRecordByFingerprint;
+  const originalGetRecordById = FeishuClient.prototype.getRecordById;
+  let fingerprintMatchId = null;
 
   FeishuClient.prototype.getTableFields = async () => ['导入指纹'];
   FeishuClient.prototype.createTextField = async () => {};
@@ -70,6 +73,8 @@ test('create-records should enforce trimmed account validation and keep single-p
     createRecordFields.push(fields);
     return { recordId: 'rec_1' };
   };
+  FeishuClient.prototype.findRecordByFingerprint = async () => fingerprintMatchId;
+  FeishuClient.prototype.getRecordById = async recordId => ({ record_id: recordId, fields: {} });
 
   await startServer({ port: 3211, host: '127.0.0.1', silent: true });
   t.after(async () => {
@@ -77,6 +82,8 @@ test('create-records should enforce trimmed account validation and keep single-p
     FeishuClient.prototype.createTextField = originalCreateTextField;
     FeishuClient.prototype.uploadLocalImagesToFeishu = originalUploadLocalImagesToFeishu;
     FeishuClient.prototype.createRecord = originalCreateRecord;
+    FeishuClient.prototype.findRecordByFingerprint = originalFindRecordByFingerprint;
+    FeishuClient.prototype.getRecordById = originalGetRecordById;
   });
 
   const response = await requestJson({
@@ -301,6 +308,16 @@ test('create-records should enforce trimmed account validation and keep single-p
   assert.equal(lockedIndexResponse.body.results[0].recordId, 'rec_1');
   assert.equal(createRecordCalls, callsBeforeLockedBatch + 1);
   fs.rmSync(`${topicIndexPath}.lock`, { force: true });
+
+  fingerprintMatchId = 'rec_1';
+  const repairResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: { records: [{ noteKey: '锁测试/001', topic: '锁测试', title: '锁测试一', images: [], xiaohongshuAccount: '小红书账号A' }] },
+  });
+  assert.equal(repairResponse.body.results[0].status, 'skipped');
+  assert.equal(createRecordCalls, callsBeforeLockedBatch + 1);
+  assert.equal(JSON.parse(fs.readFileSync(topicIndexPath, 'utf8')).records.rec_1.topicKey, '锁测试');
 });
 
 test('topic spacing endpoints use indexed server context and fresh confirmation', { concurrency: false }, async (t) => {
@@ -482,6 +499,12 @@ try:
     raise AssertionError("empty seed should fail")
 except ValueError:
     pass
+
+hint_payload = {key: value for key, value in payload.items() if key not in ("timeWindows", "confirmation")}
+hint_payload.update({"date": "2026-07-16", "timeHint": " 早上 9 点 左右 "})
+assert skill_upload.normalize_schedule_plan_payload(hint_payload)["timeSlots"] == {
+    "regular": ["2026-07-16 08:00-12:00"], "special": []
+}
 
 with tempfile.TemporaryDirectory() as tmpdir:
     image_path = os.path.join(tmpdir, "1.png")

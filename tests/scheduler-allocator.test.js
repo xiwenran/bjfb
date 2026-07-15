@@ -105,6 +105,12 @@ test('分钟容量不足或无法全排时抛400，不返回部分排期', () =>
   })), error => error.statusCode === 400 && /无法安排全部笔记/.test(error.message));
 });
 
+test('不存在的日历日期不能被自动滚到下个月', () => {
+  assert.throws(() => allocateImportSchedule(baseInput({
+    timeSlots: { regular: ['2026-02-30 09:00'], special: [] },
+  })), error => error.statusCode === 400 && /日期|发布时间/.test(error.message));
+});
+
 test('auto_space强制同店同主题跨账号361分钟且要求小红书店铺映射', () => {
   const common = baseInput({
     topicDecision: 'auto_space',
