@@ -26,15 +26,7 @@
 
 ## 待确认区（等用户裁决：还在做 / 已关闭 / 废弃归档）
 
-### 2026-06-15 — 同账号 6 小时排期约束  [原文快照 →](roadmap/pending/2026-06-15-same-account-6h-schedule-withdrawn.md)
-- 缺什么: 标题自带「2026-06-27 已撤回发布前硬拦」，但正文仍按 ✅ 已完成的验收标准描述，无 commit hash，状态自相矛盾
-- 待裁决: 该约束是否已被 2026-07-15 「同主题间隔与批量分散排期」的 361 分钟硬约束完全取代？
-- 建议: 大概率已被后续专项取代，建议直接归档为历史，不需要单独验证
-
-### v2.1 — 素材导入页 UI 重做  [原文快照 →](roadmap/pending/v2.1-import-ui-rework.md)
-- 缺什么: 标题标注「🚧 进行中」，但正文子项 v2.1-A 至 v2.1-F 全部标 ✅ 已完成（均标注 2026-04-27），无残留未完成子项，也无整体收口的 commit hash
-- 待裁决: 全部子项已完成，是否可确认整体关闭？
-- 建议: 子项证据齐全，仅缺总标题状态更新和收口 hash，建议确认后转已关闭
+无。
 
 ---
 
@@ -46,6 +38,8 @@
 
 ## 已关闭
 
+- 2026-06-15-同账号 6 小时排期约束 ✅ `344f31f` — 验证: 代码现状核对，`src/publish-guard.js`/`src/scheduler-allocator.js`/`scripts/skill_upload.py` 中 6 小时（360 分钟）约束已改为仅在 `constraints.minSameAccountIntervalMinutes` 显式传入时生效，发布执行不再按历史账本频控（提交信息注明另一会话 2026-06-27 已完成改动，本次代为提交，四个相关文件测试 23 pass）；后续已被 2026-07-15 专项统一为 361 分钟 topic-spacing-guard 约束 [详情 →](roadmap/2026-06-15-same-account-6h-schedule-withdrawn.md)
+- v2.1-素材导入页 UI 重做 ✅ `8c01765`（2026-04-27，含 A-F 六阶段） — 验证: 代码现状核对，`public/index.html` 中 `allocateTimesByWindows`、`topicOverride`、`_importSelectedNoteKey`、`localeCompare(..., { numeric: true })` 均已落地并在用（主会话独立复核 grep 命中） [详情 →](roadmap/v2.1-import-ui-rework.md)
 - 2026-07-15-同主题间隔与批量分散排期 ✅ `f0f291a`（功能实现）+ `db5d420`（必要回归测试） — 验证: 相关测试 32/34 通过（后续追加至 34/34）、Python/Node 语法通过、全量 79/80（唯一失败为既有账号映射基线问题、与本专项无关）；后续用户手动观察与既有账号映射基线修复列为未勾选待办，不计入本专项验收 [详情 →](roadmap/2026-07-15-topic-spacing-batch-schedule.md)
 - 2026-07-11-正文硬边界补丁 ✅ `eccb2a7` — 验证: SYSTEM_PROMPT 新增「正文硬边界」四条并加载校验，node require 语法通过，`skills/zhifa-upload/SKILL.md` 提取命令改标记提取后实跑命中新段 [详情 →](roadmap/2026-07-11-body-boundary-patch.md)
 - 2026-07-10-撰写规范二次重构 ✅ `0baa821` — 验证: `ai-writer-validate.test.js` 17 pass（账号映射 1 例既有失败与本次无关）、3 个代表主题真实 AI 调用通过、旧口径 grep 零残留、dist:mac 重打包后 build-info.json commit 与 HEAD 一致（尾巴：待用户重启 App 核对 UI 内 hash） [详情 →](roadmap/2026-07-10-writing-spec-v2-search-traffic.md)
