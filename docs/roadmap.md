@@ -38,6 +38,7 @@
 
 ## 已关闭
 
+- 2026-07-24-上传链路公共文档收敛与上传后审查降级 ✅ `6183286` — 验证: 独立子代理对 139 条硬规则做全量对账（保留 128 / 按决策取代 5 / 按决策改造 2 / 意外丢失 4，4 条已逐条补回并窄复核），U1-U11 编号引用一致性 grep 无断裂，脱敏通过；把 zhifa-pipeline / zhifa-upload 重复的上传链路抽到 `skills/_upload-chain/`（U1-U11 统一编号，消除同名 Step 5.5 异义等 12 处漂移），两份 SKILL.md 从 736/750 行降到 169/127 行；上传后冷眼审查降级为「机械回执核验默认 + 6 类异常触发审查」；以 upload 为基准补齐 pipeline 缺失的飞书红线/子代理降级协议/年级词禁用等条款（无独立详情子文件，决策记录见 commit body）
 - 2026-06-15-同账号 6 小时排期约束 ✅ `344f31f` — 验证: 代码现状核对，`src/publish-guard.js`/`src/scheduler-allocator.js`/`scripts/skill_upload.py` 中 6 小时（360 分钟）约束已改为仅在 `constraints.minSameAccountIntervalMinutes` 显式传入时生效，发布执行不再按历史账本频控（提交信息注明另一会话 2026-06-27 已完成改动，本次代为提交，四个相关文件测试 23 pass）；后续已被 2026-07-15 专项统一为 361 分钟 topic-spacing-guard 约束 [详情 →](roadmap/2026-06-15-same-account-6h-schedule-withdrawn.md)
 - v2.1-素材导入页 UI 重做 ✅ `8c01765`（2026-04-27，含 A-F 六阶段） — 验证: 代码现状核对，`public/index.html` 中 `allocateTimesByWindows`、`topicOverride`、`_importSelectedNoteKey`、`localeCompare(..., { numeric: true })` 均已落地并在用（主会话独立复核 grep 命中） [详情 →](roadmap/v2.1-import-ui-rework.md)
 - 2026-07-15-同主题间隔与批量分散排期 ✅ `f0f291a`（功能实现）+ `db5d420`（必要回归测试） — 验证: 相关测试 32/34 通过（后续追加至 34/34）、Python/Node 语法通过、全量 79/80（唯一失败为既有账号映射基线问题、与本专项无关）；后续用户手动观察与既有账号映射基线修复列为未勾选待办，不计入本专项验收 [详情 →](roadmap/2026-07-15-topic-spacing-batch-schedule.md)
