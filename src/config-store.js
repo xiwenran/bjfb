@@ -14,8 +14,15 @@ const DEFAULT_CONFIG = {
     appId: '',
     appSecret: '',
     wikiUrl: '',
+    // 旧版单表配置：appToken/tableId。未配置 tables 时，两平台共用这一张表（行为零变化）。
     appToken: '',
     tableId: '',
+    // 双表配置（2026-07 新增）：小红书/抖音各自独立的多维表格。
+    // 任一平台未在这里配置 appToken+tableId 时，该平台自动回退到上面的旧版单表。
+    tables: {
+      xiaohongshu: { appToken: '', tableId: '' },
+      douyin: { appToken: '', tableId: '' },
+    },
   },
   yixiaoer: {
     username: '',
@@ -549,9 +556,22 @@ function getRecordTempDir(recordId) {
   return path.join(paths.tempDir, 'yixiaoer-publish', safeRecordId);
 }
 
+function isFeishuTablePairConfigured(table) {
+  return Boolean(table && table.appToken && table.tableId);
+}
+
+// 双表模式：xiaohongshu + douyin 两张表都填好 appToken+tableId 才算配置完成。
+// 未配置 tables（或配置不全）时，回退旧版单表校验（appToken+tableId），行为零变化。
 function isFeishuConfigured(config = {}) {
   const feishu = config.feishu || {};
-  return Boolean(feishu.appId && feishu.appSecret && feishu.appToken && feishu.tableId);
+  if (!feishu.appId || !feishu.appSecret) return false;
+
+  const tables = feishu.tables || {};
+  const dualTablesReady = isFeishuTablePairConfigured(tables.xiaohongshu)
+    && isFeishuTablePairConfigured(tables.douyin);
+  if (dualTablesReady) return true;
+
+  return Boolean(feishu.appToken && feishu.tableId);
 }
 
 function isYixiaoerConfigured(config = {}) {

@@ -322,7 +322,9 @@ async function loadTopicSpacingContext(payload) {
   }
   let rawRecords;
   try {
-    rawRecords = await feishu.getRecords();
+    // 双表模式：主题间隔检查要覆盖小红书+抖音两张表的记录，用跨平台扫描；
+    // 旧版单表模式下 getRecordsAcrossPlatforms 等价于原来的 getRecords()。
+    rawRecords = await feishu.getRecordsAcrossPlatforms();
   } catch (error) {
     throw new Error(`读取飞书新增记录失败: ${error.message}`);
   }
@@ -401,7 +403,8 @@ const REQUIRED_SINGLE_SELECT_FIELDS = [
 ];
 
 async function getBitBrowserAccountMappings() {
-  const records = await feishu.getRecords();
+  // 比特浏览器映射只服务小红书发布，双表模式下只需扫小红书表。
+  const records = await feishu.getRecords(undefined, 'xiaohongshu');
   const parsedRecords = records.map(r => feishu.parseRecord(r));
   const summaryMap = new Map();
 
@@ -425,7 +428,7 @@ async function getBitBrowserAccountMappings() {
   }
 
   const mappingConfig = config.bitbrowser?.xiaohongshu || {};
-  const fieldAccountNames = await feishu.getSingleSelectFieldOptionNames('小红书账号');
+  const fieldAccountNames = await feishu.getSingleSelectFieldOptionNames('小红书账号', 'xiaohongshu');
   for (const accountName of fieldAccountNames) {
     if (!summaryMap.has(accountName)) {
       summaryMap.set(accountName, {
@@ -461,8 +464,8 @@ async function syncFeishuSelectFields() {
     ...(await getBitBrowserAccountMappings()).map(item => item.accountName),
   ])].sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }));
 
-  await feishu.syncSingleSelectFieldOptions('小红书账号', accountNames, { keepExisting: true });
-  await feishu.syncSingleSelectFieldOptions('小红书发布渠道', ['蚁小二', '比特浏览器']);
+  await feishu.syncSingleSelectFieldOptions('小红书账号', accountNames, { keepExisting: true }, 'xiaohongshu');
+  await feishu.syncSingleSelectFieldOptions('小红书发布渠道', ['蚁小二', '比特浏览器'], undefined, 'xiaohongshu');
 
   return {
     accountNames,
@@ -599,7 +602,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/pending-count') {
     try {
       ensureFeishuConfigReady();
-      const records = await feishu.getRecords();
+      const records = await feishu.getRecordsAcrossPlatforms();
       const count = records
         .map(r => feishu.parseRecord(r))
         .filter(isPendingRecord)
@@ -616,7 +619,7 @@ const server = http.createServer(async (req, res) => {
       // ?status=all 时返回所有状态的记录（含待处理/已发布等），供 verify 子命令核查真实写入
       const statusParam = parsed.query && parsed.query.status;
       const records = statusParam === 'all'
-        ? await feishu.getRecords()
+        ? await feishu.getRecordsAcrossPlatforms()
         : await feishu.getUnpublishedRecords();
       const decorated = records.map(r => decorateRecord(feishu.parseRecord(r)));
       return sendJson(res, { success: true, data: decorated });
@@ -628,7 +631,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/all-records') {
     try {
       ensureFeishuConfigReady();
-      const records = await feishu.getRecords();
+      const records = await feishu.getRecordsAcrossPlatforms();
       const parsed = records.map(r => decorateRecord(feishu.parseRecord(r)));
       return sendJson(res, { success: true, data: parsed });
     } catch (e) {
@@ -639,20 +642,43 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/import/preflight' && req.method === 'GET') {
     try {
       ensureFeishuConfigReady();
-      const REQUIRED_IMPORT_FIELDS = [
-        '笔记主题', '标题', '正文', '标签', '素材',
-        '发布时间', '小红书账号', '小红书发布状态', '小红书发布渠道',
-        '抖音账号', '抖音发布状态',
-        // 「内容类型」「导入指纹」是可选增强字段，表格没有也不影响导入
-      ];
-      const fields = await feishu.getTableFields();
-      // getTableFields() 已返回 string[]，直接用
-      const existingFieldNames = Array.isArray(fields) ? fields : [];
-      const missingFields = REQUIRED_IMPORT_FIELDS.filter(fieldName => !existingFieldNames.includes(fieldName));
-      if (missingFields.length === 0) {
-        return sendJson(res, { ok: true });
+      // 「内容类型」「导入指纹」是可选增强字段，表格没有也不影响导入
+      const COMMON_REQUIRED_IMPORT_FIELDS = ['笔记主题', '标题', '正文', '标签', '素材', '发布时间'];
+      const PLATFORM_REQUIRED_IMPORT_FIELDS = {
+        xiaohongshu: ['小红书账号', '小红书发布状态', '小红书发布渠道'],
+        douyin: ['抖音账号', '抖音发布状态'],
+      };
+
+      // 双表模式：小红书表按小红书所需字段查，抖音表按抖音所需字段查，分别校验；
+      // 旧版单表模式：两组字段合并后按旧逻辑对同一张表整体查一次，行为零变化。
+      const dualPlatforms = feishu._configuredDualPlatforms ? feishu._configuredDualPlatforms() : [];
+      if (dualPlatforms.length === 0) {
+        const REQUIRED_IMPORT_FIELDS = [
+          ...COMMON_REQUIRED_IMPORT_FIELDS,
+          ...PLATFORM_REQUIRED_IMPORT_FIELDS.xiaohongshu,
+          ...PLATFORM_REQUIRED_IMPORT_FIELDS.douyin,
+        ];
+        const fields = await feishu.getTableFields();
+        const existingFieldNames = Array.isArray(fields) ? fields : [];
+        const missingFields = REQUIRED_IMPORT_FIELDS.filter(fieldName => !existingFieldNames.includes(fieldName));
+        if (missingFields.length === 0) return sendJson(res, { ok: true });
+        return sendJson(res, { ok: false, missingFields });
       }
-      return sendJson(res, { ok: false, missingFields });
+
+      const missingByPlatform = {};
+      let allMissing = [];
+      for (const platformKey of dualPlatforms) {
+        const requiredFields = [...COMMON_REQUIRED_IMPORT_FIELDS, ...PLATFORM_REQUIRED_IMPORT_FIELDS[platformKey]];
+        const fields = await feishu.getTableFields(platformKey);
+        const existingFieldNames = Array.isArray(fields) ? fields : [];
+        const missing = requiredFields.filter(fieldName => !existingFieldNames.includes(fieldName));
+        if (missing.length > 0) {
+          missingByPlatform[platformKey] = missing;
+          allMissing = allMissing.concat(missing);
+        }
+      }
+      if (allMissing.length === 0) return sendJson(res, { ok: true });
+      return sendJson(res, { ok: false, missingFields: [...new Set(allMissing)], missingByPlatform });
     } catch (err) {
       return sendJson(res, { error: err.message }, 500);
     }
@@ -1109,13 +1135,17 @@ const server = http.createServer(async (req, res) => {
         if (!recordId) continue;
         const xhsAccount = String(item?.xiaohongshuAccount || '').trim();
         const dyAccount = String(item?.douyinAccount || '').trim();
+        // 建档阶段已强制一条记录只能属于一个平台账号（见 create-records 的
+        // multiple_platform_accounts 校验），这里沿用同一路由键：
+        // 有小红书账号 → 小红书表，否则 → 抖音表。
+        const targetPlatform = xhsAccount ? 'xiaohongshu' : 'douyin';
         const fields = { '笔记主题': '' };
 
         fields['小红书发布状态'] = xhsAccount ? '待处理' : '';
         fields['抖音发布状态'] = dyAccount ? '待处理' : '';
 
-        await feishu.updateRecord(recordId, fields);
-        const fresh = await feishu.getRecordById(recordId);
+        await feishu.updateRecord(recordId, fields, targetPlatform);
+        const fresh = await feishu.getRecordById(recordId, targetPlatform);
         results.push({
           recordId,
           noteKey: String(item?.noteKey || ''),
@@ -1188,21 +1218,27 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(await readBody(req) || '{}');
       const { dryRun = false, records = [] } = body;
 
-      // 预取飞书字段列表，用于判断可选字段是否存在（避免 FieldNameNotFound）
-      const tableFieldNames = await feishu.getTableFields().catch(() => []);
-      const tableFieldSet = new Set(Array.isArray(tableFieldNames) ? tableFieldNames : []);
-
-      // 「导入指纹」字段不存在时自动创建（文本类型）
-      // 用于跨批次查重，避免重复导入同一内容
-      if (!tableFieldSet.has('导入指纹')) {
-        try {
-          await feishu.createTextField('导入指纹');
-          tableFieldSet.add('导入指纹');
-          writeImportLog('自动创建字段「导入指纹」成功', {});
-        } catch (createErr) {
-          // 创建失败不阻断导入，只是这批次查重和指纹写入会跳过
-          writeImportLog('自动创建字段「导入指纹」失败（已跳过）', { error: createErr.message });
+      // 预取飞书字段列表，用于判断可选字段是否存在（避免 FieldNameNotFound）。
+      // 双表模式下小红书表/抖音表是两张独立的表，字段集合可能不同，必须分别按平台缓存；
+      // targetPlatform 为 null 时（旧版单表模式）复用同一个 Set，行为零变化。
+      const tableFieldSetCache = new Map(); // key: 'xiaohongshu'|'douyin'|'__legacy__' → Set<string>
+      async function getTableFieldSetForPlatform(targetPlatform) {
+        const cacheKey = targetPlatform || '__legacy__';
+        if (tableFieldSetCache.has(cacheKey)) return tableFieldSetCache.get(cacheKey);
+        const fieldNames = await feishu.getTableFields(targetPlatform || undefined).catch(() => []);
+        const set = new Set(Array.isArray(fieldNames) ? fieldNames : []);
+        // 「导入指纹」字段不存在时自动创建（文本类型），用于跨批次查重，避免重复导入同一内容
+        if (!set.has('导入指纹')) {
+          try {
+            await feishu.createTextField('导入指纹', targetPlatform || undefined);
+            set.add('导入指纹');
+            writeImportLog(`自动创建字段「导入指纹」成功（${targetPlatform || '单表'}）`, {});
+          } catch (createErr) {
+            writeImportLog(`自动创建字段「导入指纹」失败（已跳过，${targetPlatform || '单表'}）`, { error: createErr.message });
+          }
         }
+        tableFieldSetCache.set(cacheKey, set);
+        return set;
       }
 
       const results = [];
@@ -1286,6 +1322,11 @@ const server = http.createServer(async (req, res) => {
           continue;
         }
 
+        // 双表路由键：上面的 Step 1 已经保证 xiaohongshuAccount / douyinAccount 二选一，
+        // 这条记录接下来所有的飞书读写（查重/建单/更新/传图）都路由到同一张表。
+        const targetPlatform = normalizedXiaohongshuAccount ? 'xiaohongshu' : 'douyin';
+        const tableFieldSet = await getTableFieldSetForPlatform(targetPlatform);
+
         // 取文件夹名（noteKey 最后一段）
         const noteFolder = noteKey.split('/').pop() || recordFolderPath.split('/').pop() || '';
 
@@ -1319,12 +1360,14 @@ const server = http.createServer(async (req, res) => {
           let existingRecordId = null;
 
           // 逐个指纹查重；contains 兼容历史记录里曾经合并存储的多平台指纹。
+          // xhsFingerprint/douyinFingerprint 二选一（同 targetPlatform 语义），命中的记录
+          // 必然在 targetPlatform 对应的那张表里。
           if (xhsFingerprint) {
-            const existingId = await feishu.findRecordByFingerprint(xhsFingerprint);
+            const existingId = await feishu.findRecordByFingerprint(xhsFingerprint, targetPlatform);
             if (existingId) { fingerprintExists = true; existingRecordId = existingId; }
           }
           if (!fingerprintExists && douyinFingerprint) {
-            const existingId = await feishu.findRecordByFingerprint(douyinFingerprint);
+            const existingId = await feishu.findRecordByFingerprint(douyinFingerprint, targetPlatform);
             if (existingId) { fingerprintExists = true; existingRecordId = existingId; }
           }
 
@@ -1332,7 +1375,7 @@ const server = http.createServer(async (req, res) => {
             // 获取旧记录的发布状态，供前端展示覆盖警告
             let existingStatus = '';
             try {
-              const existingRec = await feishu.getRecordById(existingRecordId);
+              const existingRec = await feishu.getRecordById(existingRecordId, targetPlatform);
               const f = existingRec?.fields || {};
               existingStatus = String(f['小红书发布状态'] || f['抖音发布状态'] || '');
             } catch (_) {}
@@ -1366,7 +1409,7 @@ const server = http.createServer(async (req, res) => {
         // 防止前端传错 ID 导致意外覆盖无关记录
         if (isOverwrite) {
           try {
-            const targetRec = await feishu.getRecordById(overwriteId);
+            const targetRec = await feishu.getRecordById(overwriteId, targetPlatform);
             if (!targetRec) {
               results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: `recordId ${overwriteId} 不存在` });
               if (!dryRun) pushImportProgress(noteKey, 'failed');
@@ -1482,6 +1525,7 @@ const server = http.createServer(async (req, res) => {
             {
               concurrency: 3,
               useRecovery: true,
+              platform: targetPlatform,
               onProgress: (done, totalImages, fileName, fromCache) => {
                 pushImageProgress(noteKey, done, totalImages, fileName);
               },
@@ -1508,6 +1552,7 @@ const server = http.createServer(async (req, res) => {
               {
                 concurrency: 1,
                 useRecovery: true,
+                platform: targetPlatform,
                 onProgress: (done, totalVids, fileName) => {
                   pushImageProgress(noteKey, done, totalVids, fileName);
                 },
@@ -1607,7 +1652,7 @@ const server = http.createServer(async (req, res) => {
           // U0 耗时埋点：建/更新飞书记录
           const t0_feishu = Date.now();
           if (isOverwrite) {
-            await feishu.updateRecord(overwriteId, fields);
+            await feishu.updateRecord(overwriteId, fields, targetPlatform);
             const feishuMs = Date.now() - t0_feishu;
             totalFeishuMs += feishuMs; countFeishu++;
             writeImportLog('建飞书记录耗时', { noteKey, op: 'update', ms: feishuMs });
@@ -1635,7 +1680,7 @@ const server = http.createServer(async (req, res) => {
               ...extraMeta,
             });
           } else {
-            const { recordId } = await feishu.createRecord(fields);
+            const { recordId } = await feishu.createRecord(fields, targetPlatform);
             const feishuMs = Date.now() - t0_feishu;
             totalFeishuMs += feishuMs; countFeishu++;
             writeImportLog('建飞书记录耗时', { noteKey, op: 'create', ms: feishuMs });
@@ -1791,8 +1836,8 @@ const server = http.createServer(async (req, res) => {
         if (platform !== '小红书' && platform !== '抖音') {
           return sendJson(res, { success: false, error: '不支持的平台' }, 400);
         }
-        // 1. 拉飞书最新记录，取当前账号
-        const remote = await feishu.getRecordById(recordId);
+        // 1. 拉飞书最新记录，取当前账号（platform 已由请求体给出，直接路由到对应表）
+        const remote = await feishu.getRecordById(recordId, platform);
         if (!remote) {
           return sendJson(res, { success: false, error: '飞书记录不存在' }, 404);
         }
@@ -1849,8 +1894,8 @@ const server = http.createServer(async (req, res) => {
 
       if (isFeishuConfigured(config)) {
         const desiredNames = {
-          xiaohongshu: await feishu.getSingleSelectFieldOptionNames('小红书账号'),
-          douyin: await feishu.getSingleSelectFieldOptionNames('抖音账号'),
+          xiaohongshu: await feishu.getSingleSelectFieldOptionNames('小红书账号', 'xiaohongshu'),
+          douyin: await feishu.getSingleSelectFieldOptionNames('抖音账号', 'douyin'),
         };
         const autoMapResult = autoMapAccountMappings(config, desiredNames, accounts, publisher.collectAccountAliases);
         configChanged = configChanged || autoMapResult.changed;
@@ -1973,11 +2018,32 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, { success: false, error: '飞书 Table ID 不能为空' }, 400);
         }
 
+        // 双表配置（可选）：小红书/抖音各自的 appToken+tableId。
+        // 未传 tables 或传了空对象时，两平台继续共用上面的旧版单表，行为零变化。
+        // 传了某个平台的子对象时，appToken 和 tableId 必须成对给出，不允许半填。
+        const nextTables = next.tables && typeof next.tables === 'object' ? next.tables : {};
+        const normalizedTables = {};
+        for (const platformKey of ['xiaohongshu', 'douyin']) {
+          const raw = nextTables[platformKey] || {};
+          const platformAppToken = String(raw.appToken || '').trim();
+          const platformTableId = String(raw.tableId || '').trim();
+          if (!platformAppToken && !platformTableId) continue; // 该平台未配置双表，走回退
+          if (!platformAppToken || !platformTableId) {
+            const label = platformKey === 'xiaohongshu' ? '小红书' : '抖音';
+            return sendJson(res, { success: false, error: `${label}表的 App Token 和 Table ID 必须同时填写` }, 400);
+          }
+          normalizedTables[platformKey] = { appToken: platformAppToken, tableId: platformTableId };
+        }
+
         config.feishu = config.feishu || {};
         config.feishu.appId = appId;
         config.feishu.appToken = appToken;
         config.feishu.tableId = tableId;
         config.feishu.wikiUrl = wikiUrl;
+        config.feishu.tables = {
+          xiaohongshu: normalizedTables.xiaohongshu || { appToken: '', tableId: '' },
+          douyin: normalizedTables.douyin || { appToken: '', tableId: '' },
+        };
 
         // 页面不回显真实 secret。空值或掩码都视为“保持不变”。
         if (appSecret && appSecret !== '******') {
@@ -2000,6 +2066,7 @@ const server = http.createServer(async (req, res) => {
             wikiUrl: config.feishu.wikiUrl || '',
             appToken: config.feishu.appToken,
             tableId: config.feishu.tableId,
+            tables: config.feishu.tables,
             appSecretConfigured: !!config.feishu.appSecret,
           }
         });
@@ -2281,14 +2348,16 @@ const server = http.createServer(async (req, res) => {
         if (!config.aiWriting?.apiKey) return sendJson(res, { success: false, error: 'AI 写作未配置 API Key' }, 400);
         const result = await generateContent(config.aiWriting, record);
         const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
-        const aiFieldNames = await feishu.getTableFields().catch(() => []);
+        // record.platform 由 parseRecord() 按记录来源的表打上（双表模式）或为 null（旧版单表）
+        const recordPlatform = record.platform || undefined;
+        const aiFieldNames = await feishu.getTableFields(recordPlatform).catch(() => []);
         const aiFieldSet = new Set(Array.isArray(aiFieldNames) ? aiFieldNames : []);
         const aiFields = {};
         if (!aiFieldSet.size || aiFieldSet.has('标题')) aiFields['标题'] = result.title;
         if (!aiFieldSet.size || aiFieldSet.has('正文')) aiFields['正文'] = result.description;
         if (!aiFieldSet.size || aiFieldSet.has('标签')) aiFields['标签'] = tagsStr;
         if (Object.keys(aiFields).length > 0) {
-          await feishu.updateRecord(recordId, aiFields);
+          await feishu.updateRecord(recordId, aiFields, recordPlatform);
         }
         // 更新缓存，防止下轮自动扫描重复覆盖
         try {

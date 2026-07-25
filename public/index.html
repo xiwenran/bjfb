@@ -2567,11 +2567,11 @@
                 <input class="config-input" id="feishuAppSecret" type="password" placeholder="未修改可保留为掩码">
               </div>
               <div class="config-field">
-                <label class="config-label" for="feishuAppToken">App Token</label>
+                <label class="config-label" for="feishuAppToken">App Token（单表 / 回退用）</label>
                 <input class="config-input" id="feishuAppToken" placeholder="多维表格 app_token">
               </div>
               <div class="config-field">
-                <label class="config-label" for="feishuTableId">Table ID</label>
+                <label class="config-label" for="feishuTableId">Table ID（单表 / 回退用）</label>
                 <input class="config-input" id="feishuTableId" placeholder="多维表格 table_id">
               </div>
               <div class="config-field full">
@@ -2582,8 +2582,28 @@
                 <label class="config-label" for="feishuConfigNotes">接入说明</label>
                 <div class="config-textarea" id="feishuConfigNotes" style="pointer-events:none; background:#f8f8fb;" tabindex="-1">1. 先在飞书开放平台创建应用并获取 App ID / App Secret。
 2. 在多维表格或对应文档里，把这个应用添加进去，确保它有读取/编辑表格权限。
-3. 把 App Token、Table ID 一并填到这里后保存。
-4. 保存后可点"刷新数据"或"立即补发"验证接入是否生效。</div>
+3. 只发一个平台、或小红书/抖音共用同一张表：只填上面的 App Token / Table ID。
+4. 小红书、抖音要分流到两张不同的多维表格：把下面"小红书表格"和"抖音表格"各自的 App Token / Table ID 填好；没填的平台会自动回退用上面的单表。
+5. 保存后可点"刷新数据"或"立即补发"验证接入是否生效。</div>
+              </div>
+            </div>
+            <h4 style="margin:20px 0 4px;">双表分流（可选：小红书/抖音各自独立的多维表格）</h4>
+            <div class="config-grid">
+              <div class="config-field">
+                <label class="config-label" for="feishuXhsAppToken">小红书表格 App Token</label>
+                <input class="config-input" id="feishuXhsAppToken" placeholder="不填则小红书沿用上面的单表">
+              </div>
+              <div class="config-field">
+                <label class="config-label" for="feishuXhsTableId">小红书表格 Table ID</label>
+                <input class="config-input" id="feishuXhsTableId" placeholder="不填则小红书沿用上面的单表">
+              </div>
+              <div class="config-field">
+                <label class="config-label" for="feishuDouyinAppToken">抖音表格 App Token</label>
+                <input class="config-input" id="feishuDouyinAppToken" placeholder="不填则抖音沿用上面的单表">
+              </div>
+              <div class="config-field">
+                <label class="config-label" for="feishuDouyinTableId">抖音表格 Table ID</label>
+                <input class="config-input" id="feishuDouyinTableId" placeholder="不填则抖音沿用上面的单表">
               </div>
             </div>
             <div class="settings-actions">
@@ -6355,6 +6375,11 @@ async function loadFeishuConfig(force = false) {
     document.getElementById('feishuAppToken').value = feishu.appToken || '';
     document.getElementById('feishuTableId').value = feishu.tableId || '';
     document.getElementById('feishuWikiUrl').value = feishu.wikiUrl || '';
+    const feishuTables = feishu.tables || {};
+    document.getElementById('feishuXhsAppToken').value = (feishuTables.xiaohongshu && feishuTables.xiaohongshu.appToken) || '';
+    document.getElementById('feishuXhsTableId').value = (feishuTables.xiaohongshu && feishuTables.xiaohongshu.tableId) || '';
+    document.getElementById('feishuDouyinAppToken').value = (feishuTables.douyin && feishuTables.douyin.appToken) || '';
+    document.getElementById('feishuDouyinTableId').value = (feishuTables.douyin && feishuTables.douyin.tableId) || '';
     const storagePathEl = document.getElementById('configStoragePath');
     if (storagePathEl) storagePathEl.textContent = runtimePaths.configPath
       ? `本机数据位置：配置文件 ${runtimePaths.configPath}；数据目录 ${runtimePaths.dataDir || '-'}`
@@ -6376,6 +6401,10 @@ async function loadFeishuConfig(force = false) {
 
 async function saveFeishuConfig() {
   const statusEl = document.getElementById('feishuConfigStatus');
+  const xhsAppToken = document.getElementById('feishuXhsAppToken').value.trim();
+  const xhsTableId = document.getElementById('feishuXhsTableId').value.trim();
+  const douyinAppToken = document.getElementById('feishuDouyinAppToken').value.trim();
+  const douyinTableId = document.getElementById('feishuDouyinTableId').value.trim();
   const payload = {
     feishu: {
       appId: document.getElementById('feishuAppId').value.trim(),
@@ -6383,6 +6412,11 @@ async function saveFeishuConfig() {
       appToken: document.getElementById('feishuAppToken').value.trim(),
       tableId: document.getElementById('feishuTableId').value.trim(),
       wikiUrl: document.getElementById('feishuWikiUrl').value.trim(),
+      // 双表分流（可选）：某个平台没填就留空对象，服务端会自动回退用上面的单表。
+      tables: {
+        xiaohongshu: { appToken: xhsAppToken, tableId: xhsTableId },
+        douyin: { appToken: douyinAppToken, tableId: douyinTableId },
+      },
     }
   };
 

@@ -4,7 +4,11 @@
     "appSecret": "your_feishu_app_secret",
     "wikiUrl": "https://your.feishu.cn/wiki/your-page",
     "appToken": "your_bitable_app_token",
-    "tableId": "your_table_id"
+    "tableId": "your_table_id",
+    "tables": {
+      "xiaohongshu": { "appToken": "your_xiaohongshu_bitable_app_token", "tableId": "your_xiaohongshu_table_id" },
+      "douyin": { "appToken": "your_douyin_bitable_app_token", "tableId": "your_douyin_table_id" }
+    }
   },
   "yixiaoer": {
     "username": "your_phone_or_account",

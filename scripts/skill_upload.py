@@ -386,6 +386,9 @@ def normalize_batch_results(result: dict | None, batch_records: list, batch_idx:
         if enriched["status"] == "failed" and not (enriched.get("reason") or enriched.get("message")):
             enriched["reason"] = "上传接口未返回该记录结果"
         enriched["__retryKey"] = record_retry_key(record)
+        # 双表分流（2026-07）：按原始 record 的账号字段推出平台，用于回执按表汇总
+        # （如「小红书表建档 N 条 + 抖音表建档 M 条」），不依赖服务端返回。
+        enriched["__platform"] = record_platform(record)
         normalized.append(enriched)
     return normalized
 
@@ -1486,6 +1489,11 @@ def cmd_create(
         f"总 {total}"
     )
 
+    # 双表分流（2026-07）：按平台分表汇总建档数，方便核对「小红书表 N 条 + 抖音表 M 条」
+    # 是否与预期一致。__platform 由 normalize_batch_results() 按原始 record 的账号字段推出。
+    by_platform_summary = summarize_by_platform(total_results)
+    print_platform_summary_line("建档", by_platform_summary)
+
     if total_failed:
         print("\n失败详情：")
         for r in total_failed:
@@ -1505,6 +1513,7 @@ def cmd_create(
               "success": len(total_success),
               "skipped": len(total_skipped),
               "failed": len(total_failed),
+              "byPlatform": by_platform_summary,
           },
           "batches": batch_summaries,
           "results": total_results,
@@ -1540,6 +1549,42 @@ def record_platform(record: dict) -> str:
     if str(record.get("douyinAccount") or "").strip():
         return "douyin"
     return "unknown"
+
+
+_PLATFORM_TABLE_LABEL = {"xiaohongshu": "小红书表", "douyin": "抖音表", "unknown": "未知平台"}
+
+
+def summarize_by_platform(results: list) -> dict:
+    """按 __platform 分桶统计 success/skipped/failed，用于双表分流后的回执数字汇总。"""
+    buckets: dict[str, dict[str, int]] = {}
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        platform = r.get("__platform") or "unknown"
+        bucket = buckets.setdefault(platform, {"total": 0, "success": 0, "skipped": 0, "failed": 0})
+        bucket["total"] += 1
+        status = r.get("status")
+        if status in ("success", "skipped", "failed"):
+            bucket[status] += 1
+    return buckets
+
+
+def print_platform_summary_line(action_label: str, by_platform: dict) -> None:
+    """打印形如「小红书表建档 12 条（成功 11 / 跳过 1 / 失败 0）＋ 抖音表建档 8 条（...）」的分表回执。"""
+    if not by_platform:
+        return
+    parts = []
+    for platform in ("xiaohongshu", "douyin", "unknown"):
+        bucket = by_platform.get(platform)
+        if not bucket or bucket["total"] == 0:
+            continue
+        label = _PLATFORM_TABLE_LABEL.get(platform, platform)
+        parts.append(
+            f"{label}{action_label} {bucket['total']} 条"
+            f"（成功{bucket['success']}/跳过{bucket['skipped']}/失败{bucket['failed']}）"
+        )
+    if parts:
+        print("分表汇总：" + " ＋ ".join(parts))
 
 
 def _postprocess_send_with_split(batch: list, timeout: int = 300) -> tuple[int, list, list]:
@@ -1643,6 +1688,14 @@ def cmd_postprocess(
             file=sys.stderr,
         )
 
+    # 双表分流（2026-07）：merged_results（成功）和 failed_updates（失败）都带
+    # xiaohongshuAccount/douyinAccount，用 record_platform() 分表汇总回执。
+    postprocess_by_platform = summarize_by_platform(
+        [{"status": "success", "__platform": record_platform(r)} for r in merged_results]
+        + [{"status": "failed", "__platform": record_platform(r)} for r in failed_updates]
+    )
+    print_platform_summary_line("后处理", postprocess_by_platform)
+
     result = {
         "recordsFile": records_json_file,
         "resultsFile": results_json_file,
@@ -1650,6 +1703,7 @@ def cmd_postprocess(
         "summary": {
             "updates": len(updates),
             "updated": total_updated,
+            "byPlatform": postprocess_by_platform,
             "failed": len(failed_updates),
             "batches": len(batches),
         },
@@ -1962,20 +2016,24 @@ def cmd_verify(create_results_json: str, output_file: str | None = None) -> None
         print("create 结果 JSON 格式不识别", file=sys.stderr)
         sys.exit(1)
 
-    # 从 success 条目提取期望 recordId 集合
+    # 从 success 条目提取期望 recordId 集合；同时按 __platform（若 create 结果里带了，
+    # 双表分流后 cmd_create 会打上）分桶，供分表核对用。
     expected_record_ids: set[str] = set()
+    expected_ids_by_platform: dict[str, set[str]] = {}
     for r in all_results:
         if isinstance(r, dict) and r.get("status") == "success":
             rid = r.get("recordId")
             if rid:
                 expected_record_ids.add(str(rid))
+                platform = r.get("__platform") or "unknown"
+                expected_ids_by_platform.setdefault(platform, set()).add(str(rid))
 
     expected_count = len(expected_record_ids)
     batch_id = os.path.basename(create_results_json)
 
     print(f"从 create 结果读取到 {expected_count} 条成功记录（按 recordId），正在查询知发飞书记录...")
 
-    # 查知发 /api/records?status=all 获取当前所有记录
+    # 查知发 /api/records?status=all 获取当前所有记录（双表模式下服务端已合并两张表的记录）
     resp = zhifa_get("/api/records?status=all")
     if not resp.get("success"):
         print(f"知发 API 返回失败：{resp}", file=sys.stderr)
@@ -1994,6 +2052,22 @@ def cmd_verify(create_results_json: str, output_file: str | None = None) -> None
     actual_found = len(expected_record_ids & actual_record_ids)
     status = "ok" if not missing else "mismatch"
 
+    # 分表核对（仅当 create 结果里带了 __platform 才有意义；旧结果文件没有该字段则为空）
+    by_platform_verify = {}
+    for platform, ids in expected_ids_by_platform.items():
+        found = len(ids & actual_record_ids)
+        by_platform_verify[platform] = {
+            "expected_count": len(ids),
+            "actual_count": found,
+            "missing": sorted(ids - actual_record_ids),
+        }
+    if by_platform_verify:
+        parts = [
+            f"{_PLATFORM_TABLE_LABEL.get(p, p)} expected={v['expected_count']} actual={v['actual_count']}"
+            for p, v in by_platform_verify.items()
+        ]
+        print("分表核对：" + " ＋ ".join(parts))
+
     now_str = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     if not output_file:
         output_file = f"/tmp/zhifa_verify_{now_str}.json"
@@ -2007,6 +2081,7 @@ def cmd_verify(create_results_json: str, output_file: str | None = None) -> None
         "missing": missing,
         "status": status,
         "timestamp": now_str,
+        "byPlatform": by_platform_verify,
     }
 
     write_json_file(output_path, verify_data)

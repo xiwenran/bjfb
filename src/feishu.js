@@ -73,14 +73,86 @@ function orderAttachmentsForDownload(attachments = []) {
     .map(item => item.att);
 }
 
+// ── 双表路由（2026-07 新增）──────────────────────────────────────────────
+// 背景：小红书与抖音发布分流到两张独立多维表格。未配置 config.feishu.tables 时，
+// 两平台仍共用旧版单 appToken+tableId，行为零变化。
+const PLATFORM_ALIASES = {
+  '小红书': 'xiaohongshu',
+  'xiaohongshu': 'xiaohongshu',
+  '抖音': 'douyin',
+  'douyin': 'douyin',
+};
+const PLATFORM_LABEL = { xiaohongshu: '小红书', douyin: '抖音' };
+
+function normalizePlatformKey(platform) {
+  if (!platform) return null;
+  return PLATFORM_ALIASES[platform] || null;
+}
+
+// 两表真实字段清单（2026-07-26 lark-cli 实拉）：
+// 公共字段两表都有；平台专属字段只属于对应表；每张表上还各残留一个属于对方平台的
+// 字段（小红书表残留"抖音发布人"、抖音表残留"小红书发布状态"），这两个残留字段
+// 永远不写。
+const COMMON_FEISHU_FIELDS = [
+  '备注', '内容类型', '素材', '视频封面', '标题', '发布时间',
+  '正文', '标题字数', '笔记主题', '导入指纹', '记录时间', '标签',
+];
+const PLATFORM_ONLY_FEISHU_FIELDS = {
+  xiaohongshu: ['小红书发布渠道', '小红书账号', '小红书发布状态'],
+  douyin: ['抖音发布状态', '抖音发布人', '抖音账号'],
+};
+
+// 按平台字段白名单过滤待写入字段。platformKey 为 null 时（未路由到具体某张双表，
+// 即旧版单表模式）原样透传，不做任何过滤——保证未配置 tables 时行为零变化。
+function filterFieldsForPlatform(fields, platformKey) {
+  if (!platformKey) return { fields: { ...(fields || {}) }, dropped: [] };
+  const whitelist = new Set([
+    ...COMMON_FEISHU_FIELDS,
+    ...(PLATFORM_ONLY_FEISHU_FIELDS[platformKey] || []),
+  ]);
+  const out = {};
+  const dropped = [];
+  for (const [name, value] of Object.entries(fields || {})) {
+    if (whitelist.has(name)) out[name] = value;
+    else dropped.push(name);
+  }
+  return { fields: out, dropped };
+}
+
 class FeishuClient {
   constructor(config = {}) {
     this.appId = config.appId;
     this.appSecret = config.appSecret;
+    // 旧版单表（legacy）：未配置 tables 或某平台未在 tables 中配置时的回退目标。
     this.appToken = config.appToken;
     this.tableId = config.tableId;
+    // 双表配置：{ xiaohongshu: {appToken,tableId}, douyin: {appToken,tableId} }
+    this.tables = (config.tables && typeof config.tables === 'object') ? config.tables : null;
     this.accessToken = null;
     this.tokenExpiry = 0;
+  }
+
+  // 解析某个平台应该访问哪张表。
+  // 返回 platformKey !== null 时表示"确实路由到了双表模式下的某张表"，
+  // 调用方据此决定是否要应用字段白名单过滤；platformKey === null 表示走的是
+  // 旧版单表回退路径，不过滤，保证零行为变化。
+  _resolveTable(platform) {
+    const key = normalizePlatformKey(platform);
+    const table = key && this.tables ? this.tables[key] : null;
+    if (table && table.appToken && table.tableId) {
+      return { appToken: table.appToken, tableId: table.tableId, platformKey: key };
+    }
+    return { appToken: this.appToken, tableId: this.tableId, platformKey: null };
+  }
+
+  // 双表模式下已经完整配置好的平台键列表；旧版单表模式返回空数组
+  // （调用方应改用单表原逻辑，不走逐平台循环）。
+  _configuredDualPlatforms() {
+    if (!this.tables) return [];
+    return ['xiaohongshu', 'douyin'].filter(key => {
+      const t = this.tables[key];
+      return t && t.appToken && t.tableId;
+    });
   }
 
   async getAccessToken(forceRefresh = false) {
@@ -134,7 +206,8 @@ class FeishuClient {
     }
   }
 
-  async getRecords(filter) {
+  async getRecords(filter, platform) {
+    const { appToken, tableId } = this._resolveTable(platform);
     const items = [];
     let pageToken;
     let hasMore = true;
@@ -146,7 +219,7 @@ class FeishuClient {
 
       const resp = await this.requestWithRetry(token =>
         axios.post(
-          `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/search`,
           body,
           { headers: { Authorization: `Bearer ${token}` } }
         )
@@ -161,17 +234,11 @@ class FeishuClient {
     return items;
   }
 
-  async hasPendingRecords() {
-    const filter = {
-      conjunction: 'or',
-      conditions: [
-        { field_name: '小红书发布状态', operator: 'is', value: ['待发布'] },
-        { field_name: '抖音发布状态', operator: 'is', value: ['待发布'] },
-      ],
-    };
+  async _hasPendingWithFilter(filter, platform) {
+    const { appToken, tableId } = this._resolveTable(platform);
     const resp = await this.requestWithRetry(token =>
       axios.post(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/search`,
         { page_size: 1, automatic_fields: false, filter },
         { headers: { Authorization: `Bearer ${token}` } }
       )
@@ -180,12 +247,40 @@ class FeishuClient {
     return items.length > 0;
   }
 
+  async hasPendingRecords() {
+    const dualPlatforms = this._configuredDualPlatforms();
+    if (dualPlatforms.length === 0) {
+      // 旧版单表：一张表内 OR 两个平台状态字段，与改造前完全一致。
+      const filter = {
+        conjunction: 'or',
+        conditions: [
+          { field_name: '小红书发布状态', operator: 'is', value: ['待发布'] },
+          { field_name: '抖音发布状态', operator: 'is', value: ['待发布'] },
+        ],
+      };
+      return await this._hasPendingWithFilter(filter, null);
+    }
+
+    // 双表：小红书表查"小红书发布状态"，抖音表查"抖音发布状态"，任一命中即返回。
+    const FIELD_BY_PLATFORM = { xiaohongshu: '小红书发布状态', douyin: '抖音发布状态' };
+    for (const platformKey of dualPlatforms) {
+      const filter = {
+        conjunction: 'and',
+        conditions: [{ field_name: FIELD_BY_PLATFORM[platformKey], operator: 'is', value: ['待发布'] }],
+      };
+      if (await this._hasPendingWithFilter(filter, platformKey)) return true;
+    }
+    return false;
+  }
+
   // 根据 recordId 拉取单条最新记录。供 scheduler 在发布前做"二次校验账号字段"使用。
-  async getRecordById(recordId) {
+  // platform 未传时按旧版单表解析；传入后按该平台对应的表解析。
+  async getRecordById(recordId, platform) {
     if (!recordId) return null;
+    const { appToken, tableId } = this._resolveTable(platform);
     const token = await this.getAccessToken();
     const resp = await axios.get(
-      `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
+      `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return resp.data?.data?.record || null;
@@ -193,8 +288,8 @@ class FeishuClient {
 
   // 启动期校验关键字段必须是 type=3 (单选)。
   // 任何一个字段不是单选 → 抛错；调用方负责让进程退出。
-  async assertSingleSelectFields(fieldNames) {
-    const fields = await this.getFields();
+  async assertSingleSelectFields(fieldNames, platform) {
+    const fields = await this.getFields(platform);
     const errors = [];
     for (const name of fieldNames) {
       const field = fields.find(item => item.field_name === name);
@@ -212,7 +307,8 @@ class FeishuClient {
     return true;
   }
 
-  async getFields() {
+  async getFields(platform) {
+    const { appToken, tableId } = this._resolveTable(platform);
     const items = [];
     let pageToken;
     let hasMore = true;
@@ -220,7 +316,7 @@ class FeishuClient {
     while (hasMore) {
       const resp = await this.requestWithRetry(token =>
         axios.get(
-          `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
           {
             headers: { Authorization: `Bearer ${token}` },
             params: { page_size: 100, page_token: pageToken },
@@ -236,10 +332,11 @@ class FeishuClient {
     return items;
   }
 
-  async updateField(fieldId, body) {
+  async updateField(fieldId, body, platform) {
+    const { appToken, tableId } = this._resolveTable(platform);
     const resp = await this.requestWithRetry(token =>
       axios.put(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields/${fieldId}`,
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields/${fieldId}`,
         body,
         { headers: { Authorization: `Bearer ${token}` } }
       )
@@ -282,8 +379,8 @@ class FeishuClient {
     });
   }
 
-  async syncSingleSelectFieldOptions(fieldName, targetNames = [], options = {}) {
-    const fields = await this.getFields();
+  async syncSingleSelectFieldOptions(fieldName, targetNames = [], options = {}, platform) {
+    const fields = await this.getFields(platform);
     const field = fields.find(item => item.field_name === fieldName);
     if (!field) {
       throw new Error(`未找到飞书字段: ${fieldName}`);
@@ -302,11 +399,11 @@ class FeishuClient {
         ...property,
         options: nextOptions,
       },
-    });
+    }, platform);
   }
 
-  async getSingleSelectFieldOptionNames(fieldName) {
-    const fields = await this.getFields();
+  async getSingleSelectFieldOptionNames(fieldName, platform) {
+    const fields = await this.getFields(platform);
     const field = fields.find(item => item.field_name === fieldName);
     if (!field || field.type !== 3) return [];
     return (field.property?.options || [])
@@ -314,29 +411,61 @@ class FeishuClient {
       .filter(Boolean);
   }
 
+  // 双表模式下：分别查小红书表/抖音表各自平台的状态字段，合并结果；
+  // 并在每条原始记录上打 __platform 标记（'xiaohongshu'|'douyin'），
+  // 供 parseRecord() 透出为 platform 字段，下游据此路由后续写操作到正确的表。
+  // 旧版单表模式：单次查询，不打标记，与改造前完全一致。
+  async _scanBothPlatforms(buildConditions) {
+    const dualPlatforms = this._configuredDualPlatforms();
+    if (dualPlatforms.length === 0) {
+      const PLATFORM_FIELDS = ['小红书发布状态', '抖音发布状态'];
+      const conditions = PLATFORM_FIELDS.flatMap(buildConditions);
+      return await this.getRecords({ conjunction: 'or', conditions });
+    }
+
+    const FIELD_BY_PLATFORM = { xiaohongshu: '小红书发布状态', douyin: '抖音发布状态' };
+    const results = [];
+    for (const platformKey of dualPlatforms) {
+      const conditions = buildConditions(FIELD_BY_PLATFORM[platformKey]);
+      const items = await this.getRecords({ conjunction: 'or', conditions }, platformKey);
+      for (const item of items) item.__platform = platformKey;
+      results.push(...items);
+    }
+    return results;
+  }
+
   async getUnpublishedRecords() {
     // 服务端筛选：只拉「活跃」状态记录，避免全量拉取 500+ 条再客户端过滤。
     // 注：「发布状态」是计算字段，飞书不支持对它 filter；
     //     「小红书发布状态」和「抖音发布状态」是单选字段，支持 is 筛选。
     const ACTIVE_STATUSES = ['待发布', '发布中', '发布失败'];
-    const PLATFORM_FIELDS = ['小红书发布状态', '抖音发布状态'];
-    const conditions = [];
-    for (const field_name of PLATFORM_FIELDS) {
-      for (const status of ACTIVE_STATUSES) {
-        conditions.push({ field_name, operator: 'is', value: [status] });
-      }
-    }
-    return await this.getRecords({ conjunction: 'or', conditions });
+    return await this._scanBothPlatforms(
+      field_name => ACTIVE_STATUSES.map(status => ({ field_name, operator: 'is', value: [status] }))
+    );
   }
 
   async getPendingRecords() {
-    const PLATFORM_FIELDS = ['小红书发布状态', '抖音发布状态'];
-    const conditions = PLATFORM_FIELDS.map(field_name => ({
-      field_name,
-      operator: 'is',
-      value: ['待发布'],
-    }));
-    return await this.getRecords({ conjunction: 'or', conditions });
+    return await this._scanBothPlatforms(
+      field_name => [{ field_name, operator: 'is', value: ['待发布'] }]
+    );
+  }
+
+  // 通用"扫全部记录"入口：双表模式下分别扫小红书表/抖音表并合并（每条打上 __platform），
+  // 旧版单表模式下等价于直接 getRecords(filter)，零行为变化。
+  // 供 server.js 里那些原本"不区分平台、扫整张表"的场景使用
+  // （/api/pending-count、/api/records?status=all、/api/all-records、主题间隔检查等）。
+  async getRecordsAcrossPlatforms(filter) {
+    const dualPlatforms = this._configuredDualPlatforms();
+    if (dualPlatforms.length === 0) {
+      return await this.getRecords(filter);
+    }
+    const results = [];
+    for (const platformKey of dualPlatforms) {
+      const items = await this.getRecords(filter, platformKey);
+      for (const item of items) item.__platform = platformKey;
+      results.push(...items);
+    }
+    return results;
   }
 
   async getRecordsByPlatformStatus(platform, status) {
@@ -344,14 +473,28 @@ class FeishuClient {
     return await this.getRecords({
       conjunction: 'and',
       conditions: [{ field_name, operator: 'is', value: [status] }],
-    });
+    }, platform);
   }
 
-  async updateRecord(recordId, fields) {
+  // platform 未传时按旧版单表解析（不做字段白名单过滤，原样透传，零行为变化）；
+  // 传入后按该平台对应的表解析，并按平台字段白名单过滤 fields——平台专属字段只写
+  // 对应表，公共字段两表都写，残留字段（如小红书表里的"抖音发布人"）一律不写。
+  // 过滤后若 fields 变为空对象（原本只想写残留/对方平台字段），直接跳过网络请求，
+  // 视为无操作成功——效果等同于旧代码里对 code=1254045(字段不存在) 的静默跳过。
+  async updateRecord(recordId, fields, platform) {
+    const { appToken, tableId, platformKey } = this._resolveTable(platform);
+    const { fields: filteredFields, dropped } = filterFieldsForPlatform(fields, platformKey);
+    if (dropped.length > 0) {
+      console.log(`[feishu] updateRecord(${recordId}) 按${PLATFORM_LABEL[platformKey] || platformKey}表字段白名单过滤，已丢弃: ${dropped.join(',')}`);
+    }
+    if (platformKey && Object.keys(filteredFields).length === 0 && Object.keys(fields || {}).length > 0) {
+      return; // 全部字段都不属于这张表，视为无操作成功
+    }
+
     const resp = await this.requestWithRetry(token =>
       axios.put(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/${recordId}`,
-        { fields },
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`,
+        { fields: filteredFields },
         { headers: { Authorization: `Bearer ${token}` } }
       )
     );
@@ -361,14 +504,14 @@ class FeishuClient {
       const err = new Error(`飞书 updateRecord 失败: code=${data.code} msg=${data.msg || '未知'} (recordId=${recordId})`);
       err.feishuCode = data.code;
       err.feishuMsg = data.msg;
-      err.feishuFields = fields;
+      err.feishuFields = filteredFields;
       throw err;
     }
   }
 
-  async markPublished(recordId) {
+  async markPublished(recordId, platform) {
     try {
-      await this.updateRecord(recordId, { '发布状态': '已发布' });
+      await this.updateRecord(recordId, { '发布状态': '已发布' }, platform);
     } catch (e) {
       if (e.feishuCode === 1254045) return; // 发布状态字段不存在，跳过
       throw e;
@@ -378,31 +521,31 @@ class FeishuClient {
   async markPlatformStatus(recordId, platform, status) {
     const fieldName = platform === '小红书' ? '小红书发布状态' : '抖音发布状态';
     try {
-      await this.updateRecord(recordId, { [fieldName]: status });
+      await this.updateRecord(recordId, { [fieldName]: status }, platform);
     } catch (error) {
       try {
         await this.syncSingleSelectFieldOptions(fieldName, ['待发布', '发布中', '已发布', '发布失败'], {
           keepExisting: true,
-        });
-        await this.updateRecord(recordId, { [fieldName]: status });
+        }, platform);
+        await this.updateRecord(recordId, { [fieldName]: status }, platform);
       } catch (_) {
         throw error;
       }
     }
   }
 
-  async markFailed(recordId, reason) {
+  async markFailed(recordId, reason, platform) {
     try {
-      await this.updateRecord(recordId, { '备注': reason });
+      await this.updateRecord(recordId, { '备注': reason }, platform);
     } catch (e) {
       if (e.feishuCode === 1254045) return; // 备注字段不存在，跳过
       throw e;
     }
   }
 
-  async setNote(recordId, note) {
+  async setNote(recordId, note, platform) {
     try {
-      await this.updateRecord(recordId, { '备注': note || '' });
+      await this.updateRecord(recordId, { '备注': note || '' }, platform);
     } catch (e) {
       if (e.feishuCode === 1254045) return; // 备注字段不存在，跳过
       throw e;
@@ -619,6 +762,10 @@ class FeishuClient {
       douyinStatus: getSelect(f['抖音发布状态'], '抖音发布状态'),
       note: getText(f['备注']),
       topic: getText(f['笔记主题']),
+      // 双表模式下由 _scanBothPlatforms() 打在原始记录上的 __platform 标记
+      // ('xiaohongshu'|'douyin') 转成中文标签透出；旧版单表模式下为 null。
+      // 下游（scheduler.js/server.js）据此把后续写操作路由回记录来源的那张表。
+      platform: record.__platform ? (PLATFORM_LABEL[record.__platform] || record.__platform) : null,
       createdTime: record.created_time || 0,
       // 飞书 records/search 返回 `last_modified_time`（需请求体 automatic_fields:true）。
       // 旧字段名 `modified_time` 已不再返回，保留兼容兜底。
@@ -626,10 +773,11 @@ class FeishuClient {
     };
   }
 
-  async getTableFields() {
+  async getTableFields(platform) {
+    const { appToken, tableId } = this._resolveTable(platform);
     const resp = await this.requestWithRetry(token =>
       axios.get(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
     );
@@ -638,10 +786,11 @@ class FeishuClient {
 
   // 在多维表格中新建一个文本类型字段（type=1）
   // 用于导入功能自动创建「导入指纹」等辅助字段
-  async createTextField(fieldName) {
+  async createTextField(fieldName, platform) {
+    const { appToken, tableId } = this._resolveTable(platform);
     const resp = await this.requestWithRetry(token =>
       axios.post(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/fields`,
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
         { field_name: fieldName, type: 1 },
         { headers: { Authorization: `Bearer ${token}` } }
       )
@@ -653,11 +802,18 @@ class FeishuClient {
     return data.data?.field?.field_name || fieldName;
   }
 
-  async createRecord(fields) {
+  // platform 未传时按旧版单表解析，fields 原样透传（零行为变化）；
+  // 传入后按平台字段白名单过滤——道理同 updateRecord()。
+  async createRecord(fields, platform) {
+    const { appToken, tableId, platformKey } = this._resolveTable(platform);
+    const { fields: filteredFields, dropped } = filterFieldsForPlatform(fields, platformKey);
+    if (dropped.length > 0) {
+      console.log(`[feishu] createRecord 按${PLATFORM_LABEL[platformKey] || platformKey}表字段白名单过滤，已丢弃: ${dropped.join(',')}`);
+    }
     const resp = await this.requestWithRetry(token =>
       axios.post(
-        `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records`,
-        { fields },
+        `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records`,
+        { fields: filteredFields },
         { headers: { Authorization: `Bearer ${token}` } }
       )
     );
@@ -669,13 +825,13 @@ class FeishuClient {
       const err = new Error(`飞书 createRecord 失败: code=${data.code} msg=${data.msg || '未知'}`);
       err.feishuCode = data.code;
       err.feishuMsg = data.msg;
-      err.feishuFields = fields; // 排查用,server 端可写诊断日志
+      err.feishuFields = filteredFields; // 排查用,server 端可写诊断日志
       throw err;
     }
     const recordId = data.data?.record?.record_id;
     if (!recordId) {
       const err = new Error(`飞书 createRecord 返回 200 但没有 record_id (响应: ${JSON.stringify(data).slice(0, 500)})`);
-      err.feishuFields = fields;
+      err.feishuFields = filteredFields;
       throw err;
     }
     return { recordId };
@@ -686,6 +842,9 @@ class FeishuClient {
   // options.onProgress: (done, total, currentItem, fromCache) => void  每张完成后回调
   // options.useRecovery: 是否启用断点续传缓存,默认 true。整批中途失败时已成功的会被
   //   缓存,用户重试时跳过这些图,只重传失败的。文件 size/mtime 任一变化即视为新图。
+  // options.platform: 双表模式下上传目标平台('小红书'/'抖音'/'xiaohongshu'/'douyin')。
+  //   附件必须以目标表所在 app 的 appToken 作为 parent_node 上传,否则记录写入时
+  //   file_token 与表格所属 app 不一致会失败。未传时按旧版单表解析。
   // 返回值顺序与 imagePaths 输入顺序严格一致(mapWithConcurrency 按 index 写回)
   // TODO(B4 冷眼审查 P0-4): cache hit 时未把 _meta.truncated 透出,需要在 server 层补齐
   async uploadLocalImagesToFeishu(imagePaths, options = {}) {
@@ -694,6 +853,7 @@ class FeishuClient {
     const list = Array.isArray(imagePaths) ? imagePaths : [];
     if (list.length === 0) return [];
 
+    const { appToken: uploadAppToken } = this._resolveTable(options.platform);
     const concurrency = Math.max(1, Number(options.concurrency) || 3);
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
     const useRecovery = options.useRecovery !== false; // 默认启用
@@ -756,7 +916,7 @@ class FeishuClient {
       const form = new FormData();
       form.append('file_name', safeFileName);
       form.append('parent_type', 'bitable_file');
-      form.append('parent_node', this.appToken);
+      form.append('parent_node', uploadAppToken);
       form.append('size', stat.size);
       form.append('file', stream);
 
@@ -797,7 +957,7 @@ class FeishuClient {
       const prepResp = await this.requestWithRetry(token =>
         axios.post(
           'https://open.feishu.cn/open-apis/drive/v1/medias/upload_prepare',
-          { file_name: fileName, parent_type: 'bitable_file', parent_node: this.appToken, size: fileSize },
+          { file_name: fileName, parent_type: 'bitable_file', parent_node: uploadAppToken, size: fileSize },
           { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
         )
       );
@@ -919,13 +1079,14 @@ class FeishuClient {
     }
   }
 
-  async findRecordByFingerprint(fingerprint) {
+  async findRecordByFingerprint(fingerprint, platform) {
     // 使用 contains 而非 is，兼容历史记录里同一字段存储多个指纹（换行分隔）
     // 若用户表格不存在「导入指纹」字段，飞书 search API 返回空结果或报错——均优雅降级
+    const { appToken, tableId } = this._resolveTable(platform);
     try {
       const resp = await this.requestWithRetry(token =>
         axios.post(
-          `https://open.feishu.cn/open-apis/bitable/v1/apps/${this.appToken}/tables/${this.tableId}/records/search`,
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/search`,
           {
             filter: {
               conjunction: 'and',
@@ -950,3 +1111,7 @@ class FeishuClient {
 module.exports = FeishuClient;
 module.exports.parseAttachmentSortKey = parseAttachmentSortKey;
 module.exports.orderAttachmentsForDownload = orderAttachmentsForDownload;
+module.exports.normalizePlatformKey = normalizePlatformKey;
+module.exports.filterFieldsForPlatform = filterFieldsForPlatform;
+module.exports.COMMON_FEISHU_FIELDS = COMMON_FEISHU_FIELDS;
+module.exports.PLATFORM_ONLY_FEISHU_FIELDS = PLATFORM_ONLY_FEISHU_FIELDS;

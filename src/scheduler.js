@@ -195,23 +195,33 @@ class Scheduler {
     this.log('info', `✍️ AI 写作：发现 ${candidates.length} 条待生成记录`);
     const aiConfig = this.config.aiWriting;
 
-    // 预取字段列表，只写实际存在的字段，避免 FieldNameNotFound
-    let tableFieldSet = new Set();
-    try {
-      const fieldNames = await this.feishu.getTableFields();
-      tableFieldSet = new Set(Array.isArray(fieldNames) ? fieldNames : []);
-    } catch (_) { /* 获取失败则跳过字段过滤，让 updateRecord 自行报错 */ }
+    // 预取字段列表，只写实际存在的字段，避免 FieldNameNotFound。
+    // 双表模式下小红书表/抖音表字段集合可能不同，按 record.platform 分别缓存
+    // （record.platform 由 feishu.parseRecord() 按记录来源的表打上，旧版单表模式下为 null）。
+    const tableFieldSetCache = new Map();
+    const getTableFieldSet = async (platform) => {
+      const cacheKey = platform || '__legacy__';
+      if (tableFieldSetCache.has(cacheKey)) return tableFieldSetCache.get(cacheKey);
+      let set = new Set();
+      try {
+        const fieldNames = await this.feishu.getTableFields(platform || undefined);
+        set = new Set(Array.isArray(fieldNames) ? fieldNames : []);
+      } catch (_) { /* 获取失败则跳过字段过滤，让 updateRecord 自行报错 */ }
+      tableFieldSetCache.set(cacheKey, set);
+      return set;
+    };
 
     for (const record of candidates) {
       try {
         const result = await generateContent(aiConfig, record);
         const tagsStr = Array.isArray(result.tags) ? result.tags.join('\n') : '';
+        const tableFieldSet = await getTableFieldSet(record.platform);
         const fields = {};
         if (!tableFieldSet.size || tableFieldSet.has('标题')) fields['标题'] = result.title;
         if (!tableFieldSet.size || tableFieldSet.has('正文')) fields['正文'] = result.description;
         if (!tableFieldSet.size || tableFieldSet.has('标签')) fields['标签'] = tagsStr;
         if (Object.keys(fields).length > 0) {
-          await this.feishu.updateRecord(record.recordId, fields);
+          await this.feishu.updateRecord(record.recordId, fields, record.platform);
         } else if (tableFieldSet.size > 0) {
           this.log('warn', `⚠️ AI 写作：飞书表格中未找到「标题/正文/标签」字段，生成内容无法回写，已跳过（${record.recordId}）`);
         }
@@ -427,13 +437,13 @@ class Scheduler {
       }
       if (noteChanged) {
         try {
-          await this.feishu.setNote(record.recordId, nextNote);
+          await this.feishu.setNote(record.recordId, nextNote, record.platform);
         } catch (noteErr) {
           this.log('warn', `  ⚠️ 备注同步失败: ${noteErr.message}`);
         }
       }
       try {
-        await this.feishu.markPublished(record.recordId);
+        await this.feishu.markPublished(record.recordId, record.platform);
       } catch (markErr) {
         this.log('warn', `  ⚠️ 整体已发布状态同步失败: ${markErr.message}`);
       }
@@ -617,7 +627,7 @@ class Scheduler {
       }
 
       if (noteChanged) {
-        await this.feishu.setNote(record.recordId, nextNote);
+        await this.feishu.setNote(record.recordId, nextNote, record.platform);
         record.note = nextNote;
       }
 
@@ -625,7 +635,7 @@ class Scheduler {
         results.some(r => r.platform === p && r.success)
       );
       if (allSuccess && results.length > 0 && allPendingCovered) {
-        await this.feishu.markPublished(record.recordId);
+        await this.feishu.markPublished(record.recordId, record.platform);
         this.markRecordRecentlyPublished(record.recordId);
         this.setProgress({
           active: true,
@@ -667,7 +677,7 @@ class Scheduler {
       });
       this.log('error', `  ❌ "${record.title}" 处理失败: ${e.message}`);
       const nextNote = this.mergeNoteEntry(record.note, `处理失败: ${e.message}`);
-      await this.feishu.setNote(record.recordId, nextNote);
+      await this.feishu.setNote(record.recordId, nextNote, record.platform);
       return { published: 0, failed: 1 };
     } finally {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
