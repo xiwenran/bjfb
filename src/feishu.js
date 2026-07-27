@@ -8,13 +8,17 @@ const { readImportRecovery, saveImportRecovery } = require('./config-store.js');
 // TODO(B4 冷眼审查 P0-5): 24h 没查证,审查员建议保守降到 1h
 const RECOVERY_TTL_MS = 24 * 3600 * 1000;
 
-function makeRecoveryKey(imagePath) {
+// scope: 双表模式下用目标表 appToken 区分同一张图在不同平台表下的 fileToken 缓存,
+// 避免小红书表上传得到的 fileToken 被抖音表复用(fileToken 归属特定 app,跨 app 不可用,
+// 飞书写入时报错 code=1254303 "The attachment does not belong to this bitable")。
+// 未传 scope 时(旧版单表模式)行为与之前一致。
+function makeRecoveryKey(imagePath, scope = '') {
   try {
     const stat = fs.statSync(imagePath);
-    return `${imagePath}|${stat.size}|${Math.floor(stat.mtimeMs)}`;
+    return `${scope}|${imagePath}|${stat.size}|${Math.floor(stat.mtimeMs)}`;
   } catch (_) {
     // 文件不存在 fallback 用纯路径(后续上传会失败,这里只是为了不崩)
-    return imagePath;
+    return `${scope}|${imagePath}`;
   }
 }
 
@@ -865,7 +869,7 @@ class FeishuClient {
 
     const tryRecover = (imagePath) => {
       if (!recoveryCache) return null;
-      const key = makeRecoveryKey(imagePath);
+      const key = makeRecoveryKey(imagePath, uploadAppToken);
       const entry = recoveryCache[key];
       if (!entry || !entry.fileToken) return null;
       // 过期(>24h)清理掉
@@ -879,7 +883,7 @@ class FeishuClient {
 
     const recordRecovery = (imagePath, fileToken) => {
       if (!recoveryCache || !fileToken) return;
-      const key = makeRecoveryKey(imagePath);
+      const key = makeRecoveryKey(imagePath, uploadAppToken);
       recoveryCache[key] = { fileToken, uploadedAt: Date.now() };
       recoveryDirty = true;
     };
@@ -1063,15 +1067,29 @@ class FeishuClient {
   // 调用时机:server.js 在 create-records 全部 records 处理完后调用。
   // TODO(B4 冷眼审查 P0-1): 同图被两条记录引用时会误删失败记录的 cache,
   // 需要 Map<imagePath, Set<noteKey>> 反向索引,只清"全部 noteKey 都成功"的图
+  //
+  // 调用方(server.js)只传 imagePaths,拿不到 platform/appToken,而 makeRecoveryKey
+  // 现在带 scope 前缀(`${scope}|${imagePath}|${size}|${mtime}`)。这里按"后缀匹配"清理:
+  // 对每个 imagePath 算出不含 scope 的后缀 `|${imagePath}|${size}|${mtime}`,遍历 cache
+  // 所有 key,凡是以该后缀结尾的一并删掉——这样同一张图在双表模式下留下的多个 scope
+  // 缓存条目会被一起清干净,不需要改调用方签名。
   clearImportRecoveryFor(imagePaths) {
     if (!Array.isArray(imagePaths) || imagePaths.length === 0) return;
     const cache = getRecovery();
     let dirty = false;
     for (const p of imagePaths) {
-      const key = makeRecoveryKey(p);
-      if (key in cache) {
-        delete cache[key];
-        dirty = true;
+      let suffix;
+      try {
+        const stat = fs.statSync(p);
+        suffix = `|${p}|${stat.size}|${Math.floor(stat.mtimeMs)}`;
+      } catch (_) {
+        suffix = `|${p}`;
+      }
+      for (const key of Object.keys(cache)) {
+        if (key.endsWith(suffix)) {
+          delete cache[key];
+          dirty = true;
+        }
       }
     }
     if (dirty) {
@@ -1109,6 +1127,7 @@ class FeishuClient {
 }
 
 module.exports = FeishuClient;
+module.exports.makeRecoveryKey = makeRecoveryKey;
 module.exports.parseAttachmentSortKey = parseAttachmentSortKey;
 module.exports.orderAttachmentsForDownload = orderAttachmentsForDownload;
 module.exports.normalizePlatformKey = normalizePlatformKey;
