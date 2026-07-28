@@ -1119,6 +1119,125 @@ def cmd_schedule(scan_json_file: str, plan_json_file: str, output_file: str | No
     print(f"（调度 JSON 已写入 {output_path}）")
 
 
+def cmd_spread_minutes(
+    schedule_json_file: str,
+    output_file: str | None = None,
+    window_start: str = "06:00",
+    window_end: str = "22:00",
+    apply_changes: bool = False,
+) -> None:
+    """把跨账号撞在同一分钟的排期错开。
+
+    服务端只保证单次调用内分钟唯一；按账号分批调用时不同批次各自从头取分钟，
+    跨批撞车服务端看不见。本命令在排期产出后统一扫一遍，把重复分钟的记录挪到
+    同一天时间窗内最近的空闲分钟。
+
+    挪动时逐条复核同账号 361 分钟间隔，不会为了错峰把间隔挪破；窗口内找不到
+    合法位置就保持原样并告警。默认只报告，加 --apply 才写回。
+    """
+    path = os.path.expanduser(schedule_json_file)
+    if not os.path.isfile(path):
+        print(f"schedule 文件不存在：{path}", file=sys.stderr)
+        sys.exit(1)
+    payload = read_json_file(path)
+    items = payload.get("schedule") if isinstance(payload, dict) else payload
+    if not isinstance(items, list) or not items:
+        print("schedule 内容为空或格式错误，无法错峰", file=sys.stderr)
+        sys.exit(1)
+
+    def parse_hm(text: str) -> int:
+        hh, mm = str(text).split(":")
+        return int(hh) * 60 + int(mm)
+
+    win_lo, win_hi = parse_hm(window_start), parse_hm(window_end)
+    if win_lo >= win_hi:
+        print(f"时间窗非法：{window_start}-{window_end}", file=sys.stderr)
+        sys.exit(1)
+
+    MIN_GAP = 361  # 与服务端同账号相邻间隔硬下限一致
+
+    parsed = []
+    for idx, item in enumerate(items):
+        raw = str(item.get("publishTime", "")).strip()
+        try:
+            date_part, time_part = raw.split(" ")
+            parsed.append({"i": idx, "date": date_part, "minute": parse_hm(time_part), "item": item})
+        except ValueError:
+            print(f"第 {idx} 条 publishTime 格式无法解析：{raw!r}", file=sys.stderr)
+            sys.exit(1)
+
+    taken = set((p["date"], p["minute"]) for p in parsed)
+    by_account: dict = {}
+    for p in parsed:
+        key = f"{p['item'].get('platform', '')}:{p['item'].get('account', '')}"
+        by_account.setdefault(key, []).append(p)
+
+    def account_ok(acct_key: str, moving, candidate: int) -> bool:
+        for q in by_account[acct_key]:
+            if q is moving or q["date"] != moving["date"]:
+                continue
+            if abs(q["minute"] - candidate) < MIN_GAP:
+                return False
+        return True
+
+    seen: set = set()
+    moves = []
+    stuck = []
+    for p in parsed:
+        slot = (p["date"], p["minute"])
+        if slot not in seen:
+            seen.add(slot)
+            continue
+        acct_key = f"{p['item'].get('platform', '')}:{p['item'].get('account', '')}"
+        found = None
+        for delta in range(1, win_hi - win_lo + 1):
+            for cand in (p["minute"] + delta, p["minute"] - delta):
+                if not (win_lo <= cand <= win_hi):
+                    continue
+                if (p["date"], cand) in taken:
+                    continue
+                if not account_ok(acct_key, p, cand):
+                    continue
+                found = cand
+                break
+            if found is not None:
+                break
+        if found is None:
+            stuck.append((p, acct_key))
+            seen.add(slot)
+            continue
+        taken.discard(slot)
+        taken.add((p["date"], found))
+        moves.append((p, p["minute"], found))
+        p["minute"] = found
+        seen.add((p["date"], found))
+
+    for p, _old, new in moves:
+        p["item"]["publishTime"] = f"{p['date']} {new // 60:02d}:{new % 60:02d}"
+
+    all_slots = [(p["date"], p["minute"]) for p in parsed]
+    dup_left = len(all_slots) - len(set(all_slots))
+    print(f"总记录 {len(parsed)} 条｜本次错开 {len(moves)} 条｜剩余同分钟重复 {dup_left} 组")
+    for p, old, new in moves[:20]:
+        acct = f"{p['item'].get('platform', '')}:{p['item'].get('account', '')}"
+        print(f"  {p['date']} {old // 60:02d}:{old % 60:02d} → {new // 60:02d}:{new % 60:02d}｜{acct}")
+    if len(moves) > 20:
+        print(f"  …… 其余 {len(moves) - 20} 条省略")
+    for p, acct in stuck:
+        print(
+            f"警告：{p['date']} {p['minute'] // 60:02d}:{p['minute'] % 60:02d}（{acct}）"
+            f"窗口内无既空闲又满足 {MIN_GAP} 分钟间隔的分钟，保持原样",
+            file=sys.stderr,
+        )
+
+    if not apply_changes:
+        print("（仅报告，未写回；确认无误后加 --apply 生效）")
+        return
+    out_path = os.path.expanduser(output_file) if output_file else path
+    write_json_file(out_path, payload)
+    print(f"（已写入 {out_path}）")
+
+
 def cmd_build_records(
     scan_json_file: str,
     schedule_json_file: str,
@@ -2123,6 +2242,13 @@ def main() -> None:
     schedule_parser.add_argument("plan_json", help="调度参数 JSON 文件路径")
     schedule_parser.add_argument("--output", default=None, help="输出 schedule JSON 路径（默认写入 /tmp）")
 
+    spread_parser = subparsers.add_parser("spread-minutes", help="把跨账号撞在同一分钟的排期错开")
+    spread_parser.add_argument("schedule_json", help="schedule 生成的 JSON 文件路径")
+    spread_parser.add_argument("--output", default=None, help="输出路径（默认原地覆盖，需配合 --apply）")
+    spread_parser.add_argument("--window-start", default="06:00", help="允许时间窗起点，默认 06:00")
+    spread_parser.add_argument("--window-end", default="22:00", help="允许时间窗终点，默认 22:00")
+    spread_parser.add_argument("--apply", action="store_true", help="写回文件；不加则只报告不改动")
+
     build_records_parser = subparsers.add_parser("build-records", help="基于扫描结果、调度结果和文案映射生成 records JSON")
     build_records_parser.add_argument("scan_json", help="scan 或 scan-many 生成的 JSON 文件路径")
     build_records_parser.add_argument("schedule_json", help="schedule 生成的 JSON 文件路径")
@@ -2240,6 +2366,14 @@ def main() -> None:
         cmd_materialize_covers(args.scan_json)
     elif args.command == "schedule":
         cmd_schedule(args.scan_json, args.plan_json, output_file=args.output)
+    elif args.command == "spread-minutes":
+        cmd_spread_minutes(
+            args.schedule_json,
+            output_file=args.output,
+            window_start=args.window_start,
+            window_end=args.window_end,
+            apply_changes=args.apply,
+        )
     elif args.command == "build-records":
         cmd_build_records(args.scan_json, args.schedule_json, args.content_json, args.output_json, seed=args.seed)
     elif args.command == "create":
