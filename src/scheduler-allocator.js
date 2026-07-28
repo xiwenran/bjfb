@@ -251,6 +251,9 @@ function allocateImportSchedule(input) {
     for (const task of shuffle(pool.tasks, rng)) tasks.push({ ...task, pool });
   }
   const orderedTasks = shuffle(tasks, rng);
+  // 预存下标：原先在回溯最内层用 orderedTasks.indexOf(task) 反查，是 O(任务数) 的
+  // 线性扫描，且每次尝试都要重算一遍。下标在这里就已确定，全程不变。
+  orderedTasks.forEach((task, index) => { task.orderIndex = index; });
 
   const usedMinutes = new Set();
   const accountTimes = new Map();
@@ -275,12 +278,23 @@ function allocateImportSchedule(input) {
   const schedule = [];
   const noteOrder = shuffle(notes, rng);
 
+  // 每个 task 的候选笔记顺序只由 task.orderIndex / placementIndex 决定，与搜索过程
+  // 无关，因此全程恒定。此前它被放在回溯的最内层，每次尝试都要重排一遍整个笔记数组，
+  // 是搜索跑不完的主因；这里改为按 task 缓存，结果与原实现逐字一致（同 seed 同解）。
+  const candidateNotesCache = new Map();
   function candidateNotes(task) {
-    const startTopic = (orderedTasks.indexOf(task) + task.placementIndex) % topics.length;
+    const cached = candidateNotesCache.get(task);
+    if (cached) return cached;
+    const startTopic = (task.orderIndex + task.placementIndex) % topics.length;
     const topicOrder = topics.slice(startTopic).concat(topics.slice(0, startTopic));
     const topicRank = new Map(topicOrder.map((topic, index) => [topic, index]));
-    return noteOrder.slice().sort((left, right) => topicRank.get(left.topicKey) - topicRank.get(right.topicKey));
+    const sorted = noteOrder.slice().sort((left, right) => topicRank.get(left.topicKey) - topicRank.get(right.topicKey));
+    candidateNotesCache.set(task, sorted);
+    return sorted;
   }
+
+  const MAX_PLACEMENT_ATTEMPTS = 2000000;
+  let placementAttempts = 0;
 
   function search(taskIndex) {
     if (taskIndex === orderedTasks.length) {
@@ -304,6 +318,9 @@ function allocateImportSchedule(input) {
         const times = accountTimes.get(task.accountKey) || [];
         if (!canPlaceAccountTime(times, timestamp)) continue;
         for (const note of candidateNotes(task)) {
+          if (++placementAttempts > MAX_PLACEMENT_ATTEMPTS) {
+            throw createInputError('排期搜索超出预算：本批约束下找不到可行安排，请缩小批次、增加时间窗或增加可用模板数');
+          }
           if (platformNotes.has(note.noteKey) || accountTemplates.has(note.template)) continue;
           const topicKey = `${task.storeGroup}\u0000${note.topicKey}`;
           const tracksTopic = task.platform === 'xiaohongshu' && Boolean(task.storeGroup);
