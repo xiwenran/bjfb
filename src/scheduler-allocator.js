@@ -295,10 +295,14 @@ function allocateImportSchedule(input) {
 
   const MAX_PLACEMENT_ATTEMPTS = 2000000;
   let placementAttempts = 0;
+  // 默认维持历史行为：每个时间槽都要放上笔记、所有笔记都要排上，做不到就整批失败。
+  // 传 allowPartialSchedule 时改为尽力而为——放不下的槽位留空、排不上的笔记进
+  // unscheduled 返回给调用方自行决定，而不是让整批报错。
+  const allowPartialSchedule = input?.allowPartialSchedule === true;
 
   function search(taskIndex) {
     if (taskIndex === orderedTasks.length) {
-      if (notes.some(note => !usedAnyNotes.has(note.noteKey))) return false;
+      if (!allowPartialSchedule && notes.some(note => !usedAnyNotes.has(note.noteKey))) return false;
       if (coverageStrategy === 'strict' && accounts.some(account => (
         (coveredTopicsByAccount.get(account.accountKey) || new Set()).size < topics.length
       ))) return false;
@@ -370,6 +374,9 @@ function allocateImportSchedule(input) {
         }
       }
     }
+    // 尽力而为模式下，当前槽位实在放不下任何一篇时允许留空继续往后排，
+    // 而不是让整批判负。默认模式保持原样，直接回溯。
+    if (allowPartialSchedule && search(taskIndex + 1)) return true;
     return false;
   }
 
@@ -377,7 +384,7 @@ function allocateImportSchedule(input) {
     throw createInputError('给定时间资源无法安排全部笔记：同账号必须至少间隔 361 分钟、全局分钟不能重复，且自动错开时同店同主题也须至少间隔 361 分钟');
   }
   const unscheduled = notes.filter(note => !usedAnyNotes.has(note.noteKey)).map(note => note.noteKey);
-  if (unscheduled.length > 0) {
+  if (!allowPartialSchedule && unscheduled.length > 0) {
     throw createInputError(`给定时间资源无法安排全部笔记：仍有 ${unscheduled.length} 篇未排`);
   }
 
@@ -396,10 +403,10 @@ function allocateImportSchedule(input) {
   schedule.sort((left, right) => left.publishTime.localeCompare(right.publishTime) || left.platform.localeCompare(right.platform) || left.account.localeCompare(right.account));
   return {
     schedule,
-    unscheduled: [],
+    unscheduled,
     stats: {
       scheduledCount: schedule.length,
-      unscheduledCount: 0,
+      unscheduledCount: unscheduled.length,
       coverageStrategy,
       violations: [],
       warnings,
