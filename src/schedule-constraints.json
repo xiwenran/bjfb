@@ -1,0 +1,4 @@
+{
+  "minSameAccountIntervalMinutes": 361,
+  "uniqueMinuteAcrossBatch": true
+}

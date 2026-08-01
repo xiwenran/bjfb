@@ -395,10 +395,18 @@ test('topic spacing endpoints use indexed server context and fresh confirmation'
     decision: 'allow_conflicts',
     conflictIds: checkResponse.body.conflicts.map(item => item.id),
   };
+  // 新契约：接口只做校验，求解移到本地脚本。这里手工构造一份合规 schedule 传入，
+  // 覆盖原测试要验的语义——confirmation 通过后，一条不冲突的排期应校验通过。
+  const allowedSchedule = [{
+    noteKey: '教务资料/001',
+    platform: 'xiaohongshu',
+    account: '拉面卷卷',
+    publishTime: '2026-07-16 16:00',
+  }];
   const allowed = await requestJson({
     method: 'POST',
     urlPath: '/api/import/schedule',
-    body: { ...payload, existingReservations: [], confirmation },
+    body: { ...payload, existingReservations: [], confirmation, schedule: allowedSchedule },
   });
   assert.equal(allowed.statusCode, 200, JSON.stringify(allowed.body));
   assert.equal(allowed.body.schedule.length, 1);
@@ -420,13 +428,31 @@ test('topic spacing endpoints use indexed server context and fresh confirmation'
       发布时间: Date.parse('2026-07-16 09:00'),
     },
   }];
+  // 故意构造一条违规 schedule：同账号新排期时间距既有索引记录（09:00）只差 360 分钟，
+  // 不足 schedule-constraints.json 要求的 361 分钟最小间隔，应被 min_interval 规则拦下。
+  const spacingFailureSchedule = [{
+    noteKey: '教务资料/001',
+    platform: 'xiaohongshu',
+    account: '拉面卷卷',
+    publishTime: '2026-07-16 15:00',
+  }];
   const spacingFailure = await requestJson({
     method: 'POST',
     urlPath: '/api/import/schedule',
-    body: { ...payload, timeSlots: { regular: ['2026-07-16 15:00'], special: [] }, existingReservations: [] },
+    body: {
+      ...payload,
+      timeSlots: { regular: ['2026-07-16 15:00'], special: [] },
+      existingReservations: [],
+      schedule: spacingFailureSchedule,
+    },
   });
   assert.equal(spacingFailure.statusCode, 400);
   assert.match(spacingFailure.body.error, /361/);
+  assert.ok(
+    Array.isArray(spacingFailure.body.violations)
+      && spacingFailure.body.violations.some(v => v.rule === 'min_interval'),
+    JSON.stringify(spacingFailure.body)
+  );
 
   fs.writeFileSync(topicIndexPath, JSON.stringify({ version: 1, records: {} }), 'utf8');
   rawRecords = [];

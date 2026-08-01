@@ -68,7 +68,7 @@ ______________
 2. 调用 ppt-batch-tool + rongjing 跑融景合成（pipeline.py，约 30 分钟/7 PPT）
 3. rongjing 自动放置封面（--cover-source 参数）
 4. zhifa scan 合成图目录
-5. POST /api/import/schedule 生成调度矩阵 + 展示给用户预览
+5. 本地 scripts/schedule_allocator.py 生成排期 → POST /api/import/schedule 只做校验（不合规整批拒收）→ 展示给用户预览
 6. **主会话按 SYSTEM_PROMPT 三原则生成标题/标签** → 展示给用户确认（必停点）
 7. POST /api/import/create-records 上传（自适应分批，skill_upload.py 内置）
 8. POST /api/import/archive 自动归档已安排+未安排

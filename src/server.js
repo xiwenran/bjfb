@@ -29,7 +29,7 @@ const {
   saveRuntimeState,
 } = require('./config-store.js');
 const { generateContent, testConnection } = require('./ai-writer.js');
-const { allocateImportSchedule } = require('./scheduler-allocator.js');
+const { validateImportSchedule } = require('./scheduler-allocator.js');
 const {
   normalizeTopicKey,
   buildTopicCheckFingerprint,
@@ -37,7 +37,22 @@ const {
   findCrossAccountTopicConflicts,
   validateTopicConfirmation,
 } = require('./topic-spacing-guard.js');
+const {
+  collectPlatformReservations,
+  buildBatchWindow,
+  collectPlanTimestamps,
+} = require('./platform-reservations.js');
 const { archiveImportFolders } = require('./archiver.js');
+
+// 时间窗半径与同账号最小间隔同源：既有排期只有落在
+// [本批最早 - 361min, 本批最晚 + 361min] 区间内的，才可能与本批撞分钟或破坏间隔。
+const SCHEDULE_CONSTRAINTS = require('./schedule-constraints.json');
+const RESERVATION_WINDOW_MARGIN_MINUTES = Number(SCHEDULE_CONSTRAINTS.minSameAccountIntervalMinutes);
+if (!Number.isFinite(RESERVATION_WINDOW_MARGIN_MINUTES) || RESERVATION_WINDOW_MARGIN_MINUTES <= 0) {
+  throw new Error(
+    `schedule-constraints.json 中 minSameAccountIntervalMinutes 无效: ${SCHEDULE_CONSTRAINTS.minSameAccountIntervalMinutes}`
+  );
+}
 
 // 版本号 + commit hash 拼接：打包时 predist 脚本会生成 build-info.json，运行时读取拼到版本里
 // 开发模式（npm start / npm run desktop）下文件不存在，仅显示 package.json 版本号
@@ -335,9 +350,34 @@ async function loadTopicSpacingContext(payload) {
     throw new Error(`读取发布历史失败: ${error.message}`);
   }
   const indexedIds = new Set(Object.keys(topicIndex.records || {}));
-  const parsedRecords = (Array.isArray(rawRecords) ? rawRecords : [])
-    .filter(record => indexedIds.has(String(record?.record_id || record?.recordId || '')))
-    .map(record => feishu.parseRecord(record));
+  // 同一次 getRecordsAcrossPlatforms 拉取分两路用，不新增飞书查询：
+  //   parsedRecords（只留进了主题索引的） → 约束 5 的同店同主题数据源，解析口径保持不变
+  //   allParsedRecords（全表）           → 平台无关的「已占用分钟」（约束 1、2，小红书+抖音一视同仁）
+  //
+  // 解析失败的处理按记录是否进索引分流：索引内记录解析失败仍然整体抛错（旧行为不变）；
+  // 索引外记录是本次新纳入的，单条字段配置错误（例如账号字段被配成多选）不该把整批检查
+  // 拖死，但也不能静默吞掉——record_id 收集起来随响应回传，让操作者看得见这条没被兜底。
+  const rawList = Array.isArray(rawRecords) ? rawRecords : [];
+  const parsedRecords = [];
+  const allParsedRecords = [];
+  const unparsableRecordIds = [];
+  for (const raw of rawList) {
+    const recordId = String(raw?.record_id || raw?.recordId || '');
+    const isIndexed = indexedIds.has(recordId);
+    let parsed;
+    try {
+      parsed = feishu.parseRecord(raw);
+    } catch (error) {
+      if (isIndexed) throw error;
+      unparsableRecordIds.push(recordId || '(无 record_id)');
+      continue;
+    }
+    if (isIndexed) parsedRecords.push(parsed);
+    allParsedRecords.push(parsed);
+  }
+  // 不在这里做时间窗过滤：本函数被 topic-spacing-check 和 schedule 两条路由共用，
+  // 两者能拿到的「本批时间范围」不同，各自在路由里按自己的范围裁剪。
+  const timeReservations = collectPlatformReservations({ feishuRecords: allParsedRecords });
   const reservations = collectIndexedReservations({
     topicIndex,
     feishuRecords: parsedRecords,
@@ -353,9 +393,22 @@ async function loadTopicSpacingContext(payload) {
   return {
     currentItems,
     reservations,
+    timeReservations,
+    unparsableRecordIds,
     conflicts: findCrossAccountTopicConflicts({ currentItems: potentialItems, reservations }),
     inputFingerprint: buildTopicCheckFingerprint(payload),
   };
+}
+
+// 把平台无关的既有排期裁到本批时间窗内。timestamps 是本批次所有已知发布时刻（毫秒）；
+// 拿不到任何时刻（例如 timeSlots 解析不出来）时返回空数组——宁可不兜底，也不把
+// 全部历史塞进「分钟唯一」判断里，那会随着发布量增长把新排期彻底堵死。
+function scopeTimeReservations(timeReservations, timestamps) {
+  const window = buildBatchWindow(timestamps, RESERVATION_WINDOW_MARGIN_MINUTES);
+  if (!window) return [];
+  return (timeReservations || []).filter(item => (
+    item.timestamp >= window.windowStart && item.timestamp <= window.windowEnd
+  ));
 }
 
 // 安全：维护用户已扫描的素材根目录白名单（in-memory，进程重启后清空）。
@@ -1058,11 +1111,26 @@ const server = http.createServer(async (req, res) => {
         ensureFeishuConfigReady();
         const payload = JSON.parse(body || '{}');
         const context = await loadTopicSpacingContext(payload);
+        // 本阶段还没有 schedule，时间窗按请求里的 timeSlots / timeWindows 推算：
+        // 取所有时段的最早/最晚边界，再各外扩一个最小间隔。
+        const scopedTimeReservations = scopeTimeReservations(
+          context.timeReservations,
+          collectPlanTimestamps(payload)
+        );
         return sendJson(res, {
           inputFingerprint: context.inputFingerprint,
           requiresConfirmation: context.conflicts.length > 0,
           conflicts: context.conflicts,
           reservationCount: context.reservations.length,
+          // 供本地 schedule_allocator 提前避开：平台无关的已占用分钟（小红书+抖音）。
+          existingReservations: scopedTimeReservations.map(item => ({
+            platform: item.platform,
+            account: item.account,
+            publishTime: item.publishTime,
+          })),
+          // 主题索引外、字段配置有问题解析不了的记录：它们没进上面的时间占用兜底，
+          // 明确回传而不是静默丢弃。
+          unparsableRecordIds: context.unparsableRecordIds,
           choices: ['auto_space', 'adjust_window', 'allow_conflicts'],
         });
       } catch (e) {
@@ -1092,18 +1160,58 @@ const server = http.createServer(async (req, res) => {
             conflicts: context.conflicts,
           }, 409);
         }
-        return sendJson(res, allocateImportSchedule({
-          ...payload,
-          currentItems: context.currentItems,
-          existingReservations: context.reservations.map(item => ({
-            platform: 'xiaohongshu',
-            account: item.account,
-            publishTime: item.publishTime,
-            topicKey: item.topicKey,
-            storeGroup: item.storeGroup,
-          })),
-          topicDecision: payload.confirmation?.decision || 'none',
-        }));
+        if (!Array.isArray(payload.schedule)) {
+          return sendJson(res, {
+            error: '本接口已改为校验模式，请先用 scripts/schedule_allocator.py 在本地生成排期后再提交校验',
+          }, 400);
+        }
+        // 时间窗以本批 schedule 的实际发布时刻为准；解析不出任何时刻时退回按
+        // timeSlots/timeWindows 推算，两者都拿不到就不做平台无关兜底（详见 scopeTimeReservations）。
+        const batchTimestamps = payload.schedule
+          .map(entry => {
+            const text = String(entry?.publishTime || '').trim();
+            const matched = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$/.exec(text);
+            if (!matched) return null;
+            const [, y, mo, d, h, mi] = matched;
+            return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), 0, 0).getTime();
+          })
+          .filter(Number.isFinite);
+        const scopedTimeReservations = scopeTimeReservations(
+          context.timeReservations,
+          batchTimestamps.length > 0 ? batchTimestamps : collectPlanTimestamps(payload)
+        );
+        try {
+          const validated = validateImportSchedule({
+            ...payload,
+            currentItems: context.currentItems,
+            existingReservations: [
+              // 第一路：主题索引里的小红书排期，供约束 1/2/5。
+              ...context.reservations.map(item => ({
+                platform: 'xiaohongshu',
+                scope: 'topic',
+                account: item.account,
+                publishTime: item.publishTime,
+                topicKey: item.topicKey,
+                storeGroup: item.storeGroup,
+              })),
+              // 第二路：平台无关的已占用分钟（小红书 + 抖音），只供约束 1/2。
+              // 抖音的既有排期此前完全没有兜底，跨批撞同一分钟、同账号间隔不足都拦不住。
+              ...scopedTimeReservations.map(item => ({
+                platform: item.platform,
+                scope: 'time',
+                account: item.account,
+                publishTime: item.publishTime,
+              })),
+            ],
+            topicDecision: payload.confirmation?.decision || 'none',
+          });
+          return sendJson(res, { ...validated, unparsableRecordIds: context.unparsableRecordIds });
+        } catch (error) {
+          return sendJson(res, {
+            error: error.message,
+            violations: error.violations || [],
+          }, error.statusCode || 500);
+        }
       } catch (e) {
         return sendJson(res, { error: e.message }, e.statusCode || (e instanceof SyntaxError ? 400 : 500));
       }

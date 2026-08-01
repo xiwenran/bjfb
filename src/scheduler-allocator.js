@@ -1,42 +1,48 @@
+// 求解已迁出软件（Python 本地脚本），本文件只做「接收 schedule + 全量校验」。
+// 校验一条不过即整批拒收；违规必须一次性全部收集后再抛出，方便调用方一次看到全部问题。
+const fs = require('fs');
+const path = require('path');
 const { parsePublishTimestamp } = require('./publish-guard.js');
 
-const MIN_SAME_ACCOUNT_INTERVAL_MINUTES = 361;
-const MIN_INTERVAL_MS = MIN_SAME_ACCOUNT_INTERVAL_MINUTES * 60 * 1000;
+const CONSTRAINTS_PATH = path.join(__dirname, 'schedule-constraints.json');
 const SUPPORTED_PLATFORMS = new Set(['xiaohongshu', 'douyin']);
+const EXACT_MINUTE_PATTERN = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}$/;
 
-function createInputError(message) {
+// 账号名归一化：与发布链路 account-mapping.js 的 toLowerCase 匹配口径统一，
+// 避免 "acc" / "Acc" 在校验器里被当成两个账号绕过同账号间隔约束。
+// 归一化结果只用于分组比较，报错信息一律展示用户原始账号名。
+function normalizeAccountName(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+// 店铺组 / 主题分组键归一化：与 topic-spacing-guard.js 的 normalizeTopicKey 同源
+// （NFKC + 空白折叠 + trim），再补一层 toLowerCase，避免大小写差异绕过跨账号主题间隔。
+function normalizeGroupKey(value) {
+  return String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function createInputError(message, violations) {
   const error = new Error(message);
   error.statusCode = 400;
+  if (violations) error.violations = violations;
   return error;
 }
 
-function createSeededRandom(seed) {
-  let state = 2166136261;
-  for (const char of String(seed)) {
-    state ^= char.charCodeAt(0);
-    state = Math.imul(state, 16777619);
+let _constraintsCache = null;
+function loadConstraints() {
+  if (_constraintsCache) return _constraintsCache;
+  const raw = fs.readFileSync(CONSTRAINTS_PATH, 'utf8');
+  const parsed = JSON.parse(raw);
+  const minutes = Number(parsed.minSameAccountIntervalMinutes);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    throw new Error(`schedule-constraints.json 中 minSameAccountIntervalMinutes 无效: ${parsed.minSameAccountIntervalMinutes}`);
   }
-  return () => {
-    state += 0x6D2B79F5;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  // uniqueMinuteAcrossBatch 字段在配置文件里保留，但不再读取成开关：
+  // 分钟全局唯一是硬约束，不接受被配置关掉。
+  _constraintsCache = {
+    minSameAccountIntervalMinutes: minutes,
   };
-}
-
-function shuffle(items, rng) {
-  const copy = items.slice();
-  for (let index = copy.length - 1; index > 0; index--) {
-    const target = Math.floor(rng() * (index + 1));
-    [copy[index], copy[target]] = [copy[target], copy[index]];
-  }
-  return copy;
-}
-
-function normalizeStringArray(value, fieldName) {
-  if (!Array.isArray(value)) throw createInputError(`${fieldName} 必须是数组`);
-  return value.map(item => String(item || '').trim()).filter(Boolean);
+  return _constraintsCache;
 }
 
 function normalizeCoverageStrategy(value) {
@@ -51,90 +57,6 @@ function normalizeCoverageStrategy(value) {
     throw createInputError('coverageStrategy 仅支持 strict/严格覆盖、balanced/尽量覆盖、minimum/只保底发布');
   }
   return normalized;
-}
-
-function normalizeNotes(noteFolders, currentItems) {
-  if (!Array.isArray(noteFolders) || noteFolders.length === 0) {
-    throw createInputError('noteFolders 必须是非空数组');
-  }
-  const topicByNoteKey = new Map();
-  if (Array.isArray(currentItems)) {
-    for (const item of currentItems) {
-      const noteKey = String(item?.noteKey || '').trim();
-      const topicKey = String(item?.topicKey || '').trim();
-      if (noteKey && topicKey) topicByNoteKey.set(noteKey, topicKey);
-    }
-  }
-
-  const notes = [];
-  const topics = [];
-  const seenTopics = new Set();
-  const seenNoteKeys = new Set();
-  for (const folder of noteFolders) {
-    const topic = String(folder?.topic || '').trim();
-    if (!topic) throw createInputError('noteFolders 中存在空 topic');
-    const templates = normalizeStringArray(folder.templates, `noteFolders[${topic}].templates`);
-    for (const template of templates) {
-      const noteKey = `${topic}/${template}`;
-      if (seenNoteKeys.has(noteKey)) continue;
-      seenNoteKeys.add(noteKey);
-      const topicKey = topicByNoteKey.get(noteKey) || topic;
-      if (!seenTopics.has(topicKey)) {
-        seenTopics.add(topicKey);
-        topics.push(topicKey);
-      }
-      notes.push({ topic, topicKey, template, noteKey });
-    }
-  }
-  if (notes.length === 0) throw createInputError('noteFolders 中没有可调度模板');
-  return { notes, topics };
-}
-
-function normalizeAccounts(input, rng) {
-  const accounts = input?.accounts;
-  const timeSlots = input?.timeSlots;
-  if (!accounts || typeof accounts !== 'object' || Array.isArray(accounts)) {
-    throw createInputError('accounts 必须是对象');
-  }
-  if (!timeSlots || typeof timeSlots !== 'object' || Array.isArray(timeSlots)) {
-    throw createInputError('timeSlots 必须是对象');
-  }
-  const regularSlots = normalizeStringArray(timeSlots.regular || [], 'timeSlots.regular');
-  const specialSlots = normalizeStringArray(timeSlots.special || [], 'timeSlots.special');
-  const accountGroups = input?.accountGroups && typeof input.accountGroups === 'object' && !Array.isArray(input.accountGroups)
-    ? input.accountGroups
-    : {};
-  const definitions = [
-    ['xiaohongshu', 'regular', accounts.xiaohongshu_regular || [], regularSlots],
-    ['xiaohongshu', 'special', accounts.xiaohongshu_special || [], specialSlots],
-    ['douyin', 'regular', accounts.douyin || [], regularSlots],
-  ];
-  const normalized = [];
-  const seenAccountKeys = new Set();
-  for (const [platform, slotType, rawAccounts, slots] of definitions) {
-    const names = normalizeStringArray(rawAccounts, `accounts.${platform}_${slotType}`);
-    if (names.length > 0 && slots.length === 0) {
-      throw createInputError(`${slotType} 时段为空，无法调度 ${platform} 账号`);
-    }
-    for (const account of shuffle(names, rng)) {
-      const accountKey = `${platform}:${account}`;
-      if (seenAccountKeys.has(accountKey)) throw createInputError(`账号重复: ${accountKey}`);
-      seenAccountKeys.add(accountKey);
-      const storeGroup = String(accountGroups[account] || '').trim();
-      if (platform === 'xiaohongshu' && input.topicDecision === 'auto_space' && !storeGroup) {
-        throw createInputError(`小红书账号 ${account} 缺少店铺组映射`);
-      }
-      normalized.push({ platform, account, accountKey, storeGroup, slots, slotType });
-    }
-  }
-  if (normalized.length === 0) throw createInputError('accounts 中没有可调度账号');
-  return shuffle(normalized, rng);
-}
-
-function formatMinute(timestamp) {
-  const date = new Date(timestamp);
-  const pad = value => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function parseStrictTimestamp(value) {
@@ -157,266 +79,465 @@ function parseStrictTimestamp(value) {
   return parsePublishTimestamp(value);
 }
 
-function parseWindow(value) {
-  const match = String(value || '').trim().match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
-  if (!match) return null;
-  const start = parseStrictTimestamp(`${match[1]} ${match[2]}`);
-  const end = parseStrictTimestamp(`${match[1]} ${match[3]}`);
-  if (start === null || end === null || end < start) throw createInputError(`时间窗无效: ${value}`);
-  return { start, end };
+function formatMinute(timestamp) {
+  const date = new Date(timestamp);
+  const pad = value => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function buildSegments(slotValue, count, rng) {
-  const window = parseWindow(slotValue);
-  if (!window) {
-    const timestamp = parseStrictTimestamp(slotValue);
-    if (timestamp === null) throw createInputError(`发布时间无法解析: ${slotValue}`);
-    if (count !== 1) {
-      throw createInputError(`精确分钟槽 ${slotValue} 不足：需要 ${count} 个唯一分钟，只有 1 个`);
-    }
-    return [[timestamp]];
-  }
-  const totalMinutes = Math.floor((window.end - window.start) / 60000) + 1;
-  if (totalMinutes < count) {
-    throw createInputError(`时间窗 ${slotValue} 的唯一分钟不足：需要 ${count}，只有 ${totalMinutes}`);
-  }
-  const segments = [];
-  for (let index = 0; index < count; index++) {
-    const segmentStart = Math.floor(index * totalMinutes / count);
-    const segmentEnd = Math.floor((index + 1) * totalMinutes / count) - 1;
-    const length = segmentEnd - segmentStart + 1;
-    const startOffset = Math.floor(rng() * length);
-    const candidates = [];
-    for (let offset = 0; offset < length; offset++) {
-      const minuteOffset = segmentStart + ((startOffset + offset) % length);
-      candidates.push(window.start + minuteOffset * 60000);
-    }
-    segments.push(candidates);
-  }
-  return shuffle(segments, rng);
-}
+// existingReservations 是两路合并的：
+//   - scope='topic'（默认）：来自主题索引的小红书排期，带 topicKey/storeGroup，
+//     同时供约束 1（同账号间隔）、约束 2（分钟唯一）、约束 5（同店同主题跨账号间隔）。
+//   - scope='time'：平台无关的「已占用分钟」，小红书和抖音都有，不带主题/店铺组，
+//     只供约束 1、2。它不能进约束 5——那条约束在 auto_space 下对缺主题/店铺组的条目
+//     是 fail-closed 记违规的，放进去会把没有主题信息的抖音排期误判成违规。
+// 默认 'topic' 是为了保持旧调用方（只传 topicKey/storeGroup 的一路）行为不变。
+const RESERVATION_SCOPES = new Set(['topic', 'time']);
 
 function normalizeExistingReservations(value) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw createInputError('existingReservations 必须是数组');
-  return value.map(item => {
+  const normalized = value.map(item => {
     const platform = String(item?.platform || '').trim();
     const account = String(item?.account || '').trim();
     const timestamp = parseStrictTimestamp(item?.publishTime);
     if (!SUPPORTED_PLATFORMS.has(platform) || !account || timestamp === null) {
       throw createInputError('已有排期记录缺少合法 platform、account 或 publishTime');
     }
+    const scope = String(item?.scope || 'topic').trim() || 'topic';
+    if (!RESERVATION_SCOPES.has(scope)) {
+      throw createInputError(`已有排期记录的 scope 只能是 topic 或 time，实际为 "${item?.scope}"`);
+    }
+    // existingReservations 由服务端 loadTopicSpacingContext 生成（topicKey / storeGroup 都是
+    // 服务端权威值），这里只做归一化，不做来源替换。
+    const topicKey = String(item?.topicKey || '').trim();
+    const storeGroup = String(item?.storeGroup || '').trim();
     return {
       platform,
       account,
-      accountKey: `${platform}:${account}`,
+      scope,
+      accountKey: `${platform}:${normalizeAccountName(account)}`,
+      accountLabel: `${platform}:${account}`,
       timestamp,
-      topicKey: String(item?.topicKey || '').trim(),
-      storeGroup: String(item?.storeGroup || '').trim(),
+      minute: formatMinute(timestamp),
+      topicKey,
+      topicGroupKey: normalizeGroupKey(topicKey),
+      storeGroup,
+      storeGroupKey: normalizeGroupKey(storeGroup),
+      label: `既有排期:${platform}:${account}@${formatMinute(timestamp)}`,
     };
   });
+
+  // 同一条既有排期会同时出现在两路里（小红书且在主题索引内的记录）。
+  // 不去重的话，checkDuplicateMinute 会把它自己和自己算成「同一分钟两条」而误拒。
+  // 去重键取「平台 + 归一化账号 + 分钟」，保留信息更全的 topic 一路。
+  const deduped = new Map();
+  for (const reservation of normalized) {
+    const key = `${reservation.accountKey} ${reservation.minute}`;
+    const existing = deduped.get(key);
+    if (!existing || (existing.scope !== 'topic' && reservation.scope === 'topic')) {
+      deduped.set(key, reservation);
+    }
+  }
+  return [...deduped.values()];
 }
 
-function canPlaceAccountTime(times, candidate) {
-  return (times || []).every(existing => Math.abs(candidate - existing) >= MIN_INTERVAL_MS);
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return null;
+  return value.map(item => String(item || '').trim()).filter(Boolean);
 }
 
-function allocateImportSchedule(input) {
-  const seed = String(input?.seed || '').trim();
-  if (!seed) throw createInputError('seed 不能为空，排期必须可复算');
-  const rng = createSeededRandom(seed);
-  const { notes, topics } = normalizeNotes(input?.noteFolders, input?.currentItems);
-  const accounts = normalizeAccounts(input, rng);
-  const reservations = normalizeExistingReservations(input?.existingReservations);
-  const coverageStrategy = normalizeCoverageStrategy(input?.coverageStrategy);
-  const perAccountPerSlot = Number.isInteger(input?.perAccountPerSlot) && input.perAccountPerSlot > 0
-    ? input.perAccountPerSlot
-    : 1;
+// noteFolders 描述本批可用的笔记模板全集：[{topic, templates: [...]}]
+// 展开成 noteKey = `${topic}/${template}` 的集合，供校验 schedule 里的 noteKey 是否越界、
+// 以及（非部分排期时）是否全部被排上。noteFolders 为可选参数，结构非法时视为调用方接线问题，
+// 直接抛错，不进入 schedule 逐项违规收集。
+function expandNoteFolders(noteFolders) {
+  if (noteFolders === undefined) return null;
+  if (!Array.isArray(noteFolders) || noteFolders.length === 0) {
+    throw createInputError('noteFolders 必须是非空数组');
+  }
+  const noteKeys = new Set();
+  const topics = [];
+  const seenTopics = new Set();
+  for (const folder of noteFolders) {
+    const topic = String(folder?.topic || '').trim();
+    if (!topic) throw createInputError('noteFolders 中存在空 topic');
+    const templates = normalizeStringArray(folder.templates);
+    if (templates === null) throw createInputError(`noteFolders[${topic}].templates 必须是数组`);
+    if (!seenTopics.has(topic)) {
+      seenTopics.add(topic);
+      topics.push(topic);
+    }
+    for (const template of templates) {
+      noteKeys.add(`${topic}/${template}`);
+    }
+  }
+  if (noteKeys.size === 0) throw createInputError('noteFolders 中没有可调度模板');
+  return { noteKeys, topics };
+}
 
-  const poolsByValue = new Map();
-  for (const account of accounts) {
-    for (const slot of account.slots) {
-      if (!poolsByValue.has(slot)) poolsByValue.set(slot, { value: slot, tasks: [] });
-      const pool = poolsByValue.get(slot);
-      for (let copy = 0; copy < perAccountPerSlot; copy++) {
-        pool.tasks.push({ ...account, placementIndex: copy });
+// topic / template 各自 trim 后再用于比较：Python 端 build_note_pool 是 strip 过的，
+// 校验器不 trim 会出现 "主题2/ x" 与 "主题1/x" 被当成两个模板的单侧漏检。
+// compareKey 是归一化后的 noteKey，用于 noteKey 去重与 noteFolders 集合比对；
+// 原始 noteKey 只用于报错展示。
+function parseNoteKey(noteKey) {
+  const text = String(noteKey || '');
+  const index = text.lastIndexOf('/');
+  if (index <= 0 || index === text.length - 1) return null;
+  const topic = text.slice(0, index).trim();
+  const template = text.slice(index + 1).trim();
+  if (!topic || !template) return null;
+  return { topic, template, compareKey: `${topic}/${template}` };
+}
+
+// 店铺组只认服务端下发的 accountGroups（账号 → 店铺组），不信客户端 schedule 里的 storeGroup。
+function buildStoreGroupIndex(accountGroups) {
+  const index = new Map();
+  if (accountGroups && typeof accountGroups === 'object' && !Array.isArray(accountGroups)) {
+    for (const [account, group] of Object.entries(accountGroups)) {
+      const key = normalizeAccountName(account);
+      const value = String(group ?? '').trim();
+      if (key && value) index.set(key, value);
+    }
+  }
+  return index;
+}
+
+// topicKey 只认服务端下发的 currentItems（noteKey → topicKey），不信客户端 schedule 里的 topicKey。
+function buildTopicKeyIndex(currentItems) {
+  const index = new Map();
+  if (Array.isArray(currentItems)) {
+    for (const entry of currentItems) {
+      const parsed = parseNoteKey(entry?.noteKey);
+      const topicKey = String(entry?.topicKey ?? '').trim();
+      if (parsed && topicKey) index.set(parsed.compareKey, topicKey);
+    }
+  }
+  return index;
+}
+
+// 逐项校验 schedule 里每条记录的基础合法性（rule: format），并把能安全使用的字段
+// 挂到返回对象上（timestamp/minute/accountKey/templateInfo），供后续约束复用，避免重复解析。
+function normalizeScheduleItems(schedule, context, violations) {
+  const normalized = [];
+  schedule.forEach((raw, index) => {
+    const label = `schedule[${index}]`;
+    const platform = String(raw?.platform || '').trim();
+    const account = String(raw?.account || '').trim();
+    const noteKey = String(raw?.noteKey || '').trim();
+    const rawPublishTime = raw?.publishTime;
+    const problems = [];
+    if (!SUPPORTED_PLATFORMS.has(platform)) problems.push(`platform 必须是 xiaohongshu 或 douyin，实际为 "${raw?.platform}"`);
+    if (!account) problems.push('account 不能为空');
+    const timestamp = parseStrictTimestamp(rawPublishTime);
+    if (timestamp === null) {
+      problems.push(`publishTime 无法解析: ${rawPublishTime}`);
+    } else if (!EXACT_MINUTE_PATTERN.test(String(rawPublishTime || '').trim())) {
+      problems.push(`publishTime 必须是具体到分钟的 "YYYY-MM-DD HH:MM" 格式，实际为 "${rawPublishTime}"`);
+    }
+    const noteKeyInfo = parseNoteKey(noteKey);
+    if (!noteKeyInfo) problems.push(`noteKey 格式必须为 "topic/template"，实际为 "${noteKey}"`);
+
+    if (problems.length > 0) {
+      violations.push({ rule: 'format', message: `${label}: ${problems.join('；')}`, items: [label] });
+      return;
+    }
+
+    // topicKey / storeGroup 一律从服务端下发的权威数据反查，不读 raw.topicKey / raw.storeGroup。
+    // 反查不到 storeGroup 时留空，由 checkTopicSpacing 在 auto_space 模式下 fail-closed 记违规。
+    const resolvedTopicKey = context.topicKeyByNoteKey.get(noteKeyInfo.compareKey) || noteKeyInfo.topic;
+    const resolvedStoreGroup = context.storeGroupByAccount.get(normalizeAccountName(account)) || '';
+
+    normalized.push({
+      index,
+      label,
+      platform,
+      account,
+      accountKey: `${platform}:${normalizeAccountName(account)}`,
+      accountLabel: `${platform}:${account}`,
+      noteKey,
+      noteKeyCompare: noteKeyInfo.compareKey,
+      topic: noteKeyInfo.topic,
+      template: noteKeyInfo.template,
+      topicKey: resolvedTopicKey,
+      topicGroupKey: normalizeGroupKey(resolvedTopicKey),
+      storeGroup: resolvedStoreGroup,
+      storeGroupKey: normalizeGroupKey(resolvedStoreGroup),
+      timestamp,
+      minute: formatMinute(timestamp),
+    });
+  });
+  return normalized;
+}
+
+function checkMinInterval(items, reservations, minIntervalMinutes, violations) {
+  const minIntervalMs = minIntervalMinutes * 60 * 1000;
+  const byAccount = new Map();
+  const addEntry = entry => {
+    if (!byAccount.has(entry.accountKey)) byAccount.set(entry.accountKey, []);
+    byAccount.get(entry.accountKey).push(entry);
+  };
+  for (const item of items) {
+    addEntry({ accountKey: item.accountKey, platform: item.platform, account: item.account, timestamp: item.timestamp, label: item.label, isCurrent: true });
+  }
+  for (const reservation of reservations) {
+    addEntry({ accountKey: reservation.accountKey, platform: reservation.platform, account: reservation.account, timestamp: reservation.timestamp, label: reservation.label, isCurrent: false });
+  }
+  for (const entries of byAccount.values()) {
+    const sorted = entries.slice().sort((a, b) => a.timestamp - b.timestamp);
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      // 两条都是既有排期时不报违规：那是飞书里已经存在的事实，本批怎么改都消不掉，
+      // 报出来只会让整批永远排不出去。本批条目与既有排期撞、或本批内部撞，才是可修复的违规。
+      // 排序相邻比较仍能覆盖：若本批条目 I 与某条 X 间隔不足，I 在那一侧的相邻条目 Y
+      // 必然夹在两者之间，|I-Y| ≤ |I-X| < 阈值，相邻对 (I,Y) 一定会被记下。
+      if (!prev.isCurrent && !curr.isCurrent) continue;
+      const diffMinutes = Math.round((curr.timestamp - prev.timestamp) / 60000);
+      if (curr.timestamp - prev.timestamp < minIntervalMs) {
+        violations.push({
+          rule: 'min_interval',
+          message: `账号 ${curr.account}（${curr.platform}）：${formatMinute(prev.timestamp)} 与 ${formatMinute(curr.timestamp)} 间隔 ${diffMinutes} 分钟，不足 ${minIntervalMinutes} 分钟`,
+          items: [prev.label, curr.label],
+        });
       }
     }
   }
+}
 
-  const tasks = [];
-  for (const pool of poolsByValue.values()) {
-    pool.segments = buildSegments(pool.value, pool.tasks.length, rng);
-    pool.usedSegments = new Set();
-    for (const task of shuffle(pool.tasks, rng)) tasks.push({ ...task, pool });
-  }
-  const orderedTasks = shuffle(tasks, rng);
-  // 预存下标：原先在回溯最内层用 orderedTasks.indexOf(task) 反查，是 O(任务数) 的
-  // 线性扫描，且每次尝试都要重算一遍。下标在这里就已确定，全程不变。
-  orderedTasks.forEach((task, index) => { task.orderIndex = index; });
-
-  const usedMinutes = new Set();
-  const accountTimes = new Map();
-  const topicTimes = new Map();
-  for (const reservation of reservations) {
-    if (!accountTimes.has(reservation.accountKey)) accountTimes.set(reservation.accountKey, []);
-    accountTimes.get(reservation.accountKey).push(reservation.timestamp);
-    if (reservation.platform === 'xiaohongshu' && reservation.storeGroup && reservation.topicKey) {
-      const key = `${reservation.storeGroup}\u0000${reservation.topicKey}`;
-      if (!topicTimes.has(key)) topicTimes.set(key, []);
-      topicTimes.get(key).push({ timestamp: reservation.timestamp, account: reservation.account });
+function checkDuplicateMinute(items, reservations, violations) {
+  const byMinute = new Map();
+  const addEntry = (minute, label, isCurrent) => {
+    if (!byMinute.has(minute)) byMinute.set(minute, { labels: [], currentCount: 0 });
+    const bucket = byMinute.get(minute);
+    bucket.labels.push(label);
+    if (isCurrent) bucket.currentCount += 1;
+  };
+  for (const item of items) addEntry(item.minute, item.label, true);
+  for (const reservation of reservations) addEntry(reservation.minute, reservation.label, false);
+  for (const [minute, bucket] of byMinute.entries()) {
+    // 与 checkMinInterval 同理：全部由既有排期构成的分钟冲突是飞书里的存量事实，
+    // 本批无法通过调整排期消除，不记违规。只要本批占了这一分钟就必须报。
+    if (bucket.labels.length > 1 && bucket.currentCount > 0) {
+      violations.push({
+        rule: 'duplicate_minute',
+        message: `发布分钟 ${minute} 被 ${bucket.labels.length} 条记录占用，全局分钟必须唯一：${bucket.labels.join('、')}`,
+        items: bucket.labels,
+      });
     }
   }
+}
 
-  const usedNotesByPlatform = new Map([
-    ['xiaohongshu', new Set()],
-    ['douyin', new Set()],
-  ]);
-  const usedTemplatesByAccount = new Map();
-  const usedAnyNotes = new Set();
-  const coveredTopicsByAccount = new Map();
-  const schedule = [];
-  const noteOrder = shuffle(notes, rng);
-
-  // 每个 task 的候选笔记顺序只由 task.orderIndex / placementIndex 决定，与搜索过程
-  // 无关，因此全程恒定。此前它被放在回溯的最内层，每次尝试都要重排一遍整个笔记数组，
-  // 是搜索跑不完的主因；这里改为按 task 缓存，结果与原实现逐字一致（同 seed 同解）。
-  const candidateNotesCache = new Map();
-  function candidateNotes(task) {
-    const cached = candidateNotesCache.get(task);
-    if (cached) return cached;
-    const startTopic = (task.orderIndex + task.placementIndex) % topics.length;
-    const topicOrder = topics.slice(startTopic).concat(topics.slice(0, startTopic));
-    const topicRank = new Map(topicOrder.map((topic, index) => [topic, index]));
-    const sorted = noteOrder.slice().sort((left, right) => topicRank.get(left.topicKey) - topicRank.get(right.topicKey));
-    candidateNotesCache.set(task, sorted);
-    return sorted;
+function checkDuplicateNoteKey(items, violations) {
+  const byPlatform = new Map();
+  for (const item of items) {
+    if (!byPlatform.has(item.platform)) byPlatform.set(item.platform, new Map());
+    const byNoteKey = byPlatform.get(item.platform);
+    if (!byNoteKey.has(item.noteKeyCompare)) byNoteKey.set(item.noteKeyCompare, []);
+    byNoteKey.get(item.noteKeyCompare).push(item.label);
   }
-
-  const MAX_PLACEMENT_ATTEMPTS = 2000000;
-  let placementAttempts = 0;
-  // 默认维持历史行为：每个时间槽都要放上笔记、所有笔记都要排上，做不到就整批失败。
-  // 传 allowPartialSchedule 时改为尽力而为——放不下的槽位留空、排不上的笔记进
-  // unscheduled 返回给调用方自行决定，而不是让整批报错。
-  const allowPartialSchedule = input?.allowPartialSchedule === true;
-
-  function search(taskIndex) {
-    if (taskIndex === orderedTasks.length) {
-      if (!allowPartialSchedule && notes.some(note => !usedAnyNotes.has(note.noteKey))) return false;
-      if (coverageStrategy === 'strict' && accounts.some(account => (
-        (coveredTopicsByAccount.get(account.accountKey) || new Set()).size < topics.length
-      ))) return false;
-      return true;
+  for (const [platform, byNoteKey] of byPlatform.entries()) {
+    for (const [noteKey, labels] of byNoteKey.entries()) {
+      if (labels.length > 1) {
+        violations.push({
+          rule: 'duplicate_note_key',
+          message: `平台 ${platform} 内 noteKey "${noteKey}" 重复出现 ${labels.length} 次：${labels.join('、')}`,
+          items: labels,
+        });
+      }
     }
-    const task = orderedTasks[taskIndex];
-    const platformNotes = usedNotesByPlatform.get(task.platform);
-    const accountTemplates = usedTemplatesByAccount.get(task.accountKey) || new Set();
-    const maxSegmentLength = Math.max(...task.pool.segments.map(segment => segment.length));
-    for (let candidateIndex = 0; candidateIndex < maxSegmentLength; candidateIndex++) {
-      for (let segmentIndex = 0; segmentIndex < task.pool.segments.length; segmentIndex++) {
-        if (task.pool.usedSegments.has(segmentIndex)) continue;
-        const timestamp = task.pool.segments[segmentIndex][candidateIndex];
-        if (timestamp === undefined) continue;
-        const minute = formatMinute(timestamp);
-        if (usedMinutes.has(minute)) continue;
-        const times = accountTimes.get(task.accountKey) || [];
-        if (!canPlaceAccountTime(times, timestamp)) continue;
-        for (const note of candidateNotes(task)) {
-          if (++placementAttempts > MAX_PLACEMENT_ATTEMPTS) {
-            throw createInputError('排期搜索超出预算：本批约束下找不到可行安排，请缩小批次、增加时间窗或增加可用模板数');
-          }
-          if (platformNotes.has(note.noteKey) || accountTemplates.has(note.template)) continue;
-          const topicKey = `${task.storeGroup}\u0000${note.topicKey}`;
-          const tracksTopic = task.platform === 'xiaohongshu' && Boolean(task.storeGroup);
-          const relevantTopicTimes = topicTimes.get(topicKey) || [];
-          if (task.platform === 'xiaohongshu' && input.topicDecision === 'auto_space' && relevantTopicTimes.some(item => (
-            item.account !== task.account && Math.abs(timestamp - item.timestamp) < MIN_INTERVAL_MS
-          ))) continue;
+  }
+}
 
-          task.pool.usedSegments.add(segmentIndex);
-          usedMinutes.add(minute);
-          times.push(timestamp);
-          accountTimes.set(task.accountKey, times);
-          platformNotes.add(note.noteKey);
-          accountTemplates.add(note.template);
-          usedTemplatesByAccount.set(task.accountKey, accountTemplates);
-          usedAnyNotes.add(note.noteKey);
-          if (!coveredTopicsByAccount.has(task.accountKey)) coveredTopicsByAccount.set(task.accountKey, new Set());
-          coveredTopicsByAccount.get(task.accountKey).add(note.topicKey);
-          if (tracksTopic) {
-            if (!topicTimes.has(topicKey)) topicTimes.set(topicKey, []);
-            topicTimes.get(topicKey).push({ timestamp, account: task.account });
-          }
-          schedule.push({
-            topic: note.topic,
-            topicKey: note.topicKey,
-            noteKey: note.noteKey,
-            platform: task.platform,
-            account: task.account,
-            storeGroup: task.storeGroup,
-            publishTime: minute,
+function checkDuplicateTemplate(items, violations) {
+  const byAccount = new Map();
+  for (const item of items) {
+    if (!byAccount.has(item.accountKey)) {
+      byAccount.set(item.accountKey, { accountLabel: item.accountLabel, byTemplate: new Map() });
+    }
+    const { byTemplate } = byAccount.get(item.accountKey);
+    if (!byTemplate.has(item.template)) byTemplate.set(item.template, []);
+    byTemplate.get(item.template).push(item.label);
+  }
+  for (const { accountLabel, byTemplate } of byAccount.values()) {
+    for (const [template, labels] of byTemplate.entries()) {
+      if (labels.length > 1) {
+        violations.push({
+          rule: 'duplicate_template',
+          message: `账号 ${accountLabel} 内模板 "${template}" 重复出现 ${labels.length} 次：${labels.join('、')}`,
+          items: labels,
+        });
+      }
+    }
+  }
+}
+
+function checkTopicSpacing(items, reservations, topicDecision, minIntervalMinutes, violations) {
+  if (topicDecision !== 'auto_space') return;
+  const minIntervalMs = minIntervalMinutes * 60 * 1000;
+  const byGroup = new Map();
+  // fail-closed：auto_space 下小红书条目分不出店铺组或主题就记违规，
+  // 不再像旧实现那样静默跳过——分组键缺失等于这条约束整条失效。
+  const addEntry = entry => {
+    if (entry.platform !== 'xiaohongshu') return;
+    if (!entry.storeGroupKey || !entry.topicGroupKey) {
+      const missing = [];
+      if (!entry.storeGroupKey) missing.push(`账号「${entry.account}」未在 accountGroups 中配置店铺组`);
+      if (!entry.topicGroupKey) missing.push('无法确定主题（currentItems 中查不到该 noteKey 对应的 topicKey）');
+      violations.push({
+        rule: 'topic_spacing',
+        message: `${entry.label}: auto_space 模式下无法检查同店同主题跨账号间隔——${missing.join('；')}`,
+        items: [entry.label],
+      });
+      return;
+    }
+    const key = `${entry.storeGroupKey} ${entry.topicGroupKey}`;
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(entry);
+  };
+  const pick = source => ({
+    platform: source.platform,
+    storeGroupKey: source.storeGroupKey,
+    topicGroupKey: source.topicGroupKey,
+    account: source.account,
+    accountNameKey: normalizeAccountName(source.account),
+    timestamp: source.timestamp,
+    label: source.label,
+  });
+  for (const item of items) addEntry(pick(item));
+  for (const reservation of reservations) addEntry(pick(reservation));
+  for (const entries of byGroup.values()) {
+    const sorted = entries.slice().sort((a, b) => a.timestamp - b.timestamp);
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (sorted[i].accountNameKey === sorted[j].accountNameKey) continue;
+        if (Math.abs(sorted[j].timestamp - sorted[i].timestamp) < minIntervalMs) {
+          const diffMinutes = Math.round(Math.abs(sorted[j].timestamp - sorted[i].timestamp) / 60000);
+          violations.push({
+            rule: 'topic_spacing',
+            message: `同店铺同主题跨账号：${sorted[i].account}（${formatMinute(sorted[i].timestamp)}）与 ${sorted[j].account}（${formatMinute(sorted[j].timestamp)}）间隔 ${diffMinutes} 分钟，不足 ${minIntervalMinutes} 分钟`,
+            items: [sorted[i].label, sorted[j].label],
           });
-
-          if (search(taskIndex + 1)) return true;
-
-          schedule.pop();
-          if (tracksTopic) topicTimes.get(topicKey).pop();
-          const covered = coveredTopicsByAccount.get(task.accountKey);
-          if (!schedule.some(item => `${item.platform}:${item.account}` === task.accountKey && item.topicKey === note.topicKey)) {
-            covered.delete(note.topicKey);
-          }
-          if (!schedule.some(item => item.noteKey === note.noteKey)) usedAnyNotes.delete(note.noteKey);
-          accountTemplates.delete(note.template);
-          platformNotes.delete(note.noteKey);
-          times.pop();
-          usedMinutes.delete(minute);
-          task.pool.usedSegments.delete(segmentIndex);
         }
       }
     }
-    // 尽力而为模式下，当前槽位实在放不下任何一篇时允许留空继续往后排，
-    // 而不是让整批判负。默认模式保持原样，直接回溯。
-    if (allowPartialSchedule && search(taskIndex + 1)) return true;
-    return false;
   }
+}
 
-  if (!search(0)) {
-    throw createInputError('给定时间资源无法安排全部笔记：同账号必须至少间隔 361 分钟、全局分钟不能重复，且自动错开时同店同主题也须至少间隔 361 分钟');
+function checkNoteFolderCoverage(items, noteFolderInfo, allowPartialSchedule, violations) {
+  if (!noteFolderInfo) return;
+  const scheduledNoteKeys = new Set(items.map(item => item.noteKeyCompare));
+  const missingFromUniverse = items.filter(item => !noteFolderInfo.noteKeys.has(item.noteKeyCompare));
+  if (missingFromUniverse.length > 0) {
+    violations.push({
+      rule: 'note_missing',
+      message: `以下 noteKey 不在 noteFolders 声明的模板集合内：${missingFromUniverse.map(item => item.noteKey).join('、')}`,
+      items: missingFromUniverse.map(item => item.label),
+    });
   }
-  const unscheduled = notes.filter(note => !usedAnyNotes.has(note.noteKey)).map(note => note.noteKey);
-  if (!allowPartialSchedule && unscheduled.length > 0) {
-    throw createInputError(`给定时间资源无法安排全部笔记：仍有 ${unscheduled.length} 篇未排`);
-  }
-
-  const violations = [];
-  const warnings = [];
-  for (const account of accounts) {
-    const coveredCount = (coveredTopicsByAccount.get(account.accountKey) || new Set()).size;
-    if (coveredCount < topics.length) {
-      const message = `${account.account}：只覆盖 ${coveredCount}/${topics.length} 个主题`;
-      if (coverageStrategy === 'strict') violations.push(message);
-      if (coverageStrategy === 'balanced') warnings.push(message);
+  if (!allowPartialSchedule) {
+    const unscheduled = [...noteFolderInfo.noteKeys].filter(noteKey => !scheduledNoteKeys.has(noteKey));
+    if (unscheduled.length > 0) {
+      violations.push({
+        rule: 'note_missing',
+        message: `以下笔记未被排入本次 schedule（未开启部分排期）：${unscheduled.join('、')}`,
+        items: unscheduled,
+      });
     }
   }
-  if (violations.length > 0) throw createInputError(`给定时间资源无法满足严格覆盖：${violations.join('；')}`);
+}
 
-  schedule.sort((left, right) => left.publishTime.localeCompare(right.publishTime) || left.platform.localeCompare(right.platform) || left.account.localeCompare(right.account));
+function checkCoverageStrategy(items, coverageStrategy, topicsUniverse, violations, warnings) {
+  if (coverageStrategy === 'minimum') return;
+  if (topicsUniverse.size === 0) return;
+  const coveredByAccount = new Map();
+  for (const item of items) {
+    if (!coveredByAccount.has(item.accountKey)) {
+      coveredByAccount.set(item.accountKey, { accountLabel: item.accountLabel, covered: new Set() });
+    }
+    coveredByAccount.get(item.accountKey).covered.add(item.topicGroupKey);
+  }
+  for (const { accountLabel, covered } of coveredByAccount.values()) {
+    if (covered.size < topicsUniverse.size) {
+      const message = `账号 ${accountLabel}：只覆盖 ${covered.size}/${topicsUniverse.size} 个主题`;
+      if (coverageStrategy === 'strict') {
+        violations.push({ rule: 'coverage', message, items: [accountLabel] });
+      } else if (coverageStrategy === 'balanced') {
+        warnings.push(message);
+      }
+    }
+  }
+}
+
+function validateImportSchedule(input) {
+  const constraints = loadConstraints();
+  const violations = [];
+  const warnings = [];
+
+  if (!Array.isArray(input?.schedule) || input.schedule.length === 0) {
+    throw createInputError('schedule 必须是非空数组', [
+      { rule: 'format', message: 'schedule 必须是非空数组', items: [] },
+    ]);
+  }
+
+  const reservations = normalizeExistingReservations(input.existingReservations);
+  const coverageStrategy = normalizeCoverageStrategy(input.coverageStrategy);
+  const topicDecision = String(input.topicDecision || 'none').trim() || 'none';
+  const allowPartialSchedule = input.allowPartialSchedule === true;
+  const noteFolderInfo = expandNoteFolders(input.noteFolders);
+
+  // topicKey / storeGroup 的真值都在服务端：currentItems 由 describeCurrentTopics 生成，
+  // accountGroups 由 normalizeTopicSpacingInput 强制校验过，客户端 schedule 里的同名字段一律不读。
+  const resolveContext = {
+    topicKeyByNoteKey: buildTopicKeyIndex(input.currentItems),
+    storeGroupByAccount: buildStoreGroupIndex(input.accountGroups),
+  };
+  const items = normalizeScheduleItems(input.schedule, resolveContext, violations);
+
+  // 后续约束都建立在「格式已合法」的条目上；格式不合法的条目已经单独记为 format 违规。
+  checkMinInterval(items, reservations, constraints.minSameAccountIntervalMinutes, violations);
+  // 分钟全局唯一是硬约束，没有关闭开关：schedule-constraints.json 里的
+  // uniqueMinuteAcrossBatch 只作为回显字段保留，不再决定是否执行本项检查。
+  checkDuplicateMinute(items, reservations, violations);
+  checkDuplicateNoteKey(items, violations);
+  checkDuplicateTemplate(items, violations);
+  // 约束 5 只消费带 storeGroup/topicKey 的主题一路（scope='topic'）。
+  // 平台无关的时间占用（scope='time'）没有主题信息，进来会被 auto_space 的 fail-closed 分支
+  // 误记成违规，必须在这里滤掉。
+  checkTopicSpacing(
+    items,
+    reservations.filter(reservation => reservation.scope === 'topic'),
+    topicDecision,
+    constraints.minSameAccountIntervalMinutes,
+    violations
+  );
+  checkNoteFolderCoverage(items, noteFolderInfo, allowPartialSchedule, violations);
+
+  const topicsUniverse = new Set(
+    (noteFolderInfo ? noteFolderInfo.topics : items.map(item => item.topicKey)).map(normalizeGroupKey)
+  );
+  checkCoverageStrategy(items, coverageStrategy, topicsUniverse, violations, warnings);
+
+  if (violations.length > 0) {
+    const message = `排期校验未通过（共 ${violations.length} 项）：${violations.map(v => v.message).join('；')}`;
+    throw createInputError(message, violations);
+  }
+
   return {
-    schedule,
-    unscheduled,
+    ok: true,
+    schedule: input.schedule,
     stats: {
-      scheduledCount: schedule.length,
-      unscheduledCount: unscheduled.length,
+      scheduledCount: input.schedule.length,
       coverageStrategy,
-      violations: [],
       warnings,
     },
     constraints: {
-      minSameAccountIntervalMinutes: MIN_SAME_ACCOUNT_INTERVAL_MINUTES,
+      minSameAccountIntervalMinutes: constraints.minSameAccountIntervalMinutes,
+      // 无条件为 true：分钟唯一已是不可关闭的硬约束，这里只是保持返回契约不变。
       uniqueMinuteAcrossBatch: true,
-      seed,
+      seed: String(input.seed || ''),
     },
   };
 }
 
-module.exports = { allocateImportSchedule };
+module.exports = { validateImportSchedule };

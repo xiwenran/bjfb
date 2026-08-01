@@ -31,6 +31,9 @@ import urllib.error
 import urllib.request
 from collections import Counter
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import schedule_allocator  # noqa: E402  本地构造式排期分配器，见该文件顶部说明
+
 ZHIFA_BASE = "http://localhost:3210"
 SCAN_RESULT_TMP = "/tmp/zhifa_scan_result.json"
 SCAN_MANY_RESULT_TMP = "/tmp/zhifa_scan_many_result.json"
@@ -269,6 +272,46 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
             }
             return normalized
     raise ValueError('缺少明确时间窗；“早上9点左右”仅可解释为 08:00—12:00')
+
+
+def zhifa_post_validate_schedule(payload: dict, timeout: int = 60) -> dict | None:
+    """POST 本地已排好的 schedule 给服务端 /api/import/schedule 做只读校验。
+
+    校验通过（HTTP 200）返回响应体；HTTP 400 时把服务端返回的 violations 逐条打印
+    后返回 None（调用方据此 exit 1），不吞掉细节。
+    """
+    url = ZHIFA_BASE + "/api/import/schedule"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"服务端排期校验未通过（HTTP {e.code}）：", file=sys.stderr)
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            parsed = None
+        violations = parsed.get("violations") if isinstance(parsed, dict) else None
+        if isinstance(violations, list) and violations:
+            for item in violations:
+                print(f"  - {item}", file=sys.stderr)
+        else:
+            print(f"  {body}", file=sys.stderr)
+        return None
+    except urllib.error.URLError as e:
+        if "Connection refused" in str(e) or "connection refused" in str(e):
+            print("知发服务未运行，请打开知发 App（localhost:3210）", file=sys.stderr)
+        else:
+            print(f"排期校验请求失败：{e}", file=sys.stderr)
+        return None
 
 
 def zhifa_post_batch(path: str, payload: dict, timeout: int = 300) -> dict | None:
@@ -1112,7 +1155,51 @@ def cmd_schedule(scan_json_file: str, plan_json_file: str, output_file: str | No
         print("请选择后重新运行：auto_space（自动错开）／调整时间窗／allow_conflicts（允许冲突）。")
         sys.exit(1)
 
-    result = zhifa_post("/api/import/schedule", request_payload)
+    # 排期本身在本地构造式求解（schedule_allocator），服务端 /api/import/schedule
+    # 只做只读校验，不再做 DFS 回溯——避免约束密集时把整个 App 卡死。
+    #
+    # topicDecision 的真值来源必须和服务端一致：服务端在校验时用
+    # `payload.confirmation?.decision || 'none'` 覆盖任何独立的 topicDecision 字段
+    # （见 src/server.js `/api/import/schedule` 路由）；本地生成阶段如果用别的字段
+    # 判断是否要按 auto_space 主动避让，会和服务端校验口径不一致——本地觉得不需要
+    # 避让、服务端却按 auto_space 校验，排好的结果会在最后一步被拒。这里显式按同一
+    # 规则派生，保证两边判断一致。
+    # 服务端在 topic-spacing-check 里回传了「平台无关的已占用分钟」（小红书 + 抖音，
+    # 已按本批时间窗裁剪）。本地求解时先避开这些分钟和账号间隔，就不用等最后一步
+    # 校验被拒再反复重排。服务端 /api/import/schedule 仍会独立重新收集并强校验，
+    # 这里透传只是提前避让，不构成防线。
+    existing_reservations = check_result.get("existingReservations") if isinstance(check_result, dict) else None
+    if not isinstance(existing_reservations, list):
+        existing_reservations = []
+
+    # 主题索引外、字段配置有问题解析不了的飞书记录：它们没进上面的时间占用兜底。
+    # 不静默跳过，明确提示，由用户决定是否先去飞书把字段类型修好。
+    unparsable = check_result.get("unparsableRecordIds") if isinstance(check_result, dict) else None
+    if isinstance(unparsable, list) and unparsable:
+        print(
+            f"⚠️ 有 {len(unparsable)} 条飞书记录字段配置异常无法解析，未纳入已占用时间兜底："
+            + "、".join(str(value) for value in unparsable[:10])
+            + ("…" if len(unparsable) > 10 else ""),
+            file=sys.stderr,
+        )
+
+    allocator_payload = {
+        **request_payload,
+        "existingReservations": existing_reservations,
+        "topicDecision": (confirmation.get("decision") if isinstance(confirmation, dict) else None) or "none",
+    }
+    try:
+        constraints = schedule_allocator.load_constraints()
+        result = schedule_allocator.allocate_schedule(allocator_payload, constraints)
+    except schedule_allocator.ScheduleError as exc:
+        print(f"本地排期失败：{exc}", file=sys.stderr)
+        sys.exit(1)
+
+    validate_payload = {**request_payload, "schedule": result.get("schedule")}
+    validation = zhifa_post_validate_schedule(validate_payload)
+    if validation is None:
+        sys.exit(1)
+
     output_path = os.path.expanduser(output_file) if output_file else "/tmp/zhifa_schedule_result.json"
     write_json_file(output_path, result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
