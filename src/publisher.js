@@ -316,16 +316,34 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
+// ⚠️ 本函数专用于「单引号包裹」的 HTML 属性值（当前唯一调用点是
+// buildRichTopicDescription 里的 text='...' 和 raw='...'）。
+// 单引号包裹时按 HTML 规范双引号无需转义，因此这里**有意不转义双引号**。
+// 改动原因（2026-08-02）：topic 的 raw 属性塞的是整个 JSON.stringify 结果，
+// 里面全是双引号，一个 " 转成 &quot; 会从 1 个字符膨胀到 6 个，5 个话题就多出近千字符，
+// 直接把提交给蚁小二的 HTML 顶过 1000 字上限（蚁小二按 HTML 源码长度校验，
+// 编辑器却按可见文字显示，于是出现「可见 110 字却报 1069 字」的怪现象）。
+// ⚠️ 前提：调用点必须用单引号包裹属性值。若以后有人把调用点改成双引号包裹
+//    （raw="..."），本函数就不再安全，必须同步把 " → &quot; 加回来。
 function escapeHtmlAttr(text) {
-  // 属性值需要转义 & < > " ' `
+  // 单引号包裹的属性值需要转义 & < ' ；> 与反引号非必需但保留（出现频率极低，不影响长度）
   return String(text || '')
-    .replace(/&/g, '&amp;')
+    .replace(/&/g, '&amp;')   // 必须第一个替换，否则会二次转义
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
     .replace(/`/g, '&#96;');
 }
+
+// 曾在此处加过「描述富文本长度 ≤1000 就放行、超了抛错」的发布前预检，已撤除。
+// 撤除依据（2026-08-01 冷眼审查，生产日志实证）：
+//   - `~/Library/Caches/Zhifa/logs/publisher-debug.log` 里 71 次蚁小二接单成功的提交中，
+//     有 65 次的富文本长度本就大于 1000，最长 1666——API 路径上不存在这个闸门；
+//   - 全量日志 grep「不可超过」命中 0 次，该报错从未从知发的 API 路径出现过。
+// 用户看到的「不可超过1000个字」来自蚁小二网页编辑器，与 API 提交是两套校验口径，
+// 真实口径至今未知（98 个真实样本按 7 种口径都对不上报错里的 1069）。
+// 在未知口径上立 fail-closed 闸门会把绝大多数正常发布打成「发布失败」，
+// 破坏面远大于收益，故不设本地长度预检。要重新加，先拿到 API 侧真实拒绝样本。
 
 function buildTopicRawAttr(topic) {
   if (!topic?.raw || !topic?.yixiaoerId || !topic?.yixiaoerName) return null;
@@ -1744,6 +1762,10 @@ module.exports = {
   appendHistory,
   getHistoryAccounts,
   computeContentHash,
+  // 富文本描述构造（供测试使用）
+  escapeHtml,
+  escapeHtmlAttr,
+  buildRichTopicDescription,
 };
 
 loadPublishedLedger();
