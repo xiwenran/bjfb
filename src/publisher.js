@@ -316,23 +316,23 @@ function escapeHtml(text) {
     .replace(/>/g, '&gt;');
 }
 
-// ⚠️ 本函数专用于「单引号包裹」的 HTML 属性值（当前唯一调用点是
-// buildRichTopicDescription 里的 text='...' 和 raw='...'）。
-// 单引号包裹时按 HTML 规范双引号无需转义，因此这里**有意不转义双引号**。
-// 改动原因（2026-08-02）：topic 的 raw 属性塞的是整个 JSON.stringify 结果，
-// 里面全是双引号，一个 " 转成 &quot; 会从 1 个字符膨胀到 6 个，5 个话题就多出近千字符，
-// 直接把提交给蚁小二的 HTML 顶过 1000 字上限（蚁小二按 HTML 源码长度校验，
-// 编辑器却按可见文字显示，于是出现「可见 110 字却报 1069 字」的怪现象）。
-// ⚠️ 前提：调用点必须用单引号包裹属性值。若以后有人把调用点改成双引号包裹
-//    （raw="..."），本函数就不再安全，必须同步把 " → &quot; 加回来。
+// ⚠️ 本函数专用于「双引号包裹」的 HTML 属性值（当前唯一调用点是
+// buildRichTopicDescription 里的 text="..."）。
+// 双引号包裹时 " 必须转义成 &quot;，否则属性会被提前闭合、整段 HTML 结构被撑破。
+// 沿革（2026-08-02）：此前知发自创了一个 raw 属性，塞整个 JSON.stringify 结果，
+// 里面全是双引号，转义后长度翻倍，把提交给蚁小二的 HTML 顶到 1000 字上限的两倍
+// （可见文字只有约 110 字却报 1069 字）。当时的处置是改单引号包裹、去掉双引号转义。
+// 现已按蚁小二官方开源仓库（yixiaoer-skill）的规范回归 `<topic text="...">#...</topic>`：
+// 只有 text 一个属性、双引号包裹、没有 raw。raw 整个去掉后，恢复双引号转义的长度代价
+// 几乎为零（正常标签文本里本就不含双引号）。
 function escapeHtmlAttr(text) {
-  // 单引号包裹的属性值需要转义 & < ' ；> 与反引号非必需但保留（出现频率极低，不影响长度）
+  // 双引号包裹的属性值必须转义 & < " ；> 与 ' 非必需但保留，便于属性值无损还原
   return String(text || '')
     .replace(/&/g, '&amp;')   // 必须第一个替换，否则会二次转义
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/'/g, '&#39;')
-    .replace(/`/g, '&#96;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // 曾在此处加过「描述富文本长度 ≤1000 就放行、超了抛错」的发布前预检，已撤除。
@@ -345,70 +345,14 @@ function escapeHtmlAttr(text) {
 // 在未知口径上立 fail-closed 闸门会把绝大多数正常发布打成「发布失败」，
 // 破坏面远大于收益，故不设本地长度预检。要重新加，先拿到 API 侧真实拒绝样本。
 
-function buildTopicRawAttr(topic) {
-  if (!topic?.raw || !topic?.yixiaoerId || !topic?.yixiaoerName) return null;
-  return JSON.stringify({
-    yixiaoerId: topic.yixiaoerId,
-    yixiaoerName: topic.yixiaoerName,
-    raw: topic.raw,
-  });
-}
-
-function selectBestTopic(tag, topics = []) {
-  const normalizedTag = String(tag || '').trim().toLowerCase();
-  if (!normalizedTag) return null;
-
-  const normalizeTopicName = topic => String(
-    topic?.yixiaoerName ||
-    topic?.raw?.name ||
-    topic?.raw?.topic ||
-    topic?.raw?.cha_name ||
-    ''
-  ).trim().toLowerCase();
-
-  const exact = topics.find(topic =>
-    normalizeTopicName(topic) === normalizedTag
-  );
-  if (exact) return exact;
-
-  const nameContains = topics.find(topic =>
-    normalizeTopicName(topic).includes(normalizedTag) || normalizedTag.includes(normalizeTopicName(topic))
-  );
-  if (nameContains) return nameContains;
-
-  return null;
-}
-
-async function resolveTopicsForPlatform(config, platformName, platformAccountId, tags = []) {
-  const selectedTags = normalizeTags(tags);
-  if (!platformAccountId || selectedTags.length === 0) return [];
-  if (platformName !== '小红书' && platformName !== '抖音') return [];
-
-  const resolvedTopics = [];
-
-  for (const tag of selectedTags) {
-    try {
-      const result = await requestApi(config, 'GET',
-        `/platform-accounts/${platformAccountId}/topics`,
-        { keyWord: tag }
-      );
-      console.log(`[话题搜索] ${platformName} 标签="${tag}" result keys=${Object.keys(result || {}).join(',')} 原始=${JSON.stringify(result).slice(0, 300)}`);
-      const topics = result?.dataList || result?.data?.dataList || (Array.isArray(result) ? result : []);
-      console.log(`[话题搜索] 候选话题数=${topics.length}${topics[0] ? ` 首条keys=${Object.keys(topics[0]).join(',')}` : ''}`);
-      const matchedTopic = selectBestTopic(tag, topics);
-      console.log(`[话题搜索] matchedTopic=${matchedTopic ? JSON.stringify(matchedTopic).slice(0, 200) : 'null'}`);
-      if (matchedTopic) {
-        resolvedTopics.push(matchedTopic);
-      }
-    } catch (error) {
-      console.warn(`⚠️ ${platformName}话题搜索失败(${tag}): ${error.message}`);
-    }
-  }
-
-  return resolvedTopics;
-}
-
-function buildRichTopicDescription(description, tags = [], topics = []) {
+// 描述富文本里的话题标签，按蚁小二官方开源仓库（github.com/yixiaoer888/yixiaoer-skill）规范构造：
+//   <p>正文描述</p><p><topic text="合拍">#合拍</topic><topic text="夏日">#夏日</topic></p>
+// 依据：官方 CLI 源码 internal/modules/publish/preflight.go 的 buildTopicHTML
+//   fmt.Sprintf(`<topic text="%s">%s</topic>`, text, tag)
+// 以及官方文档 skills/yixiaoer/references/topic-tags.md：「text 属性应为不带 # 的标签文本」。
+// 官方格式只有 text 一个属性，不存在 raw 属性；标签文本本身就是全部所需信息，
+// 所以也不需要事先调 GET /platform-accounts/{id}/topics 查话题对象。
+function buildRichTopicDescription(description, tags = []) {
   const paragraphs = String(description || '')
     .split(/\r?\n+/)
     .map(line => line.trim())
@@ -417,16 +361,8 @@ function buildRichTopicDescription(description, tags = [], topics = []) {
 
   const topicTags = normalizeTags(tags);
   if (topicTags.length > 0) {
-    const topicMap = new Map(
-      (topics || []).map(topic => [String(topic?.yixiaoerName || '').trim().toLowerCase(), topic])
-    );
     const topicHtml = topicTags
-      .map(tag => {
-        const topic = topicMap.get(tag.toLowerCase());
-        const rawAttr = buildTopicRawAttr(topic);
-        const rawSegment = rawAttr ? ` raw='${escapeHtmlAttr(rawAttr)}'` : '';
-        return `<topic text='${escapeHtmlAttr(tag)}'${rawSegment}>#${escapeHtml(tag)}</topic>`;
-      })
+      .map(tag => `<topic text="${escapeHtmlAttr(tag)}">#${escapeHtml(tag)}</topic>`)
       .join('');
     paragraphs.push(`<p>${topicHtml}</p>`);
   }
@@ -455,20 +391,19 @@ function buildContentPublishForm(platformName, publishType, params) {
     form.visibleType = 0;
     form.allow_save = 1;
   } else if (publishType === 'imageText') {
-    // 注:declaration / type / visibleType 三个字段在蚁小二 v1.6 官方
-    // image-text/xiaohongshu.md & douyin.md 都没列出,理论上是非官方字段。
-    // 但 zhifa 历史上一直带这三个字段发布且持续成功,删除它们没有反证支持。
-    // 本次保留,仅顺便补齐 OldImage.format 与 contentPublishForm.images 两个
-    // 文档明确要求的必填项。等真有反证(蚁小二明确拒收这些字段)再清理。
+    // 字段合法性依据蚁小二官方 schema（xhs.imageText / douyin.imageText，两份都是
+    // additionalProperties:false 的闭集）：declaration 与 visibleType 都在属性表内
+    // （visibleType 还是小红书图文的必填项），保留；`type` 两份 schema 都没有，
+    // 已于 2026-08-02 按此反证删除。
     form.title = params.title || '';
     if (normalizedDescription) form.description = normalizedDescription;
     form.declaration = 0;
-    form.type = 0;
     form.visibleType = 0;
   } else if (publishType === 'article') {
+    // `type` 不在官方 douyin.article schema（additionalProperties:false）的属性表内，
+    // 已于 2026-08-02 删除；visibleType 在表内且为必填，保留。
     form.title = params.title || '';
     if (normalizedDescription) form.description = normalizedDescription;
-    form.type = 0;
     form.visibleType = 0;
     form.verticalCovers = [];
     if (typeof params.createType === 'number') form.createType = params.createType;
@@ -744,11 +679,7 @@ async function publishContent(params) {
   }
 
   const normalizedDescription = (primaryPlatformName === '小红书' || primaryPlatformName === '抖音')
-    ? buildRichTopicDescription(
-      params.description || '',
-      params.tags || [],
-      await resolveTopicsForPlatform(yixiaoerConfig, primaryPlatformName, params.platformAccountId, params.tags || [])
-    )
+    ? buildRichTopicDescription(params.description || '', params.tags || [])
     : (params.description || '');
 
   const contentPublishForm = buildContentPublishForm(primaryPlatformName, publishType, {

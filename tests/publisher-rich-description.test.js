@@ -6,145 +6,151 @@ const {
   buildRichTopicDescription,
 } = require('../src/publisher.js');
 
-// 真实话题结构（取自生产日志 publisher-debug.log 中提交过的 raw 属性）
-function xhsTopic(name, id) {
-  return {
-    yixiaoerId: id,
-    yixiaoerName: name,
-    raw: {
-      smart: false,
-      id,
-      name,
-      link: `https://www.xiaohongshu.com/page/topics/${id}?naviHidden=yes`,
-      view_num: 27897694,
-      type: 'official',
-    },
-  };
+// 目标格式（蚁小二官方开源仓库 yixiaoer-skill 规范）：
+//   <p>正文</p><p><topic text="合拍">#合拍</topic><topic text="夏日">#夏日</topic></p>
+// 依据：internal/modules/publish/preflight.go 的 buildTopicHTML
+//   fmt.Sprintf(`<topic text="%s">%s</topic>`, text, tag)
+// 以及 skills/yixiaoer/references/topic-tags.md：「text 属性应为不带 # 的标签文本」。
+// 只有 text 一个属性、双引号包裹、没有 raw。
+
+// 用「双引号包裹属性」的规则解析出所有 topic
+function parseTopics(html) {
+  return [...html.matchAll(/<topic text="([^"]*)">([^<]*)<\/topic>/g)];
 }
 
-function douyinTopic(name, cid) {
-  return {
-    yixiaoerId: cid,
-    yixiaoerName: name,
-    raw: { cha_name: name, view_count: 35844584, cid, group_id: '6614564769246483715', tag: 0 },
-  };
+function decodeAttr(s) {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 // ---------- escapeHtmlAttr ----------
 
-test('escapeHtmlAttr 仍然转义单引号（单引号包裹属性时这条是必须的）', () => {
+test('escapeHtmlAttr 转义双引号（双引号包裹属性时这条是必须的）', () => {
+  assert.equal(escapeHtmlAttr('说"你好"'), '说&quot;你好&quot;');
+});
+
+test('escapeHtmlAttr 仍然转义 &、<、>、单引号', () => {
+  assert.equal(escapeHtmlAttr('a&b'), 'a&amp;b');
+  assert.equal(escapeHtmlAttr('a<b'), 'a&lt;b');
+  assert.equal(escapeHtmlAttr('a>b'), 'a&gt;b');
   assert.equal(escapeHtmlAttr("it's"), 'it&#39;s');
 });
 
-test('escapeHtmlAttr 仍然转义 & 和 <', () => {
-  assert.equal(escapeHtmlAttr('a&b'), 'a&amp;b');
-  assert.equal(escapeHtmlAttr('a<b'), 'a&lt;b');
-});
-
-test('escapeHtmlAttr 不再转义双引号（单引号包裹的属性值里双引号合法）', () => {
-  assert.equal(escapeHtmlAttr('{"a":1}'), '{"a":1}');
-  assert.ok(!escapeHtmlAttr('{"a":1}').includes('&quot;'));
-});
-
 test('escapeHtmlAttr 不会二次转义：& 先替换，实体只被转一次', () => {
-  // 输入本身含实体写法时，只应把 & 转成 &amp;，不应再对 quot; 部分做任何处理
   assert.equal(escapeHtmlAttr('&quot;'), '&amp;quot;');
   assert.equal(escapeHtmlAttr('&amp;'), '&amp;amp;');
-  // 反向验证：解码一次即可还原原文，说明没有多层转义
-  const decodeOnce = s => s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&#96;/g, '`')
-    .replace(/&amp;/g, '&');
-  for (const raw of ['&quot;', '&amp;', `a&b<c'd"e`]) {
-    assert.equal(decodeOnce(escapeHtmlAttr(raw)), raw);
+  for (const raw of ['&quot;', '&amp;', `a&b<c'd"e>f`]) {
+    assert.equal(decodeAttr(escapeHtmlAttr(raw)), raw);
   }
 });
 
 // ---------- buildRichTopicDescription 结构 ----------
 
-test('buildRichTopicDescription 正文每行包一层 <p>，话题单独一段', () => {
-  const html = buildRichTopicDescription(
-    '第一行\n第二行',
-    ['数学课件'],
-    [douyinTopic('数学课件', '1626772471814151')]
+test('buildRichTopicDescription 产出官方格式：双引号包裹、只有 text 属性、无 raw', () => {
+  const html = buildRichTopicDescription('第一行\n第二行', ['合拍', '夏日']);
+  assert.equal(
+    html,
+    '<p>第一行</p><p>第二行</p>'
+    + '<p><topic text="合拍">#合拍</topic><topic text="夏日">#夏日</topic></p>'
   );
-  assert.ok(html.startsWith('<p>第一行</p><p>第二行</p><p><topic '));
-  assert.ok(html.endsWith('</topic></p>'));
-  assert.match(html, /<topic text='数学课件' raw='\{.*\}'>#数学课件<\/topic>/);
+  assert.ok(!html.includes('raw='), '官方格式没有 raw 属性');
+  assert.ok(!html.includes("text='"), '属性必须用双引号包裹');
 });
 
 test('buildRichTopicDescription 空描述空话题返回占位段落', () => {
-  assert.equal(buildRichTopicDescription('', [], []), '<p></p>');
+  assert.equal(buildRichTopicDescription('', []), '<p></p>');
 });
 
-test('buildRichTopicDescription 未匹配到话题时只保留 text 属性，不产出 raw', () => {
-  const html = buildRichTopicDescription('正文', ['无此话题'], []);
-  assert.match(html, /<topic text='无此话题'>#无此话题<\/topic>/);
-  assert.ok(!html.includes('raw='));
+test('buildRichTopicDescription 只有话题没有正文时，只产出话题段落', () => {
+  assert.equal(
+    buildRichTopicDescription('', ['数学课件']),
+    '<p><topic text="数学课件">#数学课件</topic></p>'
+  );
 });
 
-// ---------- 回归：改动后 HTML 仍可被正确解析回原值 ----------
+test('buildRichTopicDescription 第三个参数已废弃：多传话题对象也不影响输出', () => {
+  const withExtra = buildRichTopicDescription('正文', ['数学课件'], [
+    { yixiaoerId: '1626772471814151', yixiaoerName: '数学课件', raw: { cha_name: '数学课件' } },
+  ]);
+  assert.equal(withExtra, buildRichTopicDescription('正文', ['数学课件']));
+  assert.ok(!withExtra.includes('raw='));
+  assert.ok(!withExtra.includes('1626772471814151'));
+});
 
-test('回归：去掉双引号转义后，topic 的 text 和 raw 仍能被解析回原值（话题绑定未破坏）', () => {
-  const topics = [
-    xhsTopic('五上数学', '6116771900000000010058b6'),
-    douyinTopic('数学课件', '1626772471814151'),
+// ---------- 属性无损还原 / 无法提前闭合 ----------
+
+test('text 属性在含单引号、双引号、<、>、&、emoji 时都能无损还原', () => {
+  const tags = [
+    "it's math",
+    '说"你好"',
+    'a<b',
+    'a>b',
+    'AT&T',
+    '数学🎉课件',
+    `混合 & < > " ' 🎯`,
   ];
-  const tags = topics.map(t => t.yixiaoerName);
-  const html = buildRichTopicDescription('正文一行', tags, topics);
-
-  // 用「单引号包裹属性」的规则解析：属性值一直读到下一个单引号
-  const matches = [...html.matchAll(/<topic text='([^']*)'(?: raw='([^']*)')?>/g)];
-  assert.equal(matches.length, topics.length);
-
-  const decodeAttr = s => s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;/g, "'")
-    .replace(/&#96;/g, '`')
-    .replace(/&amp;/g, '&');
-
+  const html = buildRichTopicDescription('正文', tags);
+  const matches = parseTopics(html);
+  assert.equal(matches.length, tags.length, '每个标签都应能被双引号规则完整匹配');
   matches.forEach((m, i) => {
-    assert.equal(decodeAttr(m[1]), tags[i]);
-    const parsed = JSON.parse(decodeAttr(m[2]));
-    assert.equal(parsed.yixiaoerId, topics[i].yixiaoerId);
-    assert.equal(parsed.yixiaoerName, topics[i].yixiaoerName);
-    assert.deepEqual(parsed.raw, topics[i].raw);
+    assert.equal(decodeAttr(m[1]), tags[i], 'text 属性应无损还原');
+    assert.equal(decodeAttr(m[2]), `#${tags[i]}`, '标签正文应为 #标签名');
   });
 });
 
-test('回归：话题名含单引号时属性不会被提前截断', () => {
-  const topic = douyinTopic("it's math", '1626772471814151');
-  const html = buildRichTopicDescription('正文', ["it's math"], [topic]);
-  const m = html.match(/<topic text='([^']*)' raw='([^']*)'>/);
-  assert.ok(m, '属性应能被单引号规则完整匹配');
-  const decodeAttr = s => s.replace(/&#39;/g, "'").replace(/&amp;/g, '&');
-  assert.equal(decodeAttr(m[1]), "it's math");
-  assert.equal(JSON.parse(decodeAttr(m[2])).raw.cha_name, "it's math");
-});
-
-// ---------- 不做本地长度拦截（决策回归） ----------
-
-// 生产日志实证：71 次蚁小二接单成功的提交里有 65 次富文本长度就大于 1000（最长 1666），
-// 说明 API 路径上不存在 1000 字闸门。曾加过本地预检，会把这些正常发布全打成「发布失败」，
-// 已撤除。本用例固化该决策：真实的 5 话题场景长度确实超过 1000，但必须照常构造、不得拦截。
-// 要重新引入长度校验，先拿到 API 侧真实拒绝样本，别再照搬网页编辑器的报错数字。
-test('5 话题的真实场景长度超过 1000，但仍照常构造富文本、不做本地拦截', () => {
-  const tags = ['五上数学', '数学课件', '教学设计', '北师大数学', '西游闯关版'];
-  const topics = [
-    xhsTopic('五上数学', '6116771900000000010058b6'),
-    xhsTopic('数学课件', '60ba2e7f0000000001000164'),
-    xhsTopic('教学设计', '5c787214000000000f02356d'),
-    xhsTopic('北师大数学', '5dff77e6000000000100301c'),
-    xhsTopic('西游闯关版', '6a54e88c000000000301ed2e'),
+test('构造不出让属性提前闭合的输入：注入尝试全部被转义', () => {
+  const attacks = [
+    '"><script>alert(1)</script>',
+    '" onclick="x',
+    '"></topic><topic text="伪造',
+    "'></topic>",
   ];
-
-  let html;
-  assert.doesNotThrow(() => {
-    html = buildRichTopicDescription('北师大版五年级上册数学第一单元第7课时', tags, topics);
+  const html = buildRichTopicDescription('正文', attacks);
+  const matches = parseTopics(html);
+  assert.equal(matches.length, attacks.length, '注入不应制造出额外或缺失的 topic 节点');
+  matches.forEach((m, i) => {
+    assert.equal(decodeAttr(m[1]), attacks[i]);
   });
-  assert.ok(html.length > 1000, '真实 5 话题场景长度本就超过 1000，这正是不能拦的原因');
-  assert.equal((html.match(/<topic /g) || []).length, 5, '五个话题都要保留，不得被截断或删减');
+  assert.ok(!html.includes('<script'), '尖括号必须已被转义');
+  // `onclick="` 出现在文本节点里是无害的（文本节点中引号合法），危险的只有它出现在
+  // 起始标签内部——那意味着逃出了属性值、变成了真正的新属性。下面按起始标签逐个查。
+  const startTags = html.match(/<topic[^>]*>/g) || [];
+  assert.equal(startTags.length, attacks.length);
+  startTags.forEach(tag => {
+    // 起始标签内除了 text=" 与其收尾的引号，不应再有第三个未转义的双引号；
+    // 两个引号 ⇒ 属性没有被提前闭合，`onclick=` 之类只能作为转义后的文本留在值里
+    assert.equal((tag.match(/"/g) || []).length, 2, `属性引号必须成对且不被撑破: ${tag}`);
+    assert.match(tag, /^<topic text="[^"]*">$/, `起始标签只允许 text 一个属性: ${tag}`);
+  });
+  // topic 起始标签数量应与标签数一致，没有被伪造出多余节点
+  assert.equal((html.match(/<topic /g) || []).length, attacks.length);
+});
+
+// ---------- 长度：回归官方格式后大幅下降 ----------
+
+// 背景：知发此前自创 raw 属性，塞整个话题对象 JSON，把 description 撑到
+// schema 上限（1000）的两倍（生产日志 54 个样本中位 1885、最大 2358，全部超限），
+// 抖音客户端因此报「不可超过1000个字，当前1069」而可见文字只有约 110 字。
+// 回归官方格式后同样场景应远小于 1000。
+// 注意：这里验证的是「长度自然下降」，不是新增本地长度闸门——
+// API 侧不存在 1000 字闸门（生产日志实证），代码里也不做长度拦截。
+test('真实 5 话题场景回归官方格式后长度远小于 1000', () => {
+  const description = [
+    '北师大版五年级上册数学第一单元第7课时《歌手大赛》（西游闯关版）',
+    '配套资料有授课课件、逐字稿，逐字稿照读即可用于上课。',
+    '还整理了教学设计和学习单，备课资料一次配齐。',
+  ].join('\n');
+  const tags = ['五上数学', '数学课件', '教学设计', '北师大数学', '西游闯关版'];
+
+  const html = buildRichTopicDescription(description, tags);
+  assert.equal((html.match(/<topic /g) || []).length, 5, '五个话题都要保留');
+  assert.ok(html.length < 1000, `官方格式下应远小于 1000，实际 ${html.length}`);
+  // 结构开销固定：每个话题 ≈ 30 字符 + 标签文本两遍
+  const visible = description.replace(/\n/g, '').length
+    + tags.reduce((s, t) => s + t.length + 1, 0);
+  assert.ok(html.length < visible * 4, '结构开销应保持在可见文字的几倍以内');
 });
