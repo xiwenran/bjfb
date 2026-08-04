@@ -116,9 +116,13 @@ def load_constraints(path: str | None = None) -> dict:
         )
     with open(target, encoding="utf-8") as f:
         data = json.load(f)
-    if not isinstance(data, dict) or "minSameAccountIntervalMinutes" not in data:
+    # minCrossStoreTopicIntervalMinutes（规则 A：跨店铺同主题跨账号间隔）现在也是无条件
+    # 消费的字段——construction 阶段的主动避让、结束后的兜底校验都要用它，缺失即 fail-closed。
+    if not isinstance(data, dict) or "minSameAccountIntervalMinutes" not in data \
+            or "minCrossStoreTopicIntervalMinutes" not in data:
         raise ScheduleError(
-            f"约束配置文件格式错误：{target} 缺少 minSameAccountIntervalMinutes 字段"
+            f"约束配置文件格式错误：{target} 缺少 minSameAccountIntervalMinutes 或 "
+            "minCrossStoreTopicIntervalMinutes 字段"
         )
     return data
 
@@ -209,7 +213,8 @@ def build_accounts(payload: dict, rng: random.Random) -> list[dict]:
     special_slots = [str(v).strip() for v in (time_slots.get("special") or []) if str(v or "").strip()]
     account_groups = payload.get("accountGroups")
     account_groups = account_groups if isinstance(account_groups, dict) else {}
-    topic_decision = str(payload.get("topicDecision") or "").strip()
+    # topicDecision 不再门控店铺组是否必填（规则 A/B 无条件检查），这里不再读取它；
+    # allocate_schedule 顶层也不再读取 topicDecision——规则 A/B 无条件执行。
 
     definitions = [
         ("xiaohongshu", "regular", accounts_raw.get("xiaohongshu_regular") or [], regular_slots),
@@ -229,8 +234,16 @@ def build_accounts(payload: dict, rng: random.Random) -> list[dict]:
                 raise ScheduleError(f"账号重复：{key}")
             seen_keys.add(key)
             store_group = str(account_groups.get(account) or "").strip()
-            if platform == "xiaohongshu" and topic_decision == "auto_space" and not store_group:
-                raise ScheduleError(f"小红书账号「{account}」缺少店铺组映射（accountGroups 未覆盖）")
+            # 店铺组现在无条件必填（不再只在 auto_space + 小红书时才要求）：服务端校验器的
+            # checkTopicSpacing 对缺店铺组的条目是 fail-closed 记违规的，且规则 A（跨店铺同
+            # 主题跨账号 ≥2880 分钟）无条件执行，不受 topicDecision 影响；抖音账号同样要配置。
+            # 本地提前拦下，好过把完整排期提交上去才被服务端整批拒收。
+            if not store_group:
+                raise ScheduleError(
+                    f"账号「{account}」（{platform}）缺少店铺组映射（accountGroups 未覆盖）——"
+                    "跨账号同主题间隔约束（规则 A/B）现在无条件检查两个平台的所有账号，"
+                    "缺店铺组的账号会导致排期在服务端校验时被整批拒收"
+                )
             accounts.append({
                 "platform": platform,
                 "account": account,
@@ -349,6 +362,18 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         raise ScheduleError(
             f"约束配置 minSameAccountIntervalMinutes 无效：{raw_min_gap!r}，必须大于 0"
         )
+    # 规则 A：跨店铺同主题跨账号间隔，无条件执行（不受 topicDecision 影响）。
+    raw_cross_store_gap = constraints.get("minCrossStoreTopicIntervalMinutes")
+    try:
+        cross_store_gap = int(raw_cross_store_gap)
+    except (TypeError, ValueError):
+        raise ScheduleError(
+            f"约束配置 minCrossStoreTopicIntervalMinutes 无效：{raw_cross_store_gap!r}，必须是正整数分钟数"
+        )
+    if cross_store_gap <= 0:
+        raise ScheduleError(
+            f"约束配置 minCrossStoreTopicIntervalMinutes 无效：{raw_cross_store_gap!r}，必须大于 0"
+        )
 
     seed = str(payload.get("seed") or "").strip()
     if not seed:
@@ -366,7 +391,10 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     accounts = build_accounts(payload, rng)
     coverage_strategy = normalize_coverage_strategy(payload.get("coverageStrategy"))
     allow_partial = payload.get("allowPartialSchedule") is True
-    topic_decision = str(payload.get("topicDecision") or "").strip()
+    # topicDecision 不再读取：规则 A（跨店铺同主题跨账号 ≥ cross_store_gap）与规则 B
+    # （同店铺同主题跨账号需人工审批）都无条件执行，构造期避让、结束后复核都不再
+    # 由它门控——旧实现里 `topic_decision == "auto_space"` 才避让/复核，导致其它
+    # topicDecision 取值下构造出的排期可能违反规则 A，提交到服务端才被整批拒收。
     per_slot_raw = payload.get("perAccountPerSlot")
     per_account_per_slot = per_slot_raw if isinstance(per_slot_raw, int) and per_slot_raw > 0 else 1
     reservations = build_reservations(payload.get("existingReservations"))
@@ -473,24 +501,29 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
 
     platform_used_notekeys: dict[str, set[str]] = {p: set() for p in SUPPORTED_PLATFORMS}
     account_used_template: dict[str, set[str]] = {}
-    # (storeGroup, topicKey) -> 已经放好的 [(accountKey, absMinute), ...]，用于 auto_space 避让
-    topic_group_entries: dict[tuple[str, str], list[tuple[str, int]]] = {}
+    # (platform, topicKey) -> 已经放好的 [(storeGroup, accountKey, absMinute), ...]。
+    # 分组键不再含店铺组：规则 A（跨店铺）需要跨店铺组也能比到一起才谈得上避让；
+    # 规则 B（同店铺）不做时间避让（人工审批，不靠自动错开），挑选时按 storeGroup
+    # 是否相同分流——只有 storeGroup 不同的邻居才需要避开。两个平台都纳入（不再只挑
+    # 小红书），且无条件生效（不再由 topicDecision == 'auto_space' 门控）：规则 A 是
+    # 硬约束，不管 topicDecision 取什么值都必须满足，构造期不主动避让只会让结果在
+    # 服务端校验时被拒收。
+    topic_group_entries: dict[tuple[str, str], list[tuple[str, str, int]]] = {}
     for reservation in reservations:
-        if reservation["platform"] != "xiaohongshu" or not reservation["storeGroup"] or not reservation["topicKey"]:
+        if not reservation["storeGroup"] or not reservation["topicKey"]:
             continue
-        key = (reservation["storeGroup"], reservation["topicKey"])
-        topic_group_entries.setdefault(key, []).append((reservation["accountKey"], reservation["absMinute"]))
+        key = (reservation["platform"], reservation["topicKey"])
+        topic_group_entries.setdefault(key, []).append(
+            (reservation["storeGroup"], reservation["accountKey"], reservation["absMinute"])
+        )
 
     for task in tasks:
         account = task["account"]
         i, t = task["accountOrdinal"], task["occurrenceIndex"]
         used_templates = account_used_template.setdefault(account["accountKey"], set())
         used_notekeys = platform_used_notekeys[account["platform"]]
-        spacing_aware = (
-            topic_decision == "auto_space"
-            and account["platform"] == "xiaohongshu"
-            and bool(account["storeGroup"])
-        )
+        # build_accounts 已经把 storeGroup 做成无条件必填，这里的 bool() 只是防御性兜底。
+        spacing_aware = bool(account["storeGroup"])
 
         base_topic_idx = (i + t) % topic_count
         base_template_idx = (i + t) % template_count
@@ -499,11 +532,15 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
             topic_idx = (base_topic_idx + topic_probe) % topic_count
             topic = topics_axis[topic_idx]
             if spacing_aware:
-                group_key = (account["storeGroup"], topic)
+                group_key = (account["platform"], topic)
                 neighbours = topic_group_entries.get(group_key, ())
+                # 只避让「不同店铺 + 不同账号 + 间隔不足 cross_store_gap」的邻居——
+                # 同店铺的邻居走人工审批（规则 B），不受这里的时间避让影响。
                 if any(
-                    other_key != account["accountKey"] and abs(other_minute - task["absMinute"]) < min_gap
-                    for other_key, other_minute in neighbours
+                    other_store != account["storeGroup"]
+                    and other_key != account["accountKey"]
+                    and abs(other_minute - task["absMinute"]) < cross_store_gap
+                    for other_store, other_key, other_minute in neighbours
                 ):
                     continue
             for template_probe in range(template_count):
@@ -523,7 +560,7 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
             remaining_free = pool_size - len(used_notekeys)
             reason = "该账号已用过的模板与本平台已用过的 noteKey 撞满了所有候选"
             if spacing_aware:
-                reason += "，或剩余主题都与同店铺同主题的其它账号在最小间隔内冲突"
+                reason += "，或剩余主题都与跨店铺同主题的其它账号在最小间隔内冲突"
             raise ScheduleError(
                 f"账号「{account['account']}」（{account['platform']}）在 {task['publishTime']} 这次发布"
                 f"找不到可用 noteKey：该平台 noteKey 池共 {pool_size} 个，剩余未用 {remaining_free} 个，"
@@ -538,17 +575,17 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         task["template"] = template
         task["noteKey"] = note_key
         if spacing_aware:
-            topic_group_entries.setdefault((account["storeGroup"], topic), []).append(
-                (account["accountKey"], task["absMinute"])
+            topic_group_entries.setdefault((account["platform"], topic), []).append(
+                (account["storeGroup"], account["accountKey"], task["absMinute"])
             )
 
-    # ---- 第 4 步：兜底校验约束 1（同账号间隔）与约束 5（同店同主题跨账号间隔） ----
-    # 分段设计下约束 1 理应自动满足、约束 5 已经在第 3 步挑主题时主动避让；这里
+    # ---- 第 4 步：兜底校验约束 1（同账号间隔）与规则 A（跨店铺同主题跨账号间隔） ----
+    # 分段设计下约束 1 理应自动满足、规则 A 已经在第 3 步挑主题时主动避让；这里
     # 仍然完整复核一遍，万一分段/避让逻辑之间出现未预见的缝隙，直接在这里拦下
-    # 并给出具体诊断，而不是把不满足硬约束的结果悄悄放出去。
+    # 并给出具体诊断，而不是把不满足硬约束的结果悄悄放出去。规则 A 无条件执行，
+    # 不再由 topic_decision == 'auto_space' 门控。
     _validate_same_account_gap(account_abs_times, min_gap)
-    if topic_decision == "auto_space":
-        _validate_topic_spacing(tasks, reservations, min_gap)
+    _validate_topic_spacing(tasks, reservations, cross_store_gap)
 
     # ---- 第 5 步：组装输出 ----
     schedule = []
@@ -641,41 +678,50 @@ def _entry_label(entry: dict) -> str:
     return f"(既有排期)@{entry.get('publishTime', '?')}"
 
 
-def _validate_topic_spacing(tasks: list[dict], reservations: list[dict], min_gap: int) -> None:
+def _validate_topic_spacing(tasks: list[dict], reservations: list[dict], cross_store_gap: int) -> None:
+    """规则 A 的兜底复核：跨店铺同主题跨账号间隔必须 ≥ cross_store_gap，无条件执行，
+    不受 topicDecision 影响。同店铺的邻居走人工审批（规则 B），这里直接跳过不校验——
+    间隔再短也不算这条规则的违规。两个平台都要覆盖（不再只挑小红书）。
+    """
     groups: dict[tuple[str, str], list[dict]] = {}
     for task in tasks:
         account = task["account"]
-        if account["platform"] != "xiaohongshu" or not account["storeGroup"]:
+        if not account["storeGroup"]:
             continue
-        key = (account["storeGroup"], task["topic"])
+        key = (account["platform"], task["topic"])
         groups.setdefault(key, []).append({
+            "storeGroup": account["storeGroup"],
             "accountKey": account["accountKey"],
             "absMinute": task["absMinute"],
             "label": f"{account['account']}@{task['publishTime']}",
         })
     for reservation in reservations:
-        if reservation["platform"] != "xiaohongshu" or not reservation["storeGroup"] or not reservation["topicKey"]:
+        if not reservation["storeGroup"] or not reservation["topicKey"]:
             continue
-        key = (reservation["storeGroup"], reservation["topicKey"])
+        key = (reservation["platform"], reservation["topicKey"])
         groups.setdefault(key, []).append({
+            "storeGroup": reservation["storeGroup"],
             "accountKey": reservation["accountKey"],
             "absMinute": reservation["absMinute"],
             "label": f"{reservation['account']}@{reservation['publishTime']}（既有排期）",
         })
 
-    for (store_group, topic_key), entries in groups.items():
+    for (platform, topic_key), entries in groups.items():
         for a_idx in range(len(entries)):
             for b_idx in range(a_idx + 1, len(entries)):
                 a, b = entries[a_idx], entries[b_idx]
                 if a["accountKey"] == b["accountKey"]:
                     continue
+                if a["storeGroup"] == b["storeGroup"]:
+                    continue  # 同店铺：规则 B，走人工审批，不做间隔校验
                 gap = abs(a["absMinute"] - b["absMinute"])
-                if gap < min_gap:
+                if gap < cross_store_gap:
                     raise ScheduleError(
-                        f"店铺组「{store_group}」主题「{topic_key}」跨账号间隔不足："
-                        f"{a['label']} 与 {b['label']} 仅间隔 {gap} 分钟，要求 ≥ {min_gap} 分钟"
-                        f"（差 {min_gap - gap} 分钟）。auto_space 模式下同店同主题跨账号必须错开，"
-                        "请拉开时间窗或改用 allow_conflicts。"
+                        f"平台「{platform}」主题「{topic_key}」跨店铺跨账号间隔不足："
+                        f"{a['label']}（店铺 {a['storeGroup']}）与 {b['label']}（店铺 {b['storeGroup']}）"
+                        f"仅间隔 {gap} 分钟，要求 ≥ {cross_store_gap} 分钟（差 {cross_store_gap - gap} 分钟）。"
+                        "跨店铺同主题跨账号是硬约束，不受 allow_conflicts 影响，"
+                        "请拉开时间窗或调整主题/店铺分配。"
                     )
 
 

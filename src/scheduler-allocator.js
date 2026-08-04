@@ -28,19 +28,35 @@ function createInputError(message, violations) {
   return error;
 }
 
+// 正数校验的公共小工具：四个新字段都要求"能转成数字 + 大于 0"，抽出来避免四处重复同一段判断。
+function readPositiveNumber(parsed, field) {
+  const value = Number(parsed[field]);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`schedule-constraints.json 中 ${field} 无效: ${parsed[field]}`);
+  }
+  return value;
+}
+
 let _constraintsCache = null;
 function loadConstraints() {
   if (_constraintsCache) return _constraintsCache;
   const raw = fs.readFileSync(CONSTRAINTS_PATH, 'utf8');
   const parsed = JSON.parse(raw);
-  const minutes = Number(parsed.minSameAccountIntervalMinutes);
-  if (!Number.isFinite(minutes) || minutes <= 0) {
-    throw new Error(`schedule-constraints.json 中 minSameAccountIntervalMinutes 无效: ${parsed.minSameAccountIntervalMinutes}`);
-  }
+  const minutes = readPositiveNumber(parsed, 'minSameAccountIntervalMinutes');
+  // 跨店铺同主题跨账号间隔（规则 A）：硬约束，无条件执行，不受 topicDecision 影响。
+  const crossStoreTopicIntervalMinutes = readPositiveNumber(parsed, 'minCrossStoreTopicIntervalMinutes');
+  // 主题发布量：7 天窗口超过 topicVolumeMaxCount 条只告警（规则 C），30 天窗口只统计（规则 D）。
+  const topicVolumeWindowDays = readPositiveNumber(parsed, 'topicVolumeWindowDays');
+  const topicVolumeMaxCount = readPositiveNumber(parsed, 'topicVolumeMaxCount');
+  const topicVolumeLongWindowDays = readPositiveNumber(parsed, 'topicVolumeLongWindowDays');
   // uniqueMinuteAcrossBatch 字段在配置文件里保留，但不再读取成开关：
   // 分钟全局唯一是硬约束，不接受被配置关掉。
   _constraintsCache = {
     minSameAccountIntervalMinutes: minutes,
+    minCrossStoreTopicIntervalMinutes: crossStoreTopicIntervalMinutes,
+    topicVolumeWindowDays,
+    topicVolumeMaxCount,
+    topicVolumeLongWindowDays,
   };
   return _constraintsCache;
 }
@@ -372,26 +388,32 @@ function checkDuplicateTemplate(items, violations) {
   }
 }
 
-function checkTopicSpacing(items, reservations, topicDecision, minIntervalMinutes, violations) {
-  if (topicDecision !== 'auto_space') return;
-  const minIntervalMs = minIntervalMinutes * 60 * 1000;
+// 规则 A（跨店铺同主题跨账号，硬违规）与规则 B（同店铺同主题跨账号，需人工审批）
+// 都是"平台内按主题比较"，且都必须无条件执行——旧实现里 `topicDecision !== 'auto_space'`
+// 直接 return，导致用户选 allow_conflicts 时这条约束整条失效，是本次要修的核心缺陷之一。
+// 抖音同样纳入（旧实现 `entry.platform !== 'xiaohongshu'` 的过滤已删掉）。
+// 注意：A/B/C/D 四条规则都只在同一平台内比较，不跨平台比——分组键包含 platform。
+function checkTopicSpacing(items, reservations, minCrossStoreIntervalMinutes, violations, approvals) {
+  const minIntervalMs = minCrossStoreIntervalMinutes * 60 * 1000;
   const byGroup = new Map();
-  // fail-closed：auto_space 下小红书条目分不出店铺组或主题就记违规，
-  // 不再像旧实现那样静默跳过——分组键缺失等于这条约束整条失效。
+  // fail-closed：分不出店铺组或主题就记违规，不再静默跳过——分组键缺失等于这条约束整条失效。
+  // 调用方（validateImportSchedule）已经把 scope='time'（不带主题信息的平台无关占用）
+  // 过滤掉了，这里不会把那一路的抖音/小红书记录误判成"缺主题"。
   const addEntry = entry => {
-    if (entry.platform !== 'xiaohongshu') return;
     if (!entry.storeGroupKey || !entry.topicGroupKey) {
       const missing = [];
       if (!entry.storeGroupKey) missing.push(`账号「${entry.account}」未在 accountGroups 中配置店铺组`);
       if (!entry.topicGroupKey) missing.push('无法确定主题（currentItems 中查不到该 noteKey 对应的 topicKey）');
       violations.push({
         rule: 'topic_spacing',
-        message: `${entry.label}: auto_space 模式下无法检查同店同主题跨账号间隔——${missing.join('；')}`,
+        message: `${entry.label}: 无法检查跨账号同主题间隔——${missing.join('；')}`,
         items: [entry.label],
       });
       return;
     }
-    const key = `${entry.storeGroupKey} ${entry.topicGroupKey}`;
+    // 分组键改为「平台 + 主题」，不再含店铺组：跨店铺同主题也要能比到一起，
+    // 才谈得上规则 A（跨店铺间隔）；组内再按 storeGroupKey 是否相同分流 A / B。
+    const key = `${entry.platform} ${entry.topicGroupKey}`;
     if (!byGroup.has(key)) byGroup.set(key, []);
     byGroup.get(key).push(entry);
   };
@@ -399,6 +421,7 @@ function checkTopicSpacing(items, reservations, topicDecision, minIntervalMinute
     platform: source.platform,
     storeGroupKey: source.storeGroupKey,
     topicGroupKey: source.topicGroupKey,
+    topicKey: source.topicKey,
     account: source.account,
     accountNameKey: normalizeAccountName(source.account),
     timestamp: source.timestamp,
@@ -411,11 +434,24 @@ function checkTopicSpacing(items, reservations, topicDecision, minIntervalMinute
     for (let i = 0; i < sorted.length; i++) {
       for (let j = i + 1; j < sorted.length; j++) {
         if (sorted[i].accountNameKey === sorted[j].accountNameKey) continue;
-        if (Math.abs(sorted[j].timestamp - sorted[i].timestamp) < minIntervalMs) {
-          const diffMinutes = Math.round(Math.abs(sorted[j].timestamp - sorted[i].timestamp) / 60000);
+        const diffMinutes = Math.round(Math.abs(sorted[j].timestamp - sorted[i].timestamp) / 60000);
+        if (sorted[i].storeGroupKey === sorted[j].storeGroupKey) {
+          // 规则 B：同店铺不同账号发同一主题，不论间隔多久都要走人工审批——不记 violation，
+          // 单独进 approvals，由调用方（server.js）带回前端给用户确认。
+          approvals.push({
+            rule: 'topic_spacing_approval',
+            platform: sorted[i].platform,
+            topicKey: sorted[i].topicKey || sorted[i].topicGroupKey,
+            storeGroup: sorted[i].storeGroupKey,
+            accounts: [sorted[i].account, sorted[j].account],
+            message: `同店铺同主题跨账号需人工审批：${sorted[i].account}（${formatMinute(sorted[i].timestamp)}）与 ${sorted[j].account}（${formatMinute(sorted[j].timestamp)}）间隔 ${diffMinutes} 分钟`,
+            items: [sorted[i].label, sorted[j].label],
+          });
+        } else if (Math.abs(sorted[j].timestamp - sorted[i].timestamp) < minIntervalMs) {
+          // 规则 A：跨店铺不同账号发同一主题，间隔必须 ≥ minCrossStoreTopicIntervalMinutes（2880 分钟/2 天），硬违规。
           violations.push({
             rule: 'topic_spacing',
-            message: `同店铺同主题跨账号：${sorted[i].account}（${formatMinute(sorted[i].timestamp)}）与 ${sorted[j].account}（${formatMinute(sorted[j].timestamp)}）间隔 ${diffMinutes} 分钟，不足 ${minIntervalMinutes} 分钟`,
+            message: `跨店铺同主题跨账号：${sorted[i].account}（${formatMinute(sorted[i].timestamp)}）与 ${sorted[j].account}（${formatMinute(sorted[j].timestamp)}）间隔 ${diffMinutes} 分钟，不足 ${minCrossStoreIntervalMinutes} 分钟`,
             items: [sorted[i].label, sorted[j].label],
           });
         }
@@ -424,6 +460,59 @@ function checkTopicSpacing(items, reservations, topicDecision, minIntervalMinute
   }
 }
 
+// 规则 C（7 天窗口同主题 > 10 条强制告警）与规则 D（30 天窗口只统计不设阈值）。
+// 同一平台内按主题分组，把本批条目和既有排期（reservations 已经是 scope='topic' 一路，
+// 带 topicGroupKey）的时间戳合并后，用滑动窗口分别求 7 天/30 天窗口内的最大条数。
+// 没有主题信息的条目直接跳过——它们已经在 checkTopicSpacing 里被 fail-closed 记过违规，
+// 这里不重复报错，只是不参与统计（避免 undefined topicGroupKey 污染分组）。
+function checkTopicVolume(items, reservations, constraints, warnings, topicVolumeStats) {
+  const shortWindowMs = constraints.topicVolumeWindowDays * 24 * 60 * 60 * 1000;
+  const longWindowMs = constraints.topicVolumeLongWindowDays * 24 * 60 * 60 * 1000;
+  const byGroup = new Map();
+  const addEntry = entry => {
+    if (!entry.topicGroupKey) return;
+    const key = `${entry.platform} ${entry.topicGroupKey}`;
+    if (!byGroup.has(key)) {
+      byGroup.set(key, { platform: entry.platform, topicKey: entry.topicKey || entry.topicGroupKey, timestamps: [] });
+    }
+    byGroup.get(key).timestamps.push(entry.timestamp);
+  };
+  for (const item of items) {
+    addEntry({ platform: item.platform, topicGroupKey: item.topicGroupKey, topicKey: item.topicKey, timestamp: item.timestamp });
+  }
+  for (const reservation of reservations) {
+    addEntry({ platform: reservation.platform, topicGroupKey: reservation.topicGroupKey, topicKey: reservation.topicKey, timestamp: reservation.timestamp });
+  }
+  // 滑动窗口最大条数：排序后双指针，O(n) 求"任意长度为 windowMs 的区间内最多几条"。
+  const maxCountInWindow = (sortedTimestamps, windowMs) => {
+    let left = 0;
+    let max = 0;
+    for (let right = 0; right < sortedTimestamps.length; right++) {
+      while (sortedTimestamps[right] - sortedTimestamps[left] > windowMs) left++;
+      max = Math.max(max, right - left + 1);
+    }
+    return max;
+  };
+  for (const { platform, topicKey, timestamps } of byGroup.values()) {
+    const sorted = timestamps.slice().sort((a, b) => a - b);
+    const shortCount = maxCountInWindow(sorted, shortWindowMs);
+    const longCount = maxCountInWindow(sorted, longWindowMs);
+    topicVolumeStats.push({
+      platform,
+      topicKey,
+      windowDays: constraints.topicVolumeWindowDays,
+      count: shortCount,
+      longWindowDays: constraints.topicVolumeLongWindowDays,
+      longCount,
+    });
+    if (shortCount > constraints.topicVolumeMaxCount) {
+      warnings.push(
+        `平台 ${platform} 主题「${topicKey}」在 ${constraints.topicVolumeWindowDays} 天窗口内累计发布 ${shortCount} 条，`
+        + `超过上限 ${constraints.topicVolumeMaxCount} 条（超出 ${shortCount - constraints.topicVolumeMaxCount} 条）`
+      );
+    }
+  }
+}
 function checkNoteFolderCoverage(items, noteFolderInfo, allowPartialSchedule, violations) {
   if (!noteFolderInfo) return;
   const scheduledNoteKeys = new Set(items.map(item => item.noteKeyCompare));
@@ -482,7 +571,9 @@ function validateImportSchedule(input) {
 
   const reservations = normalizeExistingReservations(input.existingReservations);
   const coverageStrategy = normalizeCoverageStrategy(input.coverageStrategy);
-  const topicDecision = String(input.topicDecision || 'none').trim() || 'none';
+  // topicDecision（input.topicDecision）不再门控 checkTopicSpacing——规则 A/B 无条件执行，
+  // 本函数内部不再读取这个字段；它仍然是 server.js 侧历史确认流程（confirmation.decision）
+  // 的输入之一，只是不再传进这里。
   const allowPartialSchedule = input.allowPartialSchedule === true;
   const noteFolderInfo = expandNoteFolders(input.noteFolders);
 
@@ -501,16 +592,20 @@ function validateImportSchedule(input) {
   checkDuplicateMinute(items, reservations, violations);
   checkDuplicateNoteKey(items, violations);
   checkDuplicateTemplate(items, violations);
-  // 约束 5 只消费带 storeGroup/topicKey 的主题一路（scope='topic'）。
-  // 平台无关的时间占用（scope='time'）没有主题信息，进来会被 auto_space 的 fail-closed 分支
+  // 规则 A/B/C/D 只消费带 storeGroup/topicKey 的主题一路（scope='topic'）。
+  // 平台无关的时间占用（scope='time'）没有主题信息，进来会被 fail-closed 分支
   // 误记成违规，必须在这里滤掉。
+  const topicScopedReservations = reservations.filter(reservation => reservation.scope === 'topic');
+  const approvals = [];
   checkTopicSpacing(
     items,
-    reservations.filter(reservation => reservation.scope === 'topic'),
-    topicDecision,
-    constraints.minSameAccountIntervalMinutes,
-    violations
+    topicScopedReservations,
+    constraints.minCrossStoreTopicIntervalMinutes,
+    violations,
+    approvals
   );
+  const topicVolumeStats = [];
+  checkTopicVolume(items, topicScopedReservations, constraints, warnings, topicVolumeStats);
   checkNoteFolderCoverage(items, noteFolderInfo, allowPartialSchedule, violations);
 
   const topicsUniverse = new Set(
@@ -526,13 +621,23 @@ function validateImportSchedule(input) {
   return {
     ok: true,
     schedule: input.schedule,
+    // approvals：规则 B（同店铺同主题跨账号）命中的条目，不是违规，需要人工审批放行。
+    // topicVolume：规则 C（7 天窗口告警，已并入 stats.warnings）+ 规则 D（30 天窗口纯统计）的明细。
+    approvals,
+    topicVolume: topicVolumeStats,
     stats: {
       scheduledCount: input.schedule.length,
       coverageStrategy,
       warnings,
+      topicVolumeWindowDays: constraints.topicVolumeWindowDays,
+      topicVolumeLongWindowDays: constraints.topicVolumeLongWindowDays,
     },
     constraints: {
       minSameAccountIntervalMinutes: constraints.minSameAccountIntervalMinutes,
+      minCrossStoreTopicIntervalMinutes: constraints.minCrossStoreTopicIntervalMinutes,
+      topicVolumeWindowDays: constraints.topicVolumeWindowDays,
+      topicVolumeMaxCount: constraints.topicVolumeMaxCount,
+      topicVolumeLongWindowDays: constraints.topicVolumeLongWindowDays,
       // 无条件为 true：分钟唯一已是不可关闭的硬约束，这里只是保持返回契约不变。
       uniqueMinuteAcrossBatch: true,
       seed: String(input.seed || ''),

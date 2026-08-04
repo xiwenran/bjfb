@@ -23,11 +23,23 @@ function item(overrides = {}) {
   };
 }
 
+// 跨账号同主题间隔（规则 A/B/C/D）现在无条件执行：任何 schedule 条目只要缺店铺组映射就
+// fail-closed 记违规。绝大多数测试用例本身不是在测这四条规则，为了不让它们被无关的
+// "未配置店铺组"误伤，统一给一份覆盖全文件所有账号名的默认店铺组映射，全部归到同一个
+// 店铺——同店铺只会产出 approvals（不影响 result.ok），不会像跨店铺那样触发硬 violation。
+// 需要显式测试跨店铺/同店铺差异的用例，会自己传 accountGroups 覆盖这份默认值。
+const DEFAULT_STORE_GROUP = '店铺A';
+const DEFAULT_ACCOUNT_GROUPS = Object.fromEntries(
+  ['账号1', '账号2', '账号3', '账号9', '抖音号1', '抖音号2', '同名号', '本批账号', 'acc', 'Acc']
+    .map(account => [account, DEFAULT_STORE_GROUP])
+);
+
 function baseInput(overrides = {}) {
   return {
     seed: 'fixed-seed',
     schedule: [item()],
     coverageStrategy: 'minimum',
+    accountGroups: DEFAULT_ACCOUNT_GROUPS,
     ...overrides,
   };
 }
@@ -155,10 +167,11 @@ test('duplicate_template：同账号同template拒绝，不同template通过', (
   })), error => error.statusCode === 400 && violationRules(error).includes('duplicate_template'));
 });
 
-// ---------- 硬约束 5：auto_space 跨账号同店同主题间隔 ----------
+// ---------- 规则 A/B/C/D：跨账号同主题间隔（2026-08 重写，两个平台无条件执行）----------
 
 // 服务端权威分组数据：accountGroups（账号→店铺组）与 currentItems（noteKey→topicKey）。
 // 校验器只认这两份，不读 schedule 条目自带的 storeGroup / topicKey。
+// 账号1/账号2 同店铺（用于规则 B），账号3 是另一个店铺（用于规则 A）。
 const SERVER_GROUPS = {
   accountGroups: { 账号1: '店铺A', 账号2: '店铺A', 账号3: '店铺B' },
   currentItems: [
@@ -171,50 +184,201 @@ const SERVER_GROUPS = {
 };
 
 function spacingInput(overrides = {}) {
-  return baseInput({ topicDecision: 'auto_space', ...SERVER_GROUPS, ...overrides });
+  // 注意：不再默认带 topicDecision——规则 A/B/C/D 无条件执行，不需要 auto_space 才生效，
+  // 这正是本次重写要验证的核心行为。需要专门验证 allow_conflicts 下依旧生效的用例见下方。
+  return baseInput({ ...SERVER_GROUPS, ...overrides });
 }
 
-test('topic_spacing：auto_space下跨账号361分钟通过，360分钟拒绝，同账号不受此约束', () => {
-  const ok = validateImportSchedule(spacingInput({
-    schedule: [
-      item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
-      item({ account: '账号2', noteKey: '主题A/2', publishTime: '2026-07-16 15:01' }),
-    ],
-  }));
-  assert.equal(ok.ok, true);
-
+test('规则 A：跨店铺同主题跨账号，2879 分钟拒绝，2880 分钟通过', () => {
   assert.throws(() => validateImportSchedule(spacingInput({
     schedule: [
       item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
-      item({ account: '账号2', noteKey: '主题A/2', publishTime: '2026-07-16 15:00' }),
+      item({ account: '账号3', noteKey: '主题A/2', publishTime: '2026-07-18 08:59' }), // 2879 分钟
     ],
   })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'));
 
-  // 同账号发相同主题不受 topic_spacing 约束（但仍受 min_interval 约束，这里给够361分钟）
-  const sameAccountOk = validateImportSchedule(spacingInput({
+  const ok = validateImportSchedule(spacingInput({
+    schedule: [
+      item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+      item({ account: '账号3', noteKey: '主题A/2', publishTime: '2026-07-18 09:00' }), // 2880 分钟，刚好达标
+    ],
+  }));
+  assert.equal(ok.ok, true);
+  assert.equal(ok.approvals.length, 0, '跨店铺不应该进 approvals');
+});
+
+test('规则 A：同账号发同一主题不受此约束（哪怕跨店铺配置也一样，同账号自己跳过比较）', () => {
+  const ok = validateImportSchedule(spacingInput({
     schedule: [
       item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
       item({ account: '账号1', noteKey: '主题A/2', publishTime: '2026-07-16 15:01' }),
     ],
   }));
-  assert.equal(sameAccountOk.ok, true);
+  assert.equal(ok.ok, true);
 });
 
-test('topic_spacing：existingReservations 同店同主题也参与跨账号间隔判断', () => {
+test('规则 A：existingReservations 跨店铺同主题也参与检查', () => {
   assert.throws(() => validateImportSchedule(spacingInput({
-    schedule: [item({ account: '账号2', noteKey: '主题A/1', publishTime: '2026-07-16 09:30' })],
+    schedule: [item({ account: '账号3', noteKey: '主题A/1', publishTime: '2026-07-16 09:30' })],
     existingReservations: [{ platform: 'xiaohongshu', account: '账号1', publishTime: '2026-07-16 09:00', topicKey: '主题A', storeGroup: '店铺A' }],
   })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'));
 });
 
-test('topic_spacing：不同店铺组的同主题跨账号不受此约束', () => {
-  const ok = validateImportSchedule(spacingInput({
+test('规则 A：topicDecision 不再门控——none / allow_conflicts 下跨店铺间隔不足依旧拒收（核心缺陷修复）', () => {
+  for (const topicDecision of [undefined, 'none', 'allow_conflicts']) {
+    assert.throws(() => validateImportSchedule(spacingInput({
+      topicDecision,
+      schedule: [
+        item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+        item({ account: '账号3', noteKey: '主题A/2', publishTime: '2026-07-16 09:10' }),
+      ],
+    })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'),
+      `topicDecision=${topicDecision} 时规则 A 应该仍然执行`);
+  }
+});
+
+test('规则 B：同店铺不同账号发同一主题，不论间隔多久都进 approvals，不拒收', () => {
+  const tight = validateImportSchedule(spacingInput({
     schedule: [
       item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
-      item({ account: '账号3', noteKey: '主题A/2', publishTime: '2026-07-16 09:10' }),
+      item({ account: '账号2', noteKey: '主题A/2', publishTime: '2026-07-16 09:10' }), // 只差 10 分钟
     ],
   }));
-  assert.equal(ok.ok, true);
+  assert.equal(tight.ok, true);
+  assert.equal(tight.approvals.length, 1);
+  assert.equal(tight.approvals[0].rule, 'topic_spacing_approval');
+  assert.deepEqual([...tight.approvals[0].accounts].sort(), ['账号1', '账号2']);
+  // approvals.storeGroup 取的是归一化后的 storeGroupKey（checkTopicSpacing 内部按
+  // normalizeGroupKey 小写化），不是 accountGroups 里原始大小写的展示值——与「绕过负例3」
+  // 验证的行为一致（'shop'/'SHOP' 都归一化成小写 'shop'）。
+  assert.equal(tight.approvals[0].storeGroup, '店铺a');
+  assert.equal(tight.approvals[0].topicKey, '主题A');
+
+  // 拉开到很长间隔（远超 2880 分钟）依旧只是 approval，不会因为间隔够长就消失，
+  // 也不会因为间隔够长就升级成别的规则——同店铺永远走审批。
+  const loose = validateImportSchedule(spacingInput({
+    schedule: [
+      item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+      item({ account: '账号2', noteKey: '主题A/2', publishTime: '2026-07-26 09:00' }), // 10 天
+    ],
+  }));
+  assert.equal(loose.ok, true);
+  assert.equal(loose.approvals.length, 1);
+});
+
+test('规则 B：existingReservations 同店铺同主题同样只产出 approval，不拒收', () => {
+  const result = validateImportSchedule(spacingInput({
+    schedule: [item({ account: '账号2', noteKey: '主题A/1', publishTime: '2026-07-16 09:30' })],
+    existingReservations: [{ platform: 'xiaohongshu', account: '账号1', publishTime: '2026-07-16 09:00', topicKey: '主题A', storeGroup: '店铺A' }],
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.approvals.length, 1);
+});
+
+test('规则 A/B：跨账号同主题分组不再跨平台——小红书和抖音各自独立比较', () => {
+  const result = validateImportSchedule(baseInput({
+    accountGroups: { 账号1: '店铺A', 抖音号1: '店铺A' },
+    currentItems: [
+      { noteKey: '主题A/1', topicKey: '主题A' },
+      { noteKey: '主题A/2', topicKey: '主题A' },
+    ],
+    schedule: [
+      item({ platform: 'xiaohongshu', account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+      item({ platform: 'douyin', account: '抖音号1', noteKey: '主题A/2', publishTime: '2026-07-16 09:10' }),
+    ],
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.approvals.length, 0, '不同平台即使同店铺同主题也不该互相触发');
+});
+
+test('规则 C：7 天窗口内同主题累计 > 10 条强制 warning，不拒收；用不同账号避开约束1', () => {
+  // 用 11 个不同账号各发一次，规避约束 1（同账号间隔）与规则 B/A 的账号配对逻辑，
+  // 单纯测试"同一主题在 7 天窗口内的总条数"。全部同店铺，只会顺带产出大量 approvals，
+  // 不影响本用例要验证的 warning。
+  const accounts = Array.from({ length: 11 }, (_, i) => `店铺账号${i + 1}`);
+  const accountGroups = Object.fromEntries(accounts.map(a => [a, '同一店铺']));
+  const schedule = accounts.map((account, i) => item({
+    account,
+    noteKey: `主题C/${i + 1}`,
+    publishTime: `2026-08-0${(i % 7) + 1} 06:${String(i).padStart(2, '0')}`,
+  }));
+  const result = validateImportSchedule(baseInput({
+    accountGroups,
+    noteFolders: [{ topic: '主题C', templates: accounts.map((_, i) => String(i + 1)) }],
+    allowPartialSchedule: true,
+    schedule,
+  }));
+  assert.equal(result.ok, true);
+  const hit = result.stats.warnings.find(w => w.includes('超过上限'));
+  assert.ok(hit, `应该有超量 warning，实际 warnings=${JSON.stringify(result.stats.warnings)}`);
+  assert.match(hit, /主题「主题C」在 7 天窗口内累计发布 11 条，超过上限 10 条（超出 1 条）/);
+  const stat = result.topicVolume.find(s => s.topicKey === '主题C' && s.platform === 'xiaohongshu');
+  assert.ok(stat && stat.count === 11, `topicVolume.count 应为 11，实际=${JSON.stringify(stat)}`);
+});
+
+test('规则 C：allow_conflicts 下依旧强制告警（不受 topicDecision 影响）', () => {
+  const accounts = Array.from({ length: 11 }, (_, i) => `店铺账号${i + 1}`);
+  const accountGroups = Object.fromEntries(accounts.map(a => [a, '同一店铺']));
+  const schedule = accounts.map((account, i) => item({
+    account,
+    noteKey: `主题C/${i + 1}`,
+    publishTime: `2026-08-0${(i % 7) + 1} 06:${String(i).padStart(2, '0')}`,
+  }));
+  const result = validateImportSchedule(baseInput({
+    topicDecision: 'allow_conflicts',
+    accountGroups,
+    noteFolders: [{ topic: '主题C', templates: accounts.map((_, i) => String(i + 1)) }],
+    allowPartialSchedule: true,
+    schedule,
+  }));
+  assert.equal(result.ok, true);
+  assert.ok(result.stats.warnings.some(w => w.includes('超过上限')));
+});
+
+test('规则 C：7 天窗口内不超过 10 条不告警', () => {
+  const accounts = Array.from({ length: 10 }, (_, i) => `店铺账号${i + 1}`);
+  const accountGroups = Object.fromEntries(accounts.map(a => [a, '同一店铺']));
+  const schedule = accounts.map((account, i) => item({
+    account,
+    noteKey: `主题D/${i + 1}`,
+    publishTime: `2026-08-0${(i % 7) + 1} 06:${String(i).padStart(2, '0')}`,
+  }));
+  const result = validateImportSchedule(baseInput({
+    accountGroups,
+    noteFolders: [{ topic: '主题D', templates: accounts.map((_, i) => String(i + 1)) }],
+    allowPartialSchedule: true,
+    schedule,
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.stats.warnings.filter(w => w.includes('超过上限')).length, 0);
+});
+
+test('规则 D：30 天窗口纯统计，不设阈值、不告警', () => {
+  const result = validateImportSchedule(baseInput({
+    noteFolders: [{ topic: '主题E', templates: ['1', '2', '3'] }],
+    schedule: [
+      item({ account: '账号1', noteKey: '主题E/1', publishTime: '2026-08-01 06:00' }),
+      item({ account: '账号1', noteKey: '主题E/2', publishTime: '2026-08-15 06:00' }),
+      item({ account: '账号1', noteKey: '主题E/3', publishTime: '2026-08-29 06:00' }),
+    ],
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.stats.warnings.filter(w => w.includes('超过上限')).length, 0);
+  const stat = result.topicVolume.find(s => s.topicKey === '主题E');
+  assert.ok(stat, '应该有 topicVolume 统计项');
+  assert.equal(stat.longCount, 3);
+  assert.equal(stat.longWindowDays, 30);
+});
+
+test('抖音同样纳入规则 A（旧实现完全不检查抖音）', () => {
+  assert.throws(() => validateImportSchedule(baseInput({
+    accountGroups: { 抖音甲: '店铺X', 抖音乙: '店铺Y' },
+    currentItems: [{ noteKey: '主题F/1', topicKey: '主题F' }, { noteKey: '主题F/2', topicKey: '主题F' }],
+    schedule: [
+      item({ platform: 'douyin', account: '抖音甲', noteKey: '主题F/1', publishTime: '2026-07-16 09:00' }),
+      item({ platform: 'douyin', account: '抖音乙', noteKey: '主题F/2', publishTime: '2026-07-16 09:10' }),
+    ],
+  })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'));
 });
 
 // ---------- 绕过路径负例（每条对应一次已复现的绕过） ----------
@@ -222,9 +386,9 @@ test('topic_spacing：不同店铺组的同主题跨账号不受此约束', () =
 test('绕过负例1：schedule 自带 storeGroup 但 accountGroups 查不到 → fail-closed 拒收', () => {
   // 旧实现：storeGroup 缺失就静默跳过约束5，两条同主题不同账号只差 10 分钟也放行。
   assert.throws(() => validateImportSchedule(baseInput({
-    topicDecision: 'auto_space',
+    accountGroups: {}, // 显式覆盖掉默认映射，故意让这两个账号查不到店铺组
     currentItems: SERVER_GROUPS.currentItems,
-    // 故意不给 accountGroups，只在 schedule 条目里带 storeGroup（客户端字段，现已不被信任）
+    // 故意不给 accountGroups 命中，只在 schedule 条目里带 storeGroup（客户端字段，现已不被信任）
     schedule: [
       item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00', storeGroup: '店1' }),
       item({ account: '账号2', noteKey: '主题A/2', publishTime: '2026-07-16 09:10', storeGroup: '店1' }),
@@ -235,11 +399,12 @@ test('绕过负例1：schedule 自带 storeGroup 但 accountGroups 查不到 →
 });
 
 test('绕过负例1b：客户端伪造 topicKey 不能把同主题拆成两个主题', () => {
-  // schedule 里把第二条的 topicKey 改成别的值，服务端 currentItems 仍判定为同主题 → 必须拒收
+  // schedule 里把第二条的 topicKey 改成别的值，服务端 currentItems 仍判定为同主题 → 用跨店铺
+  // 账号（账号1 店铺A / 账号3 店铺B）验证：伪造 topicKey 逃不掉规则 A 的硬拒收。
   assert.throws(() => validateImportSchedule(spacingInput({
     schedule: [
       item({ account: '账号1', noteKey: '主题A/1', topicKey: '主题A', publishTime: '2026-07-16 09:00' }),
-      item({ account: '账号2', noteKey: '主题A/2', topicKey: '伪造的另一个主题', publishTime: '2026-07-16 09:10' }),
+      item({ account: '账号3', noteKey: '主题A/2', topicKey: '伪造的另一个主题', publishTime: '2026-07-16 09:10' }),
     ],
   })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'));
 });
@@ -254,8 +419,11 @@ test('绕过负例2：账号名大小写不同仍算同一账号，间隔不足�
   })), error => error.statusCode === 400 && violationRules(error).includes('min_interval'));
 });
 
-test('绕过负例3：storeGroup 大小写不同仍算同一店铺组，跨账号同主题间隔不足拒收', () => {
-  assert.throws(() => validateImportSchedule(baseInput({
+test('绕过负例3：storeGroup 大小写不同仍算同一店铺组 → 归为规则 B（审批），不是规则 A（拒收）', () => {
+  // normalizeGroupKey 对店铺组做 NFKC + 折叠空白 + 小写归一化：'shop' 和 'SHOP' 被判定为
+  // 同一个店铺组。这在新语义下意味着这两个账号走规则 B（同店铺需审批），而不是规则 A
+  // （跨店铺硬拒收）——旧测试断言的是"应该拒收"，那是被推翻的旧行为，这里改断言 approvals。
+  const result = validateImportSchedule(baseInput({
     topicDecision: 'auto_space',
     accountGroups: { 账号1: 'shop', 账号2: 'SHOP' },
     currentItems: SERVER_GROUPS.currentItems,
@@ -263,7 +431,10 @@ test('绕过负例3：storeGroup 大小写不同仍算同一店铺组，跨账�
       item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
       item({ account: '账号2', noteKey: '主题A/2', publishTime: '2026-07-16 09:10' }),
     ],
-  })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'));
+  }));
+  assert.equal(result.ok, true);
+  assert.equal(result.approvals.length, 1);
+  assert.equal(result.approvals[0].storeGroup, 'shop', '店铺组归一化后应统一取其中一个大小写形式');
 });
 
 test('绕过负例4：template 前后空格不构成新模板，同账号重复模板拒收', () => {
@@ -373,11 +544,22 @@ test('coverageStrategy=minimum：不检查覆盖度', () => {
 
 // ---------- 输出结构 ----------
 
-test('校验通过时返回 constraints 与 stats', () => {
+test('校验通过时返回 constraints 与 stats（含新增的规则 A/C/D 常量与 approvals/topicVolume 结构）', () => {
   const result = validateImportSchedule(baseInput());
   assert.equal(result.constraints.minSameAccountIntervalMinutes, 361);
+  assert.equal(result.constraints.minCrossStoreTopicIntervalMinutes, 2880);
+  assert.equal(result.constraints.topicVolumeWindowDays, 7);
+  assert.equal(result.constraints.topicVolumeMaxCount, 10);
+  assert.equal(result.constraints.topicVolumeLongWindowDays, 30);
   assert.equal(result.constraints.uniqueMinuteAcrossBatch, true);
   assert.equal(result.stats.scheduledCount, 1);
+  assert.equal(result.stats.topicVolumeWindowDays, 7);
+  assert.equal(result.stats.topicVolumeLongWindowDays, 30);
+  assert.ok(Array.isArray(result.approvals));
+  assert.ok(Array.isArray(result.topicVolume));
+  assert.equal(result.topicVolume.length, 1);
+  assert.equal(result.topicVolume[0].topicKey, '主题A');
+  assert.equal(result.topicVolume[0].count, 1);
 });
 
 // ---------- 平台无关既有排期（scope='time'）：抖音兜底 ----------
@@ -434,9 +616,9 @@ test('抖音兜底：跨平台同名账号互不干扰（小红书既有排期�
   assert.equal(ok.ok, true);
 });
 
-test('scope=time 的条目不参与约束 5，不会被 auto_space 的 fail-closed 分支误判', () => {
+test('scope=time 的条目不参与规则 A/B，不会被 fail-closed 分支误判', () => {
   // 平台无关条目没有 topicKey / storeGroup；若它进了 checkTopicSpacing，
-  // auto_space 下会被记成「无法确定主题」的 topic_spacing 违规。
+  // 会被记成「无法确定主题」的 topic_spacing 违规。
   const ok = validateImportSchedule(spacingInput({
     schedule: [item({ account: '账号1', noteKey: '主题A/1', publishTime: '2026-07-16 09:00' })],
     existingReservations: [
@@ -446,9 +628,9 @@ test('scope=time 的条目不参与约束 5，不会被 auto_space 的 fail-clos
   }));
   assert.equal(ok.ok, true);
 
-  // 同一账号同主题的 topic 一路仍然照常拦截（约束 5 回归）
+  // 同一主题的 topic 一路仍然照常拦截（规则 A 回归，用跨店铺账号 3 验证是硬拒收）
   assert.throws(() => validateImportSchedule(spacingInput({
-    schedule: [item({ account: '账号2', noteKey: '主题A/1', publishTime: '2026-07-16 09:30' })],
+    schedule: [item({ account: '账号3', noteKey: '主题A/1', publishTime: '2026-07-16 09:30' })],
     existingReservations: [
       { platform: 'xiaohongshu', scope: 'topic', account: '账号1', publishTime: '2026-07-16 09:00', topicKey: '主题A', storeGroup: '店铺A' },
       { platform: 'douyin', scope: 'time', account: '抖音号1', publishTime: '2026-07-16 21:00' },
@@ -606,25 +788,29 @@ test('collectPlanTimestamps：从 timeSlots / timeWindows 推出本批时间范�
 // ---------- 跨端契约：Python 分配器产出 → JS 校验器 ----------
 
 // 直接调用本仓库的 scripts/schedule_allocator.py 生成一份真实排期，再喂给 JS 校验器。
-// 两端各自实现同一套硬约束，这个用例保证它们不会各跑各的。
+// 两端各自实现同一套硬约束，这个用例保证它们不会各跑各的。accountGroups 现在是无条件
+// 必填项（两端都是），店铺组按 4+4 拆成两组，时间窗按 4 天间隔排布，让 Python 端的
+// 跨店铺 2880 分钟主动避让能在构造期就成功找到解，不必依赖搜索回溯。
 const PYTHON_CONTRACT_SOURCE = `
 import json, sys
 sys.path.insert(0, ${JSON.stringify(path.join(__dirname, '..', 'scripts'))})
 from schedule_allocator import allocate_schedule
 
 templates = [str(i) for i in range(1, 9)]              # 8 个模板
-topics = ["主题%02d" % i for i in range(1, 22)]        # 21 个主题 → 池 168
-accounts = ["抖音号%d" % i for i in range(1, 9)]        # 8 个抖音账号
+topics = ["主题%02d" % i for i in range(1, 9)]         # 8 个主题 → 池 64
+accounts_a = ["抖音号%d" % i for i in range(1, 5)]      # 店铺1 的 4 个抖音账号
+accounts_b = ["抖音号%d" % i for i in range(5, 9)]      # 店铺2 的 4 个抖音账号
+account_groups = {a: "店铺1" for a in accounts_a}
+account_groups.update({a: "店铺2" for a in accounts_b})
 slots = []
-for date in ("2026-09-01", "2026-09-02", "2026-09-03"):
-    for window in ("08:00-08:30", "15:00-15:30", "22:00-22:30"):
-        slots.append(date + " " + window)
-slots = slots[:7]                                      # 7 个时段 → 8×7 = 56 条
+for date in ("2026-09-01", "2026-09-05", "2026-09-09"):  # 每隔 4 天一个窗口，天然满足跨店铺 2880 分钟
+    slots.append(date + " 08:00-08:30")
 
 payload = {
     "seed": "contract-test-seed",
     "noteFolders": [{"topic": t, "templates": list(templates)} for t in topics],
-    "accounts": {"douyin": list(accounts)},
+    "accounts": {"douyin": accounts_a + accounts_b},
+    "accountGroups": account_groups,
     "timeSlots": {"regular": slots, "special": []},
     "coverageStrategy": "minimum",
     "allowPartialSchedule": True,
@@ -633,7 +819,7 @@ payload = {
 print(json.dumps({"payload": payload, "result": allocate_schedule(payload)}, ensure_ascii=False))
 `;
 
-test('跨端契约：Python 分配器产出的 168 池/56 槽位排期能通过 JS 校验器', (t) => {
+test('跨端契约：Python 分配器产出的排期（含跨店铺 2880 分钟避让）能通过 JS 校验器', (t) => {
   const proc = spawnSync('python3', ['-c', PYTHON_CONTRACT_SOURCE], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   if (proc.error && proc.error.code === 'ENOENT') {
     t.skip('本机没有 python3，跳过跨端契约用例');
@@ -642,18 +828,47 @@ test('跨端契约：Python 分配器产出的 168 池/56 槽位排期能通过 
   assert.equal(proc.status, 0, `python 分配器执行失败：${proc.stderr}`);
 
   const { payload, result } = JSON.parse(proc.stdout);
-  assert.equal(result.stats.scheduledCount, 56);
-  assert.equal(result.stats.unscheduledCount, 112);
+  assert.equal(result.stats.scheduledCount, 24); // 8 账号 × 3 时段
+  assert.equal(result.stats.unscheduledCount, 40); // 64 池 - 24
 
   const validated = validateImportSchedule({
     seed: payload.seed,
     schedule: result.schedule,
     noteFolders: payload.noteFolders,
+    accountGroups: payload.accountGroups,
     coverageStrategy: payload.coverageStrategy,
     allowPartialSchedule: payload.allowPartialSchedule,
     topicDecision: payload.topicDecision,
   });
   assert.equal(validated.ok, true);
-  assert.equal(validated.stats.scheduledCount, 56);
+  assert.equal(validated.stats.scheduledCount, 24);
   assert.equal(validated.constraints.uniqueMinuteAcrossBatch, true);
+  // 同店铺 4 账号两两同主题组合会产出 approvals（规则 B），跨店铺的都被 Python 端主动避让掉，
+  // 不应该有任何 topic_spacing violation（否则 validateImportSchedule 早就抛错了，走不到这里）。
+  assert.ok(validated.approvals.length > 0, '同店铺内应该有 approvals 产出');
+  assert.equal(validated.topicVolume.length, 8);
+});
+
+test('跨端契约：Python 分配器缺 accountGroups 时本地 fail-closed（不必等 JS 校验器）', () => {
+  const SOURCE = `
+import sys
+sys.path.insert(0, ${JSON.stringify(path.join(__dirname, '..', 'scripts'))})
+from schedule_allocator import allocate_schedule, ScheduleError
+payload = {
+    "seed": "missing-group-test",
+    "noteFolders": [{"topic": "主题A", "templates": ["1", "2"]}],
+    "accounts": {"douyin": ["抖音号1"]},
+    "timeSlots": {"regular": ["2026-09-01 08:00-08:30"], "special": []},
+    "coverageStrategy": "minimum",
+    "allowPartialSchedule": True,
+}
+try:
+    allocate_schedule(payload)
+    print("UNEXPECTED_OK")
+except ScheduleError as e:
+    print("EXPECTED_ERROR:" + str(e))
+`;
+  const proc = spawnSync('python3', ['-c', SOURCE], { encoding: 'utf8' });
+  if (proc.error && proc.error.code === 'ENOENT') return;
+  assert.match(proc.stdout, /EXPECTED_ERROR:.*缺少店铺组映射/);
 });

@@ -312,7 +312,9 @@ test('indexed reservation rejects missing store group, account, or valid time', 
 
   for (const [record, message] of [
     [{ recordId: 'rec_1', xiaohongshuAccount: '未知账号', xiaohongshuStatus: '待发布', publishTime: 1784051200000 }, /未配置店铺组/],
-    [{ recordId: 'rec_1', xiaohongshuAccount: '', xiaohongshuStatus: '待发布', publishTime: 1784051200000 }, /缺少小红书账号/],
+    // collectIndexedReservations 双平台化之后，账号缺失的报错文案从"缺少小红书账号"
+    // 改成了平台无关的"缺少账号"（buildReservation 内部现在两个平台共用同一段逻辑）。
+    [{ recordId: 'rec_1', xiaohongshuAccount: '', xiaohongshuStatus: '待发布', publishTime: 1784051200000 }, /缺少账号/],
     [{ recordId: 'rec_1', xiaohongshuAccount: '可乐', xiaohongshuStatus: '待发布', publishTime: '不是时间' }, /发布时间无效/],
     [{ recordId: 'rec_1', xiaohongshuAccount: '可乐', xiaohongshuStatus: '待发布', publishTime: new Date('invalid') }, /发布时间无效/],
   ]) {
@@ -433,19 +435,118 @@ test('conflict detection fails closed when current or reservation context is inc
   }
 });
 
-test('different concrete topics, different stores, and reservation-only groups do not conflict', () => {
+test('different concrete topics, reservation-only groups, and different platforms do not conflict', () => {
+  // 分组键改为「平台 + 主题」之后，跨店铺同主题不再天然免检——那正是本次重写要新增的能力
+  // （规则 A 需要跨店铺也能比到一起才谈得上硬约束），已经拆到下面新增的用例单独验证。
+  // 这里只保留真正"不该冲突"的三种情形：不同具体主题、只有历史预约没有本批条目的组、
+  // 以及不同平台。
   assert.deepEqual(findCrossAccountTopicConflicts({
     currentItems: [
       { noteKey: 'new/1', topicKey: '剧本杀英语/定语从句', account: '拉面卷卷', storeGroup: '教师店' },
       { noteKey: 'new/2', topicKey: '剧本杀英语/被动语态', account: '可乐', storeGroup: '教师店' },
+      { noteKey: 'new/3', topicKey: '同平台不同店主题', account: '账号甲', storeGroup: '店A', platform: 'xiaohongshu' },
+    ],
+    reservations: [
+      // 孤立主题：两条都是 reservation，没有本批条目参与，整组被跳过（不构成冲突）
+      { recordId: 'rec_2', topicKey: '孤立主题', account: '账号丙', storeGroup: '店C', publishTime: 2 },
+      { recordId: 'rec_3', topicKey: '孤立主题', account: '账号丁', storeGroup: '店C', publishTime: 3 },
+      // 平台不同：即使账号、主题、店铺都对得上，分组键含 platform，不会和上面的
+      // "同平台不同店主题"分到一组
+      { recordId: 'rec_4', topicKey: '同平台不同店主题', account: '账号乙', storeGroup: '店B', publishTime: 4, platform: 'douyin' },
+    ],
+  }), []);
+});
+
+test('跨店铺同主题现在会产出冲突，且标记为 cross_store（硬约束）；同店铺标记为 same_store（需审批）', () => {
+  const crossStore = findCrossAccountTopicConflicts({
+    currentItems: [
       { noteKey: 'new/3', topicKey: '期末复习', account: '账号甲', storeGroup: '店A' },
     ],
     reservations: [
       { recordId: 'rec_1', topicKey: '期末复习', account: '账号乙', storeGroup: '店B', publishTime: 1 },
-      { recordId: 'rec_2', topicKey: '孤立主题', account: '账号丙', storeGroup: '店C', publishTime: 2 },
-      { recordId: 'rec_3', topicKey: '孤立主题', account: '账号丁', storeGroup: '店C', publishTime: 3 },
     ],
-  }), []);
+  });
+  assert.equal(crossStore.length, 1);
+  assert.equal(crossStore[0].scope, 'cross_store');
+  assert.equal(crossStore[0].scopeLabel, '跨店铺（硬约束）');
+  assert.deepEqual(crossStore[0].storeGroups, ['店A', '店B']);
+  assert.equal(crossStore[0].platform, 'xiaohongshu'); // 未传 platform 时向后兼容默认小红书
+
+  const sameStore = findCrossAccountTopicConflicts({
+    currentItems: [
+      { noteKey: 'new/3', topicKey: '期末复习', account: '账号甲', storeGroup: '店A' },
+    ],
+    reservations: [
+      { recordId: 'rec_1', topicKey: '期末复习', account: '账号乙', storeGroup: '店A', publishTime: 1 },
+    ],
+  });
+  assert.equal(sameStore.length, 1);
+  assert.equal(sameStore[0].scope, 'same_store');
+  assert.equal(sameStore[0].scopeLabel, '同店铺（需审批）');
+  assert.deepEqual(sameStore[0].storeGroups, ['店A']);
+});
+
+test('collectIndexedReservations：抖音分支（douyinAccount/douyinStatus/抖音历史键）与小红书并行工作', () => {
+  const topicIndex = {
+    version: 1,
+    records: {
+      rec_dy_pending: validEntry({ topicKey: '抖音主题', noteKey: 'dy/1' }),
+      rec_dy_published: validEntry({ topicKey: '抖音主题', noteKey: 'dy/2' }),
+    },
+  };
+  const feishuRecords = [
+    { recordId: 'rec_dy_pending', douyinAccount: '抖音号A', douyinStatus: '待发布', publishTime: 1784051200000 },
+  ];
+  const history = {
+    rec_dy_published: { 抖音: [{ accountName: '抖音号B', at: 1784051500000 }] },
+  };
+  const reservations = collectIndexedReservations({
+    topicIndex,
+    feishuRecords,
+    history,
+    accountGroups: { 抖音号A: '抖音店', 抖音号B: '抖音店' },
+  });
+  assert.deepEqual(
+    reservations.map(item => [item.recordId, item.platform, item.account, item.state]).sort(),
+    [
+      ['rec_dy_pending', 'douyin', '抖音号A', 'scheduled'],
+      ['rec_dy_published', 'douyin', '抖音号B', 'published'],
+    ]
+  );
+});
+
+test('collectIndexedReservations：同一条记录小红书和抖音字段互不干扰，各自出一条', () => {
+  const topicIndex = { version: 1, records: { rec_1: validEntry({ topicKey: '定语从句', noteKey: 'a/1' }) } };
+  const reservations = collectIndexedReservations({
+    topicIndex,
+    feishuRecords: [{
+      recordId: 'rec_1',
+      xiaohongshuAccount: '可乐',
+      xiaohongshuStatus: '待发布',
+      douyinAccount: '抖音可乐',
+      douyinStatus: '待发布',
+      publishTime: 1784051200000,
+    }],
+    history: {},
+    accountGroups: { 可乐: '教师店', 抖音可乐: '教师店' },
+  });
+  assert.deepEqual(
+    reservations.map(item => `${item.platform}:${item.account}`).sort(),
+    ['douyin:抖音可乐', 'xiaohongshu:可乐']
+  );
+});
+
+test('collectIndexedReservations：某记录只在一个平台活跃时，另一个平台不误报"缺少账号"', () => {
+  // 纯小红书记录：douyinStatus/douyinAccount 天然为空，抖音这一路应该被状态门（不在
+  // ACTIVE_PLATFORM_STATUSES 里）挡住，根本不会走到"缺少账号"的 fail-closed 分支。
+  const topicIndex = { version: 1, records: { rec_1: validEntry({ topicKey: '定语从句', noteKey: 'a/1' }) } };
+  const reservations = collectIndexedReservations({
+    topicIndex,
+    feishuRecords: [{ recordId: 'rec_1', xiaohongshuAccount: '可乐', xiaohongshuStatus: '待发布', publishTime: 1784051200000 }],
+    history: {},
+    accountGroups: { 可乐: '教师店' },
+  });
+  assert.deepEqual(reservations.map(item => `${item.platform}:${item.account}`), ['xiaohongshu:可乐']);
 });
 
 test('confirmation requires exact fingerprint and every conflict id', () => {

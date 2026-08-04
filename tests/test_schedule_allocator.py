@@ -22,7 +22,20 @@ from schedule_allocator import (  # noqa: E402
     parse_publish_time_to_abs_minute,
 )
 
-CONSTRAINTS = {"minSameAccountIntervalMinutes": 361, "uniqueMinuteAcrossBatch": True}
+# minCrossStoreTopicIntervalMinutes 现在是无条件消费的字段（规则 A：跨店铺同主题跨账号间隔），
+# 缺失会在 load_constraints() 校验时直接报错——这份测试夹具必须跟真实的
+# src/schedule-constraints.json 同口径，否则连 seed 校验这类无关用例都会先被这里拦下。
+# topicVolumeWindowDays/topicVolumeMaxCount/topicVolumeLongWindowDays 是规则 C/D 用的，
+# Python 分配器本身不消费（那两条规则需要跨批历史数据，只有服务端能看到，见
+# scheduler-allocator.js 的 checkTopicVolume），这里补全只是为了让夹具字段和生产配置一致。
+CONSTRAINTS = {
+    "minSameAccountIntervalMinutes": 361,
+    "uniqueMinuteAcrossBatch": True,
+    "minCrossStoreTopicIntervalMinutes": 2880,
+    "topicVolumeWindowDays": 7,
+    "topicVolumeMaxCount": 10,
+    "topicVolumeLongWindowDays": 30,
+}
 
 
 def note_folders(topics: int, templates: int) -> list[dict]:
@@ -170,49 +183,69 @@ class ConstraintTests(unittest.TestCase):
         self.assertIn("only_acct", message)
         self.assertIn("2 种模板", message)
 
-    def test_constraint5_auto_space_topic_gap_across_accounts(self):
-        """约束 5：auto_space 时同店铺同主题跨账号间隔 >= minGap；同账号之间不受限制。"""
-        payload = base_payload(topicDecision="auto_space")
-        result = allocate_schedule(payload, CONSTRAINTS)
-        by_topic: dict[tuple, list[tuple[str, int]]] = {}
-        for item in result["schedule"]:
-            if item["platform"] != "xiaohongshu" or not item["storeGroup"]:
-                continue
-            key = (item["storeGroup"], item["topicKey"])
-            by_topic.setdefault(key, []).append((item["account"], abs_minute(item["publishTime"])))
-        for key, entries in by_topic.items():
-            for i in range(len(entries)):
-                for j in range(i + 1, len(entries)):
-                    acc_i, min_i = entries[i]
-                    acc_j, min_j = entries[j]
-                    if acc_i == acc_j:
-                        continue
-                    self.assertGreaterEqual(abs(min_i - min_j), 361, f"{key} 下 {acc_i}/{acc_j} 跨账号同主题间隔不足")
-
-    def test_constraint5_violation_reports_diagnosis(self):
-        """故意用极窄的精确分钟槽制造 auto_space 冲突，必须报出具体店铺/主题/账号/差值。"""
+    def test_rule_a_cross_store_topic_gap_across_accounts(self):
+        """规则 A（2026-08 重写）：跨店铺同主题跨账号间隔 >= minCrossStoreTopicIntervalMinutes；
+        同账号之间、同店铺账号之间都不受此约束——同店铺是规则 B（人工审批），不影响本地构造。
+        旧版这里测的是"同店铺跨账号"，那条规则已经被推翻（同店铺现在不做时间避让），
+        改成跨店铺账号来验证真正的规则 A。"""
         payload = base_payload(
             accounts={
                 "xiaohongshu_regular": ["acct_a", "acct_b"],
                 "xiaohongshu_special": [],
                 "douyin": [],
             },
-            accountGroups={"acct_a": "store1", "acct_b": "store1"},
+            accountGroups={"acct_a": "store1", "acct_b": "store2"},  # 跨店铺
+            timeSlots={
+                "regular": [
+                    "2026-08-01 06:00-22:00",
+                    "2026-08-05 06:00-22:00",
+                    "2026-08-09 06:00-22:00",
+                ],
+                "special": [],
+            },
+            noteFolders=note_folders(3, 3),
+        )
+        result = allocate_schedule(payload, CONSTRAINTS)
+        by_topic: dict[tuple, list[tuple[str, str, int]]] = {}
+        for item in result["schedule"]:
+            if not item["storeGroup"]:
+                continue
+            key = (item["platform"], item["topicKey"])
+            by_topic.setdefault(key, []).append((item["storeGroup"], item["account"], abs_minute(item["publishTime"])))
+        for key, entries in by_topic.items():
+            for i in range(len(entries)):
+                for j in range(i + 1, len(entries)):
+                    store_i, acc_i, min_i = entries[i]
+                    store_j, acc_j, min_j = entries[j]
+                    if acc_i == acc_j or store_i == store_j:
+                        continue  # 同账号或同店铺不受规则 A 约束
+                    self.assertGreaterEqual(
+                        abs(min_i - min_j), 2880, f"{key} 下跨店铺 {acc_i}/{acc_j} 同主题间隔不足"
+                    )
+
+    def test_rule_a_violation_reports_diagnosis(self):
+        """故意用极窄的精确分钟槽制造跨店铺冲突，必须报出具体账号/差值可执行诊断。"""
+        payload = base_payload(
+            accounts={
+                "xiaohongshu_regular": ["acct_a", "acct_b"],
+                "xiaohongshu_special": [],
+                "douyin": [],
+            },
+            accountGroups={"acct_a": "store1", "acct_b": "store2"},  # 跨店铺
             timeSlots={
                 # 只给一个共享的 10 分钟窄窗口：每个账号只发 1 次，不触发约束 1
-                # （同账号只有一条记录，没有相邻间隔可比较），专门测约束 5——
-                # 两个账号在窗口内的分钟差必然 < 361。
+                # （同账号只有一条记录，没有相邻间隔可比较），专门测规则 A——
+                # 两个账号在窗口内的分钟差必然 < 2880，且是跨店铺，逃不掉硬约束。
                 "regular": ["2026-08-01 06:00-06:09"],
                 "special": [],
             },
             noteFolders=note_folders(1, 2),  # 只有一个主题，两个账号必然撞同一个主题
-            topicDecision="auto_space",
             allowPartialSchedule=True,
         )
         with self.assertRaises(ScheduleError) as ctx:
             allocate_schedule(payload, CONSTRAINTS)
         message = str(ctx.exception)
-        # 现在的构造过程会在挑主题阶段就主动避让约束 5，只有 1 个主题、2 个账号
+        # 构造过程会在挑主题阶段就主动避让规则 A，只有 1 个主题、2 个跨店铺账号
         # 时无主题可选，因此诊断来自 noteKey 分配步骤而不是事后校验；断言只要求
         # 诊断包含"是哪个账号 + 为什么找不到"这个可执行信息，不锁死具体措辞。
         self.assertIn("acct_b", message)
@@ -310,10 +343,10 @@ class PlatformAgnosticReservationTests(unittest.TestCase):
                 f"{item['publishTime']} 与既有排期 {reserved_time} 间隔仅 {gap} 分钟",
             )
 
-    def test_reservation_without_topic_does_not_break_auto_space(self):
-        """无 topicKey / storeGroup 的条目在 auto_space 下应被跳过，而不是让求解失败。"""
+    def test_reservation_without_topic_does_not_break_rule_a(self):
+        """无 topicKey / storeGroup 的条目应被跳过，而不是让求解失败——规则 A 现在无条件执行，
+        不再需要 topicDecision='auto_space' 才生效，这里特意不传它来验证这一点。"""
         payload = base_payload(
-            topicDecision="auto_space",
             existingReservations=[
                 {"platform": "douyin", "account": "other_dy_acct", "publishTime": "2026-08-01 10:00"},
                 {"platform": "xiaohongshu", "account": "other_xhs_acct", "publishTime": "2026-08-01 11:00"},
@@ -321,6 +354,92 @@ class PlatformAgnosticReservationTests(unittest.TestCase):
         )
         result = allocate_schedule(payload, CONSTRAINTS)
         self.assertGreater(len(result["schedule"]), 0)
+
+
+class RuleATests(unittest.TestCase):
+    """规则 A（2026-08 重写）专项正向用例：跨店铺 2880 分钟避让、同店铺不避让、抖音纳入、
+    店铺组映射无条件必填。跟 ConstraintTests 里的 test_rule_a_* 側重"事后校验硬约束"不同，
+    这里侧重"给定拓扑，Python 构造器能不能正确产出/正确拒绝"。"""
+
+    def test_cross_store_topic_gap_is_avoided_during_construction(self):
+        """跨店铺同主题跨账号：构造期主动避让应该成功产出满足 2880 分钟间隔的排期，
+        不需要走到事后校验报错——这是规则 A 的核心行为。"""
+        payload = base_payload(
+            accounts={
+                "xiaohongshu_regular": ["acct_a", "acct_b"],
+                "xiaohongshu_special": [],
+                "douyin": [],
+            },
+            accountGroups={"acct_a": "store1", "acct_b": "store2"},
+            timeSlots={
+                "regular": [
+                    "2026-08-01 06:00-22:00",
+                    "2026-08-05 06:00-22:00",
+                ],
+                "special": [],
+            },
+            noteFolders=note_folders(2, 2),
+        )
+        result = allocate_schedule(payload, CONSTRAINTS)  # 不应该报错
+        self.assertGreater(len(result["schedule"]), 0)
+
+    def test_same_store_not_time_restricted(self):
+        """同店铺账号发同一主题，即使窗口很窄也不会被规则 A 拦——它是纯规则 B
+        （人工审批），只在服务端 checkTopicSpacing 产出 approvals，不影响本地构造。"""
+        payload = base_payload(
+            accounts={
+                "xiaohongshu_regular": ["acct_a", "acct_b"],
+                "xiaohongshu_special": [],
+                "douyin": [],
+            },
+            accountGroups={"acct_a": "store1", "acct_b": "store1"},  # 同店铺
+            timeSlots={"regular": ["2026-08-01 06:00-06:09"], "special": []},
+            noteFolders=note_folders(1, 2),
+            allowPartialSchedule=True,
+        )
+        result = allocate_schedule(payload, CONSTRAINTS)  # 不应该报错
+        self.assertGreater(len(result["schedule"]), 0)
+
+    def test_douyin_accounts_are_covered_by_rule_a(self):
+        """抖音账号同样要求店铺组映射，跨店铺同主题间隔同样受约束——旧实现完全不检查抖音。"""
+        payload = base_payload(
+            accounts={"xiaohongshu_regular": [], "xiaohongshu_special": [], "douyin": ["dy_x", "dy_y"]},
+            accountGroups={"dy_x": "storeX", "dy_y": "storeY"},
+            timeSlots={
+                "regular": [
+                    "2026-08-01 06:00-22:00",
+                    "2026-08-05 06:00-22:00",
+                ],
+                "special": [],
+            },
+            noteFolders=note_folders(2, 2),
+        )
+        result = allocate_schedule(payload, CONSTRAINTS)
+        by_topic: dict[tuple, list[tuple[str, str, int]]] = {}
+        for item in result["schedule"]:
+            key = (item["platform"], item["topicKey"])
+            by_topic.setdefault(key, []).append((item["storeGroup"], item["account"], abs_minute(item["publishTime"])))
+        for key, entries in by_topic.items():
+            for i in range(len(entries)):
+                for j in range(i + 1, len(entries)):
+                    store_i, acc_i, min_i = entries[i]
+                    store_j, acc_j, min_j = entries[j]
+                    if acc_i == acc_j or store_i == store_j:
+                        continue
+                    self.assertGreaterEqual(abs(min_i - min_j), 2880, f"{key} 下抖音跨店铺 {acc_i}/{acc_j} 间隔不足")
+
+    def test_missing_account_group_fails_closed_unconditionally(self):
+        """店铺组映射现在无条件必填——不再局限于 auto_space + 小红书，抖音账号缺映射同样
+        fail-closed（旧实现里这里会直接放行，因为旧检查只在 auto_space + 小红书时才生效）。"""
+        payload = base_payload(
+            accounts={"xiaohongshu_regular": [], "xiaohongshu_special": [], "douyin": ["dy_no_group"]},
+            accountGroups={},
+        )
+        with self.assertRaises(ScheduleError) as ctx:
+            allocate_schedule(payload, CONSTRAINTS)
+        message = str(ctx.exception)
+        self.assertIn("dy_no_group", message)
+        self.assertIn("缺少店铺组映射", message)
 
 
 if __name__ == "__main__":

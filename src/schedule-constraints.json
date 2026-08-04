@@ -1,4 +1,8 @@
 {
   "minSameAccountIntervalMinutes": 361,
-  "uniqueMinuteAcrossBatch": true
+  "uniqueMinuteAcrossBatch": true,
+  "minCrossStoreTopicIntervalMinutes": 2880,
+  "topicVolumeWindowDays": 7,
+  "topicVolumeMaxCount": 10,
+  "topicVolumeLongWindowDays": 30
 }

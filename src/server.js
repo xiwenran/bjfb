@@ -255,18 +255,28 @@ function normalizeTopicSpacingInput(payload) {
   if (!accounts || typeof accounts !== 'object' || Array.isArray(accounts)) {
     throw createConfigError('排期检查需要 accounts');
   }
-  const candidateAccounts = [...new Set([
-    ...(Array.isArray(accounts.xiaohongshu_regular) ? accounts.xiaohongshu_regular : []),
-    ...(Array.isArray(accounts.xiaohongshu_special) ? accounts.xiaohongshu_special : []),
-  ].map(value => String(value || '').trim()).filter(Boolean))];
-  if (candidateAccounts.length === 0) throw createConfigError('排期检查需要候选小红书账号');
+  // 候选账号池现在两个平台都收，且必须分开保留平台归属：硬校验器（validateImportSchedule）
+  // 早就覆盖抖音了，这个预检接口只收小红书会导致预警口径和硬校验不一致——抖音的同主题
+  // 冲突在这里看不到，直到提交 /api/import/schedule 才会被拒收，体验上是"预警漏了"。
+  // 不能像旧实现那样摊平成一个不分平台的 Set：下游 buildPotentialConflictItems 需要
+  // 知道每个候选账号属于哪个平台，才能正确打 platform 标记、正确过滤 reservations。
+  const dedupeTrim = list => [...new Set(
+    (Array.isArray(list) ? list : []).map(value => String(value || '').trim()).filter(Boolean)
+  )];
+  const candidateAccountsByPlatform = {
+    xiaohongshu: dedupeTrim([...(accounts.xiaohongshu_regular || []), ...(accounts.xiaohongshu_special || [])]),
+    douyin: dedupeTrim(accounts.douyin),
+  };
+  if (candidateAccountsByPlatform.xiaohongshu.length === 0 && candidateAccountsByPlatform.douyin.length === 0) {
+    throw createConfigError('排期检查需要候选账号');
+  }
   if (!payload.accountGroups || typeof payload.accountGroups !== 'object' || Array.isArray(payload.accountGroups)) {
     throw createConfigError('排期检查需要 accountGroups');
   }
   const hasTimeInput = payload.timeSlots && typeof payload.timeSlots === 'object'
     || payload.timeWindows && typeof payload.timeWindows === 'object';
   if (!hasTimeInput) throw createConfigError('排期检查需要时间输入');
-  return candidateAccounts;
+  return candidateAccountsByPlatform;
 }
 
 function describeCurrentTopics(payload, candidateAccounts) {
@@ -296,30 +306,48 @@ function describeCurrentTopics(payload, candidateAccounts) {
   return { topicGroups: [...topicGroups.values()], currentItems };
 }
 
-function buildPotentialConflictItems({ topicGroups, candidateAccounts, accountGroups, reservations }) {
-  const accountsByStore = new Map();
-  for (const account of candidateAccounts) {
-    const storeGroup = String(accountGroups[account] || '').trim();
-    if (!storeGroup) throw createConfigError(`账号“${account}”未配置店铺组，无法检查同主题间隔`);
-    if (!accountsByStore.has(storeGroup)) accountsByStore.set(storeGroup, []);
-    accountsByStore.get(storeGroup).push(account);
-  }
-
+// candidateAccountsByPlatform 现在两个平台都收（normalizeTopicSpacingInput 已经把
+// xiaohongshu_regular/xiaohongshu_special/douyin 分平台摊平），本函数按平台各自独立
+// 生成 potential 条目，互不混算——accountsByStore 分组、existing 既有排期过滤都必须
+// 带 platform，否则会把抖音候选和小红书历史（或反过来）错配成同一批。跨店铺可比不再
+// 靠这里的分组结构限定——findCrossAccountTopicConflicts 现在按「平台 + 主题」分组
+// （不再含店铺组），本函数只需要把同一主题下不同店铺组的候选账号都产出来，下游自然能
+// 比到一起，并按 storeGroups 是否只有一个来判定「同店铺（需审批）」还是「跨店铺（硬约束）」。
+function buildPotentialConflictItems({ topicGroups, candidateAccountsByPlatform, accountGroups, reservations }) {
   const currentItems = [];
-  for (const topic of topicGroups) {
-    for (const [storeGroup, accounts] of accountsByStore) {
-      const existing = reservations.filter(item => item.topicKey === topic.topicKey && item.storeGroup === storeGroup);
-      const shouldCompareAllAccounts = (topic.noteKeys.length >= 2 && accounts.length >= 2) || existing.length > 0;
-      const selectedAccounts = shouldCompareAllAccounts ? accounts : accounts.slice(0, 1);
-      for (const [index, account] of selectedAccounts.entries()) {
-        currentItems.push({
-          noteKey: topic.noteKeys[index % topic.noteKeys.length],
-          topicKey: topic.topicKey,
-          displayTopic: topic.displayTopic,
-          account,
-          storeGroup,
-          potential: true,
-        });
+  for (const platform of ['xiaohongshu', 'douyin']) {
+    const candidateAccounts = candidateAccountsByPlatform?.[platform] || [];
+    if (candidateAccounts.length === 0) continue;
+
+    const accountsByStore = new Map();
+    for (const account of candidateAccounts) {
+      const storeGroup = String(accountGroups[account] || '').trim();
+      if (!storeGroup) throw createConfigError(`账号"${account}"未配置店铺组，无法检查同主题间隔`);
+      if (!accountsByStore.has(storeGroup)) accountsByStore.set(storeGroup, []);
+      accountsByStore.get(storeGroup).push(account);
+    }
+
+    for (const topic of topicGroups) {
+      for (const [storeGroup, accounts] of accountsByStore) {
+        // reservations 混着小红书和抖音两个平台（collectIndexedReservations 已经把
+        // 抖音也收进来），这里只关心"本平台"候选池会不会撞历史同平台排期，必须按平台
+        // 过滤，否则同 topicKey+storeGroup 的另一平台历史记录会被误判成"已有排期"。
+        const existing = reservations.filter(item => (
+          item.platform === platform && item.topicKey === topic.topicKey && item.storeGroup === storeGroup
+        ));
+        const shouldCompareAllAccounts = (topic.noteKeys.length >= 2 && accounts.length >= 2) || existing.length > 0;
+        const selectedAccounts = shouldCompareAllAccounts ? accounts : accounts.slice(0, 1);
+        for (const [index, account] of selectedAccounts.entries()) {
+          currentItems.push({
+            noteKey: topic.noteKeys[index % topic.noteKeys.length],
+            topicKey: topic.topicKey,
+            displayTopic: topic.displayTopic,
+            platform,
+            account,
+            storeGroup,
+            potential: true,
+          });
+        }
       }
     }
   }
@@ -327,8 +355,10 @@ function buildPotentialConflictItems({ topicGroups, candidateAccounts, accountGr
 }
 
 async function loadTopicSpacingContext(payload) {
-  const candidateAccounts = normalizeTopicSpacingInput(payload);
-  const { topicGroups, currentItems } = describeCurrentTopics(payload, candidateAccounts);
+  const candidateAccountsByPlatform = normalizeTopicSpacingInput(payload);
+  // describeCurrentTopics 的第二个参数其实没在函数体内使用（历史遗留的死参数，不在本次
+  // 范围锁内，不顺手清理），这里只是保持调用形态不变。
+  const { topicGroups, currentItems } = describeCurrentTopics(payload, candidateAccountsByPlatform);
   let topicIndex;
   try {
     topicIndex = readTopicIndex();
@@ -386,7 +416,7 @@ async function loadTopicSpacingContext(payload) {
   });
   const potentialItems = buildPotentialConflictItems({
     topicGroups,
-    candidateAccounts,
+    candidateAccountsByPlatform,
     accountGroups: payload.accountGroups,
     reservations,
   });
@@ -1185,9 +1215,12 @@ const server = http.createServer(async (req, res) => {
             ...payload,
             currentItems: context.currentItems,
             existingReservations: [
-              // 第一路：主题索引里的小红书排期，供约束 1/2/5。
+              // 第一路：主题索引里的排期，供约束 1/2 与规则 A/B/C/D。
+              // platform 现在跟着 item.platform 走（collectIndexedReservations 已经把
+              // 抖音也收进来了）——原来写死 'xiaohongshu'，会把抖音的既有排期全部
+              // 错标成小红书，跨账号同主题检查会比错平台。
               ...context.reservations.map(item => ({
-                platform: 'xiaohongshu',
+                platform: item.platform,
                 scope: 'topic',
                 account: item.account,
                 publishTime: item.publishTime,
@@ -1205,6 +1238,8 @@ const server = http.createServer(async (req, res) => {
             ],
             topicDecision: payload.confirmation?.decision || 'none',
           });
+          // approvals（规则 B：同店铺同主题跨账号，需人工审批）与 topicVolume（规则 C 的
+          // 明细 + 规则 D 的 30 天统计）都已经在 validated 里，随对象展开一并带回前端。
           return sendJson(res, { ...validated, unparsableRecordIds: context.unparsableRecordIds });
         } catch (error) {
           return sendJson(res, {
