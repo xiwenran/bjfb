@@ -24,25 +24,58 @@ const SYSTEM_PROMPT = `你是一线教师账号的内容助手，帮教师把教
 **三条原则（靠你的语义判断执行，没有词表和公式）**
 
 1. **真实**：所有信息只能来自笔记主题和图片文件名。主题里没有的属性一律不写——课时划分、板书、可打印、教案、习题、答案、全册/全套、已更新、使用场景（预习/复习/假期/开学等）、教学效果、外部认可，这些只是常见的编造例子，不是穷举；一个说法算不算编造，按「主题和文件名里找得到出处吗」判断，宁可不写，不许臆造。
-2. **搜索优先，自然表达**：标题以搜索关键词为主体（主题里真实存在的版本/年级/学科/课名/形态要素），组织成一句自然流畅的话，像老师随手发的笔记名，不堆砌、不营销、不写情绪钩子。课文名保留书名号。标题必须带且只带 1 个 emoji，从白名单里选：📌 🔥 ✅ 💡 ✨ 📝。
+2. **搜索优先，自然表达**：标题以搜索关键词为主体（主题里真实存在的版本/年级/学科/课名/形态要素），组织成一句自然流畅的话，像老师随手发的笔记名，不堆砌、不营销、不写情绪钩子。课文名保留书名号。标题最多带 1 个 emoji（可以不带），要带就从白名单里选：📌 🔥 ✅ 💡 ✨ 📝。
 3. **每篇不同**：同批次生成多篇时，各篇围绕自己的课名/单元/内容点来写，不套用同一句式模板；任意两篇标题除课名/单元外不得雷同。
 
 ---
 
-**正文写法**
+**正文写法（2026-08-04 用户逐轮敲定，字面照抄，不改写不压缩）**
 
-- 首行：把标题里压缩或省略的搜索词展开成一句完整的话（英文课题写英文全名，教材版本写全称），这一行是搜索命中的主力。
-- 中间：列出本篇实际覆盖的内容——单元、课名、知识点、页码，信息来自主题和图片文件名，每行一条；每个课名/知识点都是一个搜索入口。
-- 末行：可选。有真实内容点就继续列，没有就在最后一条内容点直接收尾；不许为了「收一句」写完整性承诺、引导翻图或客套话。
-- 用 \\n 分行（JSON 字符串里写 \\n，不要真实回车），短句每行，不写成大段落。
+**写给谁看**
 
-**正文硬边界（2026-07-11 补，违反任一条即为不合格正文）**
+买家是一线老师，正在决定这份资料值不值得下手。他要知道的是这份东西怎么帮他把课上下来——有哪些环节、关键地方怎么处理、配了什么件。课本上的知识他自己就懂，不需要科普。
 
-- 素材口径：文件夹名承载笔记主题，是正文的合法信息来源；图片文件的序号、张数、排列顺序只是流水线内部信息，没有教学语义，不属于正文素材。
-- 禁止写图片张数、图片编号、图片呈现顺序——「共17张」「0.jpg至16.jpg」「按图片编号顺序呈现」「随图片顺序展开」都属此类。
-- 禁止中间行复述首行或标题——「主题：」「资料形态：」「本篇主题为」这类抄写句式一律不写。
-- 图片文件名无语义、没有内容点可列时，中间行只写主题里拆得出的版本/单元/课名要素；列不出就写短——短正文合法，任何凑行数的填充都不合格。
-- 禁止完整性/引导翻图话术：发布的图片只是这份资料的一部分，不代表全部内容。「图片即为课件完整内容」「完整内容见图」「内容按图整理」「按教材页面顺序整理」「需要的老师可以翻图查看」「完整版在图里」这类暗示图=全部内容、或引导读者翻图看全的句子一律不写（属原则1「真实」禁止的编造，只是换了说法）。
+**写什么**
+
+开头一句说清这是什么、难在哪。中间按资料的实际结构走——三步设计就写三步，两道关就写两道关，全册教案就写规模和栏目。结尾有真东西就说一句，没有就停。
+
+骨架按品类走，不套同一个模板：单课课件写这节课怎么上（环节设计加关键处理）；语法专题写解决什么混淆、判断路径怎么拆；全册教案写结构规模、栏目构成、版本差异。
+
+结尾那句只能是两种来源：引用资料里的原话，或者对资料结构的观察。
+
+数字要实数。页数、单元数、课时数、词表数量，都从实物数出来，不许估。具体到刺眼才不像模板——336页、40个抽象名词、9个单元50个课时。
+
+**怎么写**
+
+句子之间不搭桥，段落之间也不搭。上一段说完这件事，下一段直接说下一件，不要过渡句。前后关系读的人自己会接。
+
+句子不用捋顺。语序颠倒、说了一半绕回来、前后半句不完全对齐，都留着。处处通顺、每句都站得住，恰恰是最重的 AI 痕迹。分寸是不影响读懂。
+
+长短拉开。该展开的掰碎了说，次要的一句带过，有时候三个字就是一句。
+
+允许絮叨。同一个意思换句话再说一遍，加一句「就这么简单」这样的补白，带上「其实」「还挺」「根本」「才」这类口头词。写得干净利落是 AI 的习惯，人说话会重复会啰嗦。
+
+说点没关系的废话。一篇里放一两句跟资料没关系的话——一句随口的评论、一个冷知识。比如「艾青写这首诗那年才28岁」。这种话对买家决策毫无用处，但它是全篇最不像 AI 的地方。AI 每句都在干活，人不是。
+
+用大白话的动词。用、改、有、就、能，而不是使用、进行优化、具备、从而、可以实现。专业表述保留原样——压低放重、作主语宾语、单元教材分析，老师就这么说。
+
+有立场。哪块难、哪块最费劲、哪页最值、哪块学生容易卡，直接说。这是对资料和课的判断，写得出来说明真读过。
+
+**标点**
+
+句号能少则少，段落末尾不加句号。中间的停顿优先用逗号，一句话可以一路连很长，不用急着断。
+
+按手打习惯来。并列项直接用空格或顿号隔开，要强调的词直接写不加引号，课文名在正文里也不加书名号。冒号、破折号、分号是排版习惯，手打时基本不出现。书名号只在标题里保留，那是搜索词的视觉锚点。
+
+**排版**
+
+段落要有分量，2 到 4 行为主，整篇 6 到 8 段。句子之间用逗号连着走，一段说完一件事再换行。
+
+松散体现在句子层面，不是靠把每句拆成一行——那样看着碎，读起来累。
+
+只有一种情况可以单独占一行：那句跟正事无关的废话。孤零零杵着才有味道。
+
+正文 300 到 500 字。
 
 **标签写法**
 
@@ -54,9 +87,9 @@ const SYSTEM_PROMPT = `你是一线教师账号的内容助手，帮教师把教
 **硬边界（程序机械校验，违反即打回重写）**
 
 1. 标题 10-20 字：所有字符全部计入，《》每个符号计 1 字、emoji 计 1 字，与程序逐字符计数完全一致。
-2. 标题白名单 emoji 恰好 1 个（📌 🔥 ✅ 💡 ✨ 📝）：0 个或 2 个及以上都会被打回。
+2. 标题白名单 emoji 最多 1 个（📌 🔥 ✅ 💡 ✨ 📝），可以 0 个：2 个及以上会被打回，白名单外的 emoji 不算数。
 3. 标题标点最多 1 个（书名号《》与 emoji 不计入标点）。
-4. description 50-150 字，且必须分行：至少含一个换行（JSON 里写作 \\n）。写成一整段不分行会被打回。
+4. description 50-500 字。
 5. 标签数量：小红书最多 10 个，抖音最多 5 个，每个以 # 开头。
 6. 禁止营销话术与平台敏感词（标题和正文都适用）：
    引导互动类——关注我、私信我、评论区见、点赞收藏、点个赞、双击666、快码住、赶紧、别错过、一键三连、关注不迷路、直接用、直接套用、点击收藏、建议收藏、码住备用、赶紧收藏；
@@ -284,6 +317,44 @@ const BANNED_WORDS = [
   '免费领取', '低价', '白嫖', '带货', '佣金', '分销', '扫码',
 ];
 
+// ─────────────────────────────────────────────
+// 四条红线（2026-08-04 补，账号被判「内容相似度高、缺少真诚个人表达」后新增）
+// 与上面 BANNED_WORDS 的区别：BANNED_WORDS 是平台/营销敏感词，这四条是账号被判定
+// 相似度高之后新加的内容真实性/安全红线，各自独立判断、独立返回违规项。
+// ─────────────────────────────────────────────
+
+// 红线①使用经历词：只拦「我用过之后怎样」这一类，不拦对资料/学科本身的判断句
+// （例：「这页我觉得最值」「这单元本来就绕」合法，不在此表内，不会被拦）
+const EXPERIENCE_WORDS = ['我的体会', '自己做下来', '备课时发现', '亲测', '用下来', '我讲这课'];
+
+// 红线②无法验证的承诺：读者读完正文无法证伪，但夸大到失真的说法
+const PROMISE_WORDS = ['直接抄进', '照着讲就行', '新老师也能上', '拿来就能用'];
+
+// 红线③联系方式：微信号/QQ号/手机号/二维码提示，命中任一即判违规
+const CONTACT_INFO_PATTERNS = [
+  { pattern: /微信\s*[:：]?\s*[a-zA-Z0-9_-]{4,20}/, label: '微信号' },
+  { pattern: /\bqq\s*[:：]?\s*\d{5,11}\b/i, label: 'QQ号' },
+  { pattern: /1[3-9]\d{9}/, label: '手机号' },
+  { pattern: /(二维码|扫码|扫一扫)/, label: '二维码提示' },
+];
+
+// 红线④配套件回查：正文/标题提到这些配套件时，必须能在资产库里查到对应 artifact_key
+// （key 取值对齐 ~/teacher/publish-library/.asset-db/assets.sqlite3 的 artifacts.artifact_key）
+// 红线⑤完整性/引导翻图话术（原「正文硬边界」2026-07-11 条款，2026-08-04 随旧段删除时
+// 单独移入红线并补上机械校验）：发布的图片只是这份资料的一部分，声称「完整内容都在图里」
+// 是虚假宣传，不是文风问题，所以留在红线层而不是引导层。
+const FALSE_COMPLETENESS_PHRASES = [
+  '图片即为课件完整内容', '完整内容见图', '内容按图整理',
+  '按教材页面顺序整理', '需要的老师可以翻图查看', '完整版在图里',
+];
+
+const PACKAGE_ITEM_KEYWORDS = {
+  '教案': 'teacher_lesson_plan',
+  '逐字稿': 'teacher_transcript',
+  '学习单': 'teacher_worksheet',
+  '板书': 'teacher_blackboard',
+};
+
 function countCodepoints(str) {
   return Array.from(String(str || '')).length;
 }
@@ -301,11 +372,15 @@ function determinePlatform(record) {
 }
 
 // 校验 AI 生成内容的硬边界，返回违规项数组（空数组=通过）
-function validateGenerated(content, platform) {
+// availableArtifacts：调用方传入的该产品已确认存在的配套件 artifact_key 数组（可选）。
+// 见文件底部「配套件回查架构说明」——ai-writer.js 不直接连教师产品资产库的 sqlite，
+// 由调用方查库后把清单传进来；不传时红线④对提到配套件的正文一律 fail-closed。
+function validateGenerated(content, platform, availableArtifacts) {
   const violations = [];
   const title = String(content?.title || '');
   const description = String(content?.description || '');
   const tags = Array.isArray(content?.tags) ? content.tags : [];
+  const combinedText = `${title}\n${description}`;
 
   // ── 标题 ──
   if (!title) {
@@ -325,6 +400,10 @@ function validateGenerated(content, platform) {
   if (!description.trim()) {
     violations.push('正文为空，正文必须撰写');
   } else {
+    const descLen = countCodepoints(description);
+    if (descLen < 50 || descLen > 500) {
+      violations.push(`正文字数 ${descLen} 不在 50-500 区间`);
+    }
     const descBanned = BANNED_WORDS.find(word => description.includes(word));
     if (descBanned) {
       violations.push(`正文含禁用词「${descBanned}」`);
@@ -341,6 +420,47 @@ function validateGenerated(content, platform) {
   const badTagIndex = tags.findIndex(tag => typeof tag !== 'string' || !tag.startsWith('#'));
   if (badTagIndex >= 0) {
     violations.push(`标签[${badTagIndex}]未以 # 开头`);
+  }
+
+  // ── 红线①使用经历词：只拦「我用过之后如何」，说资料/说学科本身的判断句放行 ──
+  const experienceHit = EXPERIENCE_WORDS.find(word => description.includes(word));
+  if (experienceHit) {
+    violations.push(`正文含使用经历表述「${experienceHit}」（只能评价资料/学科本身，不能写自己用过之后的体会）`);
+  }
+
+  // ── 红线②无法验证的承诺 ──
+  const promiseHit = PROMISE_WORDS.find(word => combinedText.includes(word));
+  if (promiseHit) {
+    violations.push(`含无法验证的承诺「${promiseHit}」`);
+  }
+
+  // ── 红线③联系方式/二维码：命中一类即够，不逐类重复判 ──
+  const contactHit = CONTACT_INFO_PATTERNS.find(({ pattern }) => pattern.test(combinedText));
+  if (contactHit) {
+    violations.push(`正文或标题含联系方式（疑似${contactHit.label}），禁止出现`);
+  }
+
+  // ── 红线④配套件回查：提到教案/逐字稿/学习单/板书时，必须能在资产库查到对应 artifact ──
+  const mentionedItems = Object.entries(PACKAGE_ITEM_KEYWORDS)
+    .filter(([word]) => combinedText.includes(word));
+  if (mentionedItems.length > 0) {
+    if (!Array.isArray(availableArtifacts)) {
+      // fail-closed：拿不到配套件清单时一律判定为无法校验并打回，不能默认放行
+      const words = mentionedItems.map(([word]) => word).join('、');
+      violations.push(`正文或标题提到「${words}」，但未提供配套件清单，无法校验，判定为不合格`);
+    } else {
+      const missing = mentionedItems.filter(([, key]) => !availableArtifacts.includes(key));
+      if (missing.length > 0) {
+        const words = missing.map(([word]) => word).join('、');
+        violations.push(`正文或标题提到「${words}」，但该产品资产库里查不到对应配套件`);
+      }
+    }
+  }
+
+  // ── 红线⑤完整性/引导翻图话术：图片只是资料的一部分，暗示图=全部内容属虚假宣传 ──
+  const falseCompletenessHit = FALSE_COMPLETENESS_PHRASES.find(phrase => combinedText.includes(phrase));
+  if (falseCompletenessHit) {
+    violations.push(`正文或标题含虚假完整性话术「${falseCompletenessHit}」（图片只是资料一部分，不能暗示图=全部内容）`);
   }
 
   return violations;
@@ -509,17 +629,20 @@ async function generateContent(aiConfig, record) {
   }
 
   const platform = determinePlatform(record);
+  // 红线④配套件回查需要的清单：由调用方在 record 上带 availableArtifacts（查资产库后传入）。
+  // 不带时 validateGenerated 对提到配套件的正文一律 fail-closed，见该函数注释。
+  const availableArtifacts = Array.isArray(record.availableArtifacts) ? record.availableArtifacts : undefined;
 
   let rawText = await callProviderOnce(baseUserMessage);
   let parsed = parseAiResponse(rawText);
-  let violations = validateGenerated(parsed, platform);
+  let violations = validateGenerated(parsed, platform, availableArtifacts);
 
   if (violations.length > 0) {
     // 机械校验不过：把违规项反馈进 user prompt，重试 1 次
     const retryMessage = `${baseUserMessage}\n\n上一次生成未通过校验，请修正以下问题后重新生成完整 JSON：\n${violations.map(v => `- ${v}`).join('\n')}`;
     rawText = await callProviderOnce(retryMessage);
     parsed = parseAiResponse(rawText);
-    violations = validateGenerated(parsed, platform);
+    violations = validateGenerated(parsed, platform, availableArtifacts);
     if (violations.length > 0) {
       throw new Error(`AI 生成内容未通过校验（重试后仍不合规）：${violations.join('；')}`);
     }

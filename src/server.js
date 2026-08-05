@@ -29,6 +29,7 @@ const {
   saveRuntimeState,
 } = require('./config-store.js');
 const { generateContent, testConnection } = require('./ai-writer.js');
+const { getAvailableArtifacts } = require('./artifact-lookup.js');
 const { validateImportSchedule } = require('./scheduler-allocator.js');
 const {
   normalizeTopicKey,
@@ -1600,6 +1601,21 @@ const server = http.createServer(async (req, res) => {
                   douyinAccount: normalizedDouyinAccount,
                   imagePaths: images.map(i => i.path), // 传实际路径供 AI 视觉识别
                 };
+                // 红线④配套件回查：有本地笔记目录路径时查资产库，拿到该产品真实登记的配套件清单。
+                // 查不到归属或查询失败都不设置 availableArtifacts，validateGenerated 按 fail-closed
+                // 处理（提到教案/逐字稿/学习单/板书的正文一律打回）；reason 区分「这份笔记没登记归属」
+                // 与「查询本身失败」，写进导入日志方便排查，不因查不到就放行。
+                if (recordFolderPath) {
+                  try {
+                    aiRecord.availableArtifacts = await getAvailableArtifacts(recordFolderPath);
+                  } catch (artifactErr) {
+                    writeImportLog('配套件清单查询未接通', {
+                      noteKey,
+                      reason: artifactErr.reason || 'unknown',
+                      message: artifactErr.message,
+                    });
+                  }
+                }
                 // U0 耗时埋点：AI 生成
                 const t0_ai = Date.now();
                 const aiResult = await generateContent(aiConfig, aiRecord);

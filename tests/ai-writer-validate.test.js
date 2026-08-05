@@ -12,8 +12,7 @@ function baseContent(overrides = {}) {
     description:
       '北师大版四年级上册数学第三单元《乘法》课件\n' +
       '覆盖：卫星运行时间、有多少名观众、神奇的计算工具\n' +
-      '内容按教材页面顺序整理\n' +
-      '需要的老师可以翻图查看',
+      '第三单元一共九个课时，练习设计比课本多两道拔高题',
     tags: ['#北师大数学', '#四上数学', '#数学课件', '#乘法', '#小学数学'],
     ...overrides,
   };
@@ -102,4 +101,18 @@ test('validateGenerated rejects tags not starting with #', () => {
   const content = baseContent({ tags: ['四上数学', '#北师大数学'] });
   const violations = validateGenerated(content, 'xiaohongshu');
   assert.ok(violations.some(v => v.includes('未以 # 开头')), violations.join('; '));
+});
+
+// 红线⑤：完整性/引导翻图话术（2026-08-04 从旧「正文硬边界」段移入红线并补机械校验）
+test('validateGenerated rejects false-completeness phrase in description (红线⑤)', () => {
+  const content = baseContent({
+    description: baseContent().description + '\n完整内容见图',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu');
+  assert.ok(violations.some(v => v.includes('虚假完整性话术')), violations.join('; '));
+});
+
+test('validateGenerated passes normal description without false-completeness phrase (红线⑤)', () => {
+  const violations = validateGenerated(baseContent(), 'xiaohongshu');
+  assert.deepEqual(violations, []);
 });
