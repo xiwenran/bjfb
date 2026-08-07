@@ -512,10 +512,22 @@ def strip_template_suffix(note_key: str) -> str:
 
 
 def extract_template_number(note_key: str) -> int | None:
+    """从 noteKey 末段取模板序号，用于模板多样性校验。
+
+    2026-08-07 扩展：原实现只认纯数字末段（融景早期模板名就是 "1"/"2"/"3"）。
+    融景现在建的模板 key 普遍带前缀（如 "zf0807-doc3-1"、"nb27-paper-02"），
+    纯数字判断直接返回 None，整个账号被判「没有可解析的 noteKey 模板编号」，
+    模板多样性这道闸等于对所有新模板批次失效。改为取末段中最后一组数字，
+    仍取不到才返回 None。
+    """
     parts = str(note_key).rsplit("/", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return int(parts[1])
-    return None
+    if len(parts) != 2:
+        return None
+    template = parts[1]
+    if template.isdigit():
+        return int(template)
+    matches = re.findall(r"\d+", template)
+    return int(matches[-1]) if matches else None
 
 
 def platform_account_values(record: dict) -> list[tuple[str, str, str]]:
@@ -633,10 +645,14 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
         title = record.get("title")
         title_str = str(title).strip() if title is not None else ""
         if title_str:
+            # emoji 口径与 src/ai-writer.js 的 SYSTEM_PROMPT 对齐：「最多带 1 个（可以不带）」。
+            # 2026-08-07 修：此处原为「必须恰好 1 个」，是 2026-07-10 重构前的旧规则残留——
+            # ai-writer.js 那次已明文改成可 0 可 1，但本校验器漏改，两边硬碰硬，导致合规标题
+            # 被迫加 emoji 才能过闸（teacher roadmap 已登记过该矛盾）。
             emoji_count = sum(1 for ch in title_str if ch in AI_WRITING_TITLE_EMOJI_WHITELIST)
-            if emoji_count != 1:
+            if emoji_count > 1:
                 title_violations.append(
-                    f"records[{i}] title 白名单emoji数量为 {emoji_count}，必须恰好1个（noteKey={note_key}，title={title_str!r}）"
+                    f"records[{i}] title 白名单emoji数量为 {emoji_count}，最多1个（noteKey={note_key}，title={title_str!r}）"
                 )
             punct_count = len(AI_WRITING_PUNCT_PATTERN.findall(title_str))
             if punct_count > 1:
@@ -651,10 +667,13 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
                 f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
             )
         else:
+            # 上限与 src/ai-writer.js 的 SYSTEM_PROMPT 硬边界对齐（50–500）。
+            # 2026-08-07 修：commit e0de667「正文上限提到 500 字」只改了 ai-writer.js，
+            # 漏改本校验器，导致按新规则写的 200–500 字正文全部被旧的 150 字上限拦死。
             desc_len = len(description_str)
-            if not (50 <= desc_len <= 150):
+            if not (50 <= desc_len <= 500):
                 description_violations.append(
-                    f"records[{i}] description 字数 {desc_len} 不在 50–150 范围内（noteKey={note_key}）"
+                    f"records[{i}] description 字数 {desc_len} 不在 50–500 范围内（noteKey={note_key}）"
                 )
             if "\n" not in description_str:
                 description_violations.append(
