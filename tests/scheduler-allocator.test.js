@@ -662,6 +662,29 @@ test('既有排期之间的存量冲突不记违规（本批无法修复的事�
   assert.equal(ok.ok, true);
 });
 
+test('规则 A：两条既有排期之间的跨店铺同主题冲突不记违规', () => {
+  // 2026-08-07 实测缺陷：checkMinInterval / checkDuplicateMinute 都豁免了「两条都是
+  // 既有排期」的存量冲突，唯独规则 A 没有，导致飞书里累积的跨店铺同主题记录会把此后
+  // 每一批干净的新排期都拒收（真实数据里累积到 169 条 violation，本批 0 条）。
+  const ok = validateImportSchedule(spacingInput({
+    schedule: [item({ account: '账号1', noteKey: '主题B/1', publishTime: '2026-07-20 09:00' })],
+    existingReservations: [
+      // 两条既有排期彼此跨店铺同主题、间隔远不足 2880 分钟，是飞书里的存量事实
+      { platform: 'xiaohongshu', scope: 'topic', account: '账号2', publishTime: '2026-07-16 09:00', topicKey: '主题A', storeGroup: '店铺A' },
+      { platform: 'xiaohongshu', scope: 'topic', account: '账号3', publishTime: '2026-07-16 09:30', topicKey: '主题A', storeGroup: '店铺B' },
+    ],
+  }));
+  assert.equal(ok.ok, true);
+
+  // 回归：本批条目与既有排期跨店铺同主题撞，仍然照常硬拒收（豁免不能放宽到这一路）
+  assert.throws(() => validateImportSchedule(spacingInput({
+    schedule: [item({ account: '账号3', noteKey: '主题A/1', publishTime: '2026-07-16 09:30' })],
+    existingReservations: [
+      { platform: 'xiaohongshu', scope: 'topic', account: '账号1', publishTime: '2026-07-16 09:00', topicKey: '主题A', storeGroup: '店铺A' },
+    ],
+  })), error => error.statusCode === 400 && violationRules(error).includes('topic_spacing'));
+});
+
 test('existingReservations 的 scope 只能是 topic 或 time', () => {
   assert.throws(() => validateImportSchedule(baseInput({
     existingReservations: [

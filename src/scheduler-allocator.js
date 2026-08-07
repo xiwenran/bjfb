@@ -417,7 +417,7 @@ function checkTopicSpacing(items, reservations, minCrossStoreIntervalMinutes, vi
     if (!byGroup.has(key)) byGroup.set(key, []);
     byGroup.get(key).push(entry);
   };
-  const pick = source => ({
+  const pick = (source, isCurrent) => ({
     platform: source.platform,
     storeGroupKey: source.storeGroupKey,
     topicGroupKey: source.topicGroupKey,
@@ -426,14 +426,20 @@ function checkTopicSpacing(items, reservations, minCrossStoreIntervalMinutes, vi
     accountNameKey: normalizeAccountName(source.account),
     timestamp: source.timestamp,
     label: source.label,
+    isCurrent,
   });
-  for (const item of items) addEntry(pick(item));
-  for (const reservation of reservations) addEntry(pick(reservation));
+  for (const item of items) addEntry(pick(item, true));
+  for (const reservation of reservations) addEntry(pick(reservation, false));
   for (const entries of byGroup.values()) {
     const sorted = entries.slice().sort((a, b) => a.timestamp - b.timestamp);
     for (let i = 0; i < sorted.length; i++) {
       for (let j = i + 1; j < sorted.length; j++) {
         if (sorted[i].accountNameKey === sorted[j].accountNameKey) continue;
+        // 与 checkMinInterval / checkDuplicateMinute 同款豁免：两条都是既有排期时不报。
+        // 那是飞书里已经存在的事实，本批怎么排都消不掉，报出来会让整批永远排不出去
+        // （实测：飞书里存量的跨店铺同主题记录会累积出上百条 violation，把此后每一批
+        // 干净的新排期都拒收）。本批条目与既有排期撞、或本批内部撞，才是可修复的违规。
+        if (!sorted[i].isCurrent && !sorted[j].isCurrent) continue;
         const diffMinutes = Math.round(Math.abs(sorted[j].timestamp - sorted[i].timestamp) / 60000);
         if (sorted[i].storeGroupKey === sorted[j].storeGroupKey) {
           // 规则 B：同店铺不同账号发同一主题，不论间隔多久都要走人工审批——不记 violation，
