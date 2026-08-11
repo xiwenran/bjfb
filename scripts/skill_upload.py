@@ -2207,6 +2207,259 @@ def cmd_export_preview(records_json_file: str, output_dir: str) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+def sanitize_filename_component(text: str) -> str:
+    """把文件名中的非法字符（/ : * ? " < > | 等）替换成 -，用于导出文件夹命名。"""
+    cleaned = re.sub(r'[\\/:*?"<>|]', "-", str(text or ""))
+    cleaned = cleaned.strip()
+    return cleaned or "未命名"
+
+
+def truncate_title_for_folder(title: str, limit: int = 40) -> str:
+    title = str(title or "").strip()
+    return title[:limit] if len(title) > limit else title
+
+
+def natural_image_sort_key(name: str):
+    """按文件名里的数字自然排序；取不到数字的排在最后，按原名兜底。"""
+    match = re.search(r"\d+", str(name or ""))
+    if match:
+        return (0, int(match.group()), str(name or ""))
+    return (1, 0, str(name or ""))
+
+
+def order_note_images(images: list) -> list:
+    """封面图（0 / 0(1) / cover / 封面）排第一张，其余按文件名自然顺序排列。"""
+    covers, rest = [], []
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        base = os.path.splitext(str(image.get("name") or ""))[0]
+        if base.lower() in COVER_BASENAMES or COVER_NAME_RE.match(base):
+            covers.append(image)
+        else:
+            rest.append(image)
+    covers.sort(key=lambda img: natural_image_sort_key(img.get("name")))
+    rest.sort(key=lambda img: natural_image_sort_key(img.get("name")))
+    return covers + rest
+
+
+def link_or_copy_image(src_path: str, dest_path: str) -> bool:
+    """硬链接优先（同盘零额外占用），跨设备等 OSError 时回退复制。返回 True 表示走了硬链接。"""
+    try:
+        os.link(src_path, dest_path)
+        return True
+    except OSError:
+        shutil.copy2(src_path, dest_path)
+        return False
+
+
+def cmd_export_manual(
+    scan_json_file: str,
+    content_json_file: str,
+    output_dir: str,
+    schedule_json_file: str | None = None,
+) -> None:
+    """把已合成的笔记（图片+文案）导出到本地文件夹，供手动打开复制发布。
+
+    不带 --schedule：按 scan.json 的主题/笔记顺序编号，文件夹名 {序号}_{标题}。
+    带 --schedule：按排期发布时间先后编号，文件夹名 {序号}_{账号}_{月-日 时:分}_{标题}。
+    """
+    scan_entries = load_scan_entries(scan_json_file)
+    content_json_file = os.path.expanduser(content_json_file)
+    output_dir = os.path.expanduser(output_dir)
+
+    if not os.path.isfile(content_json_file):
+        print(f"文案映射文件不存在：{content_json_file}", file=sys.stderr)
+        sys.exit(1)
+
+    if os.path.isdir(output_dir) and os.listdir(output_dir):
+        print(f"目标目录已存在且非空：{output_dir}，请换个目录名或先清空", file=sys.stderr)
+        sys.exit(1)
+
+    note_map = {}
+    for topic_entry in scan_entries:
+        topic_name = str(topic_entry.get("topic") or "")
+        for note in topic_entry.get("notes") or []:
+            note_key = str(note.get("noteKey") or "")
+            if not note_key:
+                continue
+            note_map[note_key] = {"topic": topic_name, "note": note}
+
+    content_payload = read_json_file(content_json_file)
+    if isinstance(content_payload, list):
+        content_map = {
+            str(item.get("noteKey") or ""): item
+            for item in content_payload
+            if isinstance(item, dict) and item.get("noteKey")
+        }
+    elif isinstance(content_payload, dict):
+        content_map = content_payload
+    else:
+        print(f"文案映射格式错误：{content_json_file} 需要 JSON 对象或数组", file=sys.stderr)
+        sys.exit(1)
+
+    use_schedule = bool(schedule_json_file)
+    plan = []
+
+    if use_schedule:
+        schedule_json_file = os.path.expanduser(schedule_json_file)
+        if not os.path.isfile(schedule_json_file):
+            print(f"调度结果文件不存在：{schedule_json_file}", file=sys.stderr)
+            sys.exit(1)
+        schedule_payload = read_json_file(schedule_json_file)
+        schedule = schedule_payload.get("schedule") if isinstance(schedule_payload, dict) else None
+        if not isinstance(schedule, list):
+            print(f"调度结果格式错误：{schedule_json_file} 缺少 schedule 数组", file=sys.stderr)
+            sys.exit(1)
+        for item in schedule:
+            note_key = str(item.get("noteKey") or "")
+            note_hit = note_map.get(note_key)
+            if not note_hit:
+                print(f"排期结果中的 noteKey 未在扫描结果中找到：{note_key}", file=sys.stderr)
+                sys.exit(1)
+            publish_time = str(item.get("publishTime") or "").strip()
+            try:
+                parsed_time = parse_publish_time(publish_time)
+            except ValueError as exc:
+                print(f"排期结果格式错误：{exc}", file=sys.stderr)
+                sys.exit(1)
+            plan.append({
+                "noteKey": note_key,
+                "topic": note_hit["topic"],
+                "note": note_hit["note"],
+                "platform": str(item.get("platform") or "").strip(),
+                "account": str(item.get("account") or "").strip(),
+                "publishTime": publish_time,
+                "parsedTime": parsed_time,
+            })
+        plan.sort(key=lambda p: (p["parsedTime"], p["noteKey"]))
+    else:
+        for topic_entry in scan_entries:
+            topic_name = str(topic_entry.get("topic") or "")
+            for note in topic_entry.get("notes") or []:
+                note_key = str(note.get("noteKey") or "")
+                if not note_key:
+                    continue
+                plan.append({"noteKey": note_key, "topic": topic_name, "note": note})
+
+    if not plan:
+        print("扫描结果中没有可导出的笔记", file=sys.stderr)
+        sys.exit(1)
+
+    # 先做一遍全量文案检查，缺失一次性列出，不写一半停一半
+    missing_content = []
+    resolved_content = {}
+    for entry in plan:
+        note_key = entry["noteKey"]
+        content = content_map.get(note_key) or content_map.get(entry["topic"])
+        if not content or not isinstance(content, dict):
+            missing_content.append(note_key)
+            continue
+        resolved_content[note_key] = content
+    if missing_content:
+        print(f"文案映射缺失，共 {len(missing_content)} 个 noteKey：", file=sys.stderr)
+        for note_key in missing_content:
+            print(f"  - {note_key}", file=sys.stderr)
+        sys.exit(1)
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    csv_rows = []
+    total_images = 0
+    linked_notes = 0
+    copied_notes = 0
+    used_folder_names: set[str] = set()
+
+    for idx, entry in enumerate(plan, 1):
+        note_key = entry["noteKey"]
+        note = entry["note"]
+        content = resolved_content[note_key]
+        title = str(content.get("title") or "").strip()
+        description = str(content.get("description") or "")
+        tags = content.get("tags") if isinstance(content.get("tags"), list) else []
+        tag_line = " ".join(f"#{str(t).lstrip('#').strip()}" for t in tags if str(t).strip())
+
+        folder_title = truncate_title_for_folder(title)
+        if use_schedule:
+            time_part = entry["parsedTime"].strftime("%m-%d %H:%M")
+            raw_name = f"{idx:03d}_{entry['account']}_{time_part}_{folder_title}"
+        else:
+            raw_name = f"{idx:03d}_{folder_title}"
+        folder_name = sanitize_filename_component(raw_name)
+        base_folder_name = folder_name
+        dedup_suffix = 1
+        while folder_name in used_folder_names:
+            dedup_suffix += 1
+            folder_name = f"{base_folder_name}_{dedup_suffix}"
+        used_folder_names.add(folder_name)
+
+        note_dir = os.path.join(output_dir, folder_name)
+        os.makedirs(note_dir, exist_ok=False)
+
+        content_text = (
+            f"【标题】\n{title}\n\n"
+            f"【正文】\n{description}\n\n"
+            f"【标签】\n{tag_line}\n"
+        )
+        with open(os.path.join(note_dir, "文案.txt"), "w", encoding="utf-8") as f:
+            f.write(content_text)
+
+        images = order_note_images(note.get("images") or [])
+        note_copied = False
+        for img_idx, image in enumerate(images, 1):
+            src_path = str(image.get("path") or "")
+            if not src_path or not os.path.isfile(src_path):
+                print(f"警告：{note_key} 的图片文件不存在，已跳过：{src_path}", file=sys.stderr)
+                continue
+            ext = os.path.splitext(src_path)[1]
+            dest_path = os.path.join(note_dir, f"{img_idx:02d}{ext}")
+            is_link = link_or_copy_image(src_path, dest_path)
+            total_images += 1
+            if not is_link:
+                note_copied = True
+        if note_copied:
+            copied_notes += 1
+        else:
+            linked_notes += 1
+
+        if use_schedule:
+            csv_rows.append({
+                "序号": idx,
+                "平台": entry["platform"],
+                "账号": entry["account"],
+                "日期": entry["parsedTime"].strftime("%Y-%m-%d"),
+                "时间": entry["parsedTime"].strftime("%H:%M"),
+                "主题": entry["topic"],
+                "标题": title,
+                "文件夹名": folder_name,
+            })
+        else:
+            csv_rows.append({
+                "序号": idx,
+                "主题": entry["topic"],
+                "noteKey": note_key,
+                "标题": title,
+                "文件夹名": folder_name,
+            })
+
+    fieldnames = (
+        ["序号", "平台", "账号", "日期", "时间", "主题", "标题", "文件夹名"]
+        if use_schedule
+        else ["序号", "主题", "noteKey", "标题", "文件夹名"]
+    )
+    csv_path = os.path.join(output_dir, "发布清单.csv")
+    with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(csv_rows)
+
+    print(
+        f"导出完成：{len(plan)} 篇笔记｜图片总数 {total_images} 张｜"
+        f"硬链接 {linked_notes} 篇 / 复制 {copied_notes} 篇"
+    )
+    print(f"（发布清单已写入 {csv_path}）")
+
+
 def cmd_verify(create_results_json: str, output_file: str | None = None) -> None:
     """
     verify 子命令：读取 cmd_create 产出的上传结果 JSON，
@@ -2420,6 +2673,20 @@ def main() -> None:
     preview_parser.add_argument("records_json", help="records JSON 文件路径")
     preview_parser.add_argument("output_dir", help="预览输出目录")
 
+    export_manual_parser = subparsers.add_parser(
+        "export-manual",
+        help="把已合成的笔记（图片+文案）导出到本地文件夹，供手动打开复制发布",
+    )
+    export_manual_parser.add_argument("scan_json", help="scan 或 scan-many 生成的 JSON 文件路径")
+    export_manual_parser.add_argument("content_json", help="标题/正文/标签映射 JSON 文件路径")
+    export_manual_parser.add_argument("output_dir", help="导出目标目录（须为空或不存在）")
+    export_manual_parser.add_argument(
+        "--schedule",
+        default=None,
+        metavar="SCHEDULE_JSON",
+        help="排期结果 JSON（带则按发布时间先后编号命名，不带则按扫描顺序编号）",
+    )
+
     archive_parser = subparsers.add_parser("archive", help="根据 schedule 结果调用归档接口（服务端复制，保留源目录）")
     archive_parser.add_argument("source_dir", help="原始合成图根目录")
     archive_parser.add_argument("target_dir", help="归档目标根目录")
@@ -2502,6 +2769,13 @@ def main() -> None:
         cmd_summarize_postprocess(args.files, output_file=args.output)
     elif args.command == "export-preview":
         cmd_export_preview(args.records_json, args.output_dir)
+    elif args.command == "export-manual":
+        cmd_export_manual(
+            args.scan_json,
+            args.content_json,
+            args.output_dir,
+            schedule_json_file=args.schedule,
+        )
     elif args.command == "archive":
         cmd_archive(args.source_dir, args.target_dir, args.schedule_json)
     elif args.command == "move-arranged":
