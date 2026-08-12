@@ -8,6 +8,13 @@
 
 ## 当前主线状态
 
+### [安全] 长期自动发布账号白名单  [详情 →](roadmap/pending/auto-publish-account-allowlist.md)
+- 当前阶段: 🚧 施工中，准备为知发内全部发布入口加入账号白名单拦截
+- 一句话现状: 仅 8 个指定小红书账号可发布；其他小红书和全部抖音保留配置但被拒绝
+- 阻塞: 无
+- 最近验证: 待实现后验证
+- commit hash: 待补
+
 ### [v2.2] 崩溃诊断持久化  [详情 →](roadmap/v2.2-crash-diagnostics-persistence.md)
 - 当前阶段: 🚧 进行中，主进程/渲染进程/调度器统一落盘的实现范围已定（`runtime-diagnostics.ndjson` + `last-runtime-state.json`）
 - 一句话现状: 崩溃诊断落盘方案已设计，尚未见验收标准三项（renderer-error 事件、last-runtime-state 进度、异常退出后可定位）逐条通过的记录
