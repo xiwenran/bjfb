@@ -153,7 +153,43 @@ class Scheduler {
   }
 
   recordHasPublishablePlatform(record) {
-    return this.recordHasPendingPlatform(record);
+    return Boolean(this.filterAutoPublishRecord(record));
+  }
+
+  isAutoPublishAllowed(platform, account) {
+    const allowlist = this.config?.rules?.autoPublishAllowlist;
+    const accounts = allowlist && allowlist[platform];
+    // 运行时配置只要缺失、畸形或为空，就对该平台 fail-closed。
+    if (!Array.isArray(accounts) || accounts.length === 0) return false;
+    if (!accounts.every(name => typeof name === 'string' && name.trim())) return false;
+    return accounts.includes(account);
+  }
+
+  filterAutoPublishRecord(record) {
+    if (!record) return null;
+    const xhsPending = record.xiaohongshuAccount && this.isPlatformPending(record.xiaohongshuStatus);
+    const dyPending = record.douyinAccount && this.isPlatformPending(record.douyinStatus);
+
+    if (!xhsPending && !dyPending) return null;
+
+    const xhsAllowed = xhsPending && this.isAutoPublishAllowed('xiaohongshu', record.xiaohongshuAccount);
+    const dyAllowed = dyPending && this.isAutoPublishAllowed('douyin', record.douyinAccount);
+    if (xhsPending && !xhsAllowed) {
+      this.log('warn', `⛔ 账号白名单拒绝：小红书「${record.xiaohongshuAccount}」不会由知发发布（${record.recordId}）`);
+    }
+    if (dyPending && !dyAllowed) {
+      this.log('warn', `⛔ 账号白名单拒绝：抖音「${record.douyinAccount}」不会由知发发布（${record.recordId}）`);
+    }
+    if (!xhsAllowed && !dyAllowed) return null;
+
+    // 只在内存副本中移除被拒平台，绝不改飞书状态、账本或账号资料。
+    return {
+      ...record,
+      xiaohongshuAccount: xhsAllowed ? record.xiaohongshuAccount : '',
+      xiaohongshuStatus: xhsAllowed ? record.xiaohongshuStatus : '',
+      douyinAccount: dyAllowed ? record.douyinAccount : '',
+      douyinStatus: dyAllowed ? record.douyinStatus : '',
+    };
   }
 
   recordHasContent(record) {
@@ -362,11 +398,12 @@ class Scheduler {
     let queued = 0;
     for (const record of records) {
       if (!record || !record.recordId) continue;
-      if (!this.recordHasPublishablePlatform(record)) continue;
+      const authorizedRecord = this.filterAutoPublishRecord(record);
+      if (!authorizedRecord) continue;
       if (this.processingRecordIds.has(record.recordId)) continue;
       if (!allowRecentPublished && this.isRecordRecentlyPublished(record.recordId)) continue;
       const hadRecord = this.pendingPublishRecords.has(record.recordId);
-      this.pendingPublishRecords.set(record.recordId, record);
+      this.pendingPublishRecords.set(record.recordId, authorizedRecord);
       if (!hadRecord) queued += 1;
     }
     return queued;
@@ -397,6 +434,9 @@ class Scheduler {
   }
 
   async processSingleRecord(record, options = {}) {
+    const authorizedRecord = this.filterAutoPublishRecord(record);
+    if (!authorizedRecord) return { published: 0, failed: 0 };
+    record = authorizedRecord;
     this.setProgress({
       active: true,
       stage: 'preparing',
@@ -817,7 +857,9 @@ class Scheduler {
           break;
         }
 
-        const toPublish = this.takeQueuedPublishRecords().filter(record => this.recordHasPublishablePlatform(record));
+        const toPublish = this.takeQueuedPublishRecords()
+          .map(record => this.filterAutoPublishRecord(record))
+          .filter(Boolean);
         if (toPublish.length === 0) continue;
 
         this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
@@ -955,7 +997,9 @@ class Scheduler {
       let scheduledCount = 0;
       let dueNow = [];
 
-      for (const record of parsed) {
+      for (const parsedRecord of parsed) {
+        const record = this.filterAutoPublishRecord(parsedRecord);
+        if (!record) continue;
         if (!this.recordHasPendingPlatform(record)) continue;
         if (!this.recordHasContent(record)) {
           this.log('warn', `⚠️ 跳过《${record.title || record.recordId}》：标题或素材为空`);
@@ -1017,11 +1061,14 @@ class Scheduler {
         this.scheduledTasks.delete(taskKey);
         if (!this.running) return;
 
-        const latestRecord = await this.loadCurrentPendingRecord(record.recordId);
+        let latestRecord = await this.loadCurrentPendingRecord(record.recordId);
         if (!latestRecord) {
           this.log('info', `🧹 精准任务已跳过：记录 ${record.recordId} 已不在待发布列表`);
           return;
         }
+        const authorizedRecord = this.filterAutoPublishRecord(latestRecord);
+        if (!authorizedRecord) return;
+        latestRecord = authorizedRecord;
         if (!this.recordHasPendingPlatform(latestRecord)) {
           this.log('info', `🧹 精准任务已跳过：记录《${latestRecord.title}》平台状态已非待发布`);
           return;
@@ -1071,6 +1118,9 @@ class Scheduler {
     const parsed = records.map(r => this.feishu.parseRecord(r));
     const now = new Date();
     const toPublish = parsed.filter(record => {
+      const authorizedRecord = this.filterAutoPublishRecord(record);
+      if (!authorizedRecord) return false;
+      record = authorizedRecord;
       if (!this.recordHasPendingPlatform(record)) return false;
       if (!record.publishTime) return true;
       return new Date(record.publishTime) <= now;
@@ -1082,8 +1132,11 @@ class Scheduler {
     this.ensureFeishuConfigured();
     const records = await this.feishu.getUnpublishedRecords();
     const parsed = records.map(r => this.feishu.parseRecord(r));
-    const target = parsed.find(r => r.recordId === recordId);
+    let target = parsed.find(r => r.recordId === recordId);
     if (!target) throw new Error('找不到该记录或已发布');
+    const authorizedTarget = this.filterAutoPublishRecord(target);
+    if (!authorizedTarget) throw new Error('该记录没有获准由知发发布的平台');
+    target = authorizedTarget;
     if (!this.recordHasPendingPlatform(target)) throw new Error('该记录没有待发布的平台');
     for (const [key, task] of this.scheduledTasks.entries()) {
       if (task.recordId === recordId) {

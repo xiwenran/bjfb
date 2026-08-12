@@ -50,6 +50,11 @@ const DEFAULT_CONFIG = {
     ],
   },
   rules: {
+    // 知发内自动/立即发布的唯一账号授权源；空数组表示该平台不允许发布。
+    autoPublishAllowlist: {
+      xiaohongshu: ['晓晓老师', '芝士就是力量', '橙子老师', '小晴老师', '小陈老师', '小刘老师', '可乐', '拉面卷卷'],
+      douyin: [],
+    },
     douyinMaxTags: 5,
     titleMaxLength: 50,
     descMaxLength: 2000,
