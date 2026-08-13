@@ -1,6 +1,22 @@
 ---
 name: zhifa-pipeline
-description: PPT一键发布全链路：从PPT文件到飞书多维表格发布记录的全自动化流水线。触发词：批量制作笔记、PPT一键发布、PPT做成笔记发布、PPT转笔记上传、全链路发布、做完直接发、一次做完发布、做好发到小红书、做好发到抖音、PPT做成笔记发抖音、PPT做成笔记发小红书、全流程发布、家长会笔记制作、家长会笔记发布、批量发布笔记、课件转笔记、笔记批量上传。
+description: 【已停用 2026-08-13】本 skill 已按三段式拆分废弃。制作笔记走 teacher-note-production，发布走 zhifa-upload，从选题到发布的全链走 teacher-content-pipeline。收到旧触发词时不执行本文件的历史流程，改走上述三个 skill；与本文任何残留表述冲突时一律以它们为准。
+---
+
+# zhifa-pipeline —— 已停用（2026-08-13 三段式拆分）
+
+> **不要执行本文件下面的历史流程。** 内容已拆分搬走：
+>
+> | 原本做什么 | 现在去哪 |
+> |---|---|
+> | 第 1 节 PPT 导出 + 融景合成 + 封面 | `teacher-note-production` 的 `导图与合成.md` |
+> | 第 2 节 转入上传链 U1–U11 | 制作段 → `teacher-note-production` 的 `制作链路.md`；发布段 → `zhifa-upload` |
+> | 「一键做完直接发」的全链编排 | `teacher-content-pipeline` |
+>
+> 拆分原因与设计见 `~/teacher/docs/笔记生产三段式拆分方案.md`。
+>
+> 源码与历史条款保留在下方供追溯，**不作为执行依据**。
+
 ---
 
 # zhifa-pipeline — PPT → 融景合成 → 飞书建档 全链路 Skill
