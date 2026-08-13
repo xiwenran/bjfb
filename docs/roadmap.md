@@ -9,11 +9,11 @@
 ## 当前主线状态
 
 ### [安全] 长期自动发布账号白名单  [详情 →](roadmap/pending/auto-publish-account-allowlist.md)
-- 当前阶段: 🚧 施工中，撤销固定 8 人，改为动态读取本机小红书默认账号名单
-- 一句话现状: 自动发布仅允许本机 `accounts.json.xiaohongshu.default` 的全部现有小红书账号，抖音继续全禁
-- 阻塞: 源码、账号配置、重新打包安装待完成
-- 最近验证: 审计结论：旧固定 8 人方案已被用户推翻，需按动态名单与 fail-closed 边界重做
-- commit hash: 待补
+- 当前阶段: 🚧 等待用户完成本机安装切换并确认运行版本
+- 一句话现状: 源码与本机账号配置已就绪，安装包已复制，但当前进程仍运行旧版 `7d9fb9d`
+- 阻塞: 用户自行退出旧进程并启动新版，确认运行版本 `84c2327`
+- 最近验证: 测试 21/21 通过、语法检查通过、独立审查问题已清零；本机 accounts 配置已更新并备份
+- commit hash: `84c2327`（源码实现）
 
 ### [v2.2] 崩溃诊断持久化  [详情 →](roadmap/v2.2-crash-diagnostics-persistence.md)
 - 当前阶段: 🚧 进行中，主进程/渲染进程/调度器统一落盘的实现范围已定（`runtime-diagnostics.ndjson` + `last-runtime-state.json`）
