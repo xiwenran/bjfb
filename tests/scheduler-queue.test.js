@@ -4,17 +4,23 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const tempRoot = path.join(os.tmpdir(), 'zhifa-scheduler-test');
-fs.rmSync(tempRoot, { recursive: true, force: true });
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'zhifa-scheduler-test-'));
 process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
 fs.mkdirSync(process.env.NOTE_PUBLISHER_DATA_DIR, { recursive: true });
 fs.writeFileSync(path.join(process.env.NOTE_PUBLISHER_DATA_DIR, 'publish-ledger.json'), '{}\n');
 fs.writeFileSync(path.join(process.env.NOTE_PUBLISHER_DATA_DIR, 'publish-history.json'), '{}\n');
 
+const accountsPath = path.join(process.env.NOTE_PUBLISHER_CONFIG_DIR, 'accounts.json');
+const testXhsAccounts = ['晓晓老师', '最近发布防重测试账号', '沐沐老师', '云发布测试账号', '云提交频控账号', '六小时测试账号', '浅浅'];
+function writeAccounts(value = { xiaohongshu: { default: testXhsAccounts } }) {
+  fs.mkdirSync(process.env.NOTE_PUBLISHER_CONFIG_DIR, { recursive: true });
+  fs.writeFileSync(accountsPath, typeof value === 'string' ? value : `${JSON.stringify(value)}\n`);
+}
+writeAccounts();
+
 const Scheduler = require('../src/scheduler.js');
 const publisher = require('../src/publisher.js');
-const { DEFAULT_CONFIG, normalizeConfig } = require('../src/config-store.js');
 
 function createScheduler() {
   const scheduler = new Scheduler({
@@ -25,11 +31,6 @@ function createScheduler() {
     schedule: { periods: [] },
     rules: {
       publishRecordConcurrency: 1,
-      // 队列历史用例关注并发语义，显式提供其测试账号授权。
-      autoPublishAllowlist: {
-        xiaohongshu: ['晓晓老师', '最近发布防重测试账号', '沐沐老师', '云发布测试账号', '云提交频控账号', '六小时测试账号', '浅浅'],
-        douyin: [],
-      },
     },
   });
 
@@ -42,22 +43,45 @@ function createScheduler() {
   return scheduler;
 }
 
-test('默认白名单精确授权八个小红书账号，缺字段规范化后仍拒绝非名单，显式畸形配置全拒绝', () => {
-  const defaultAllowlist = DEFAULT_CONFIG.rules.autoPublishAllowlist;
-  assert.deepEqual(defaultAllowlist.xiaohongshu, ['晓晓老师', '芝士就是力量', '橙子老师', '小晴老师', '小陈老师', '小刘老师', '可乐', '拉面卷卷']);
-  assert.deepEqual(defaultAllowlist.douyin, []);
+test('accounts.json.xiaohongshu.default 是唯一授权源，抖音恒定拒绝', () => {
+  const scheduler = createScheduler();
+  writeAccounts({ xiaohongshu: { default: ['  甲老师  ', '乙老师'] }, douyin: { default: ['抖音账号'] } });
+  assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '甲老师'), true);
+  assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '乙老师'), true);
+  assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '非名单小红书'), false);
+  assert.equal(scheduler.isAutoPublishAllowed('douyin', '抖音账号'), false);
+  writeAccounts();
+});
 
-  const missingFieldConfig = normalizeConfig({ rules: { publishRecordConcurrency: 1 } });
-  const missing = new Scheduler(missingFieldConfig);
-  missing.log = () => {};
-  assert.equal(missing.isAutoPublishAllowed('xiaohongshu', '晓晓老师'), true);
-  assert.equal(missing.isAutoPublishAllowed('xiaohongshu', '非名单小红书'), false);
-  assert.equal(missing.isAutoPublishAllowed('douyin', '任意抖音账号'), false);
+test('accounts.json 缺失、坏 JSON、畸形字段、空数组、非字符串、空白与 trim 重复全部 fail-closed', () => {
+  const scheduler = createScheduler();
+  const invalidInputs = [
+    null,
+    '{bad json',
+    {},
+    { xiaohongshu: {} },
+    { xiaohongshu: { default: [] } },
+    { xiaohongshu: { default: ['甲老师', 1] } },
+    { xiaohongshu: { default: ['甲老师', '  '] } },
+    { xiaohongshu: { default: ['甲老师', ' 甲老师 '] } },
+  ];
+  for (const input of invalidInputs) {
+    if (input === null) fs.renameSync(accountsPath, `${accountsPath}.missing`);
+    else writeAccounts(input);
+    assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '甲老师'), false);
+    if (input === null) fs.renameSync(`${accountsPath}.missing`, accountsPath);
+  }
+  writeAccounts();
+});
 
-  const malformed = createScheduler();
-  malformed.config.rules.autoPublishAllowlist = { xiaohongshu: '晓晓老师', douyin: '任意抖音账号' };
-  assert.equal(malformed.isAutoPublishAllowed('xiaohongshu', '晓晓老师'), false);
-  assert.equal(malformed.isAutoPublishAllowed('douyin', '任意抖音账号'), false);
+test('accounts.json 更新后下一次入口立即采用新名单', () => {
+  const scheduler = createScheduler();
+  writeAccounts({ xiaohongshu: { default: ['甲老师'] } });
+  assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '甲老师'), true);
+  writeAccounts({ xiaohongshu: { default: ['乙老师'] } });
+  assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '甲老师'), false);
+  assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '乙老师'), true);
+  writeAccounts();
 });
 
 test('白名单在扫描、定时器重读、立即补发和单条立即发布入口前拦截，名单内小红书可进入三类入口', async () => {
@@ -140,6 +164,71 @@ test('processSingleRecord 在下载、发布器、飞书状态和账本之前拒
     assert.deepEqual(calls, { download: 0, status: 0, note: 0, published: 0, publisher: 0 });
   } finally {
     publisher.publishRecord = originalPublishRecord;
+  }
+});
+
+test('processSingleRecord 下载期间撤销全部授权时不调用发布器或写入事实状态', async () => {
+  const scheduler = createScheduler();
+  const calls = { publisher: 0, status: 0, note: 0, published: 0, history: 0, ledger: 0 };
+  scheduler.feishu = {
+    downloadAllAttachments: async () => {
+      writeAccounts({ xiaohongshu: { default: [] } });
+      return ['downloaded.png'];
+    },
+    markPlatformStatus: async () => { calls.status += 1; },
+    setNote: async () => { calls.note += 1; },
+    markPublished: async () => { calls.published += 1; },
+  };
+  const originalPublishRecord = publisher.publishRecord;
+  const originalAppendHistory = publisher.appendHistory;
+  const originalMarkAsPublished = publisher.markAsPublished;
+  publisher.publishRecord = async () => { calls.publisher += 1; return []; };
+  publisher.appendHistory = () => { calls.history += 1; };
+  publisher.markAsPublished = () => { calls.ledger += 1; };
+  try {
+    const result = await scheduler.processSingleRecord({
+      recordId: 'revoked-during-download', title: '下载后撤权', attachments: ['a'], videoCover: [], contentType: '图文', note: '',
+      xiaohongshuAccount: '晓晓老师', xiaohongshuStatus: '待发布', douyinAccount: '', douyinStatus: '',
+    });
+    assert.deepEqual(result, { published: 0, failed: 0 });
+    assert.deepEqual(calls, { publisher: 0, status: 0, note: 0, published: 0, history: 0, ledger: 0 });
+  } finally {
+    publisher.publishRecord = originalPublishRecord;
+    publisher.appendHistory = originalAppendHistory;
+    publisher.markAsPublished = originalMarkAsPublished;
+    writeAccounts();
+  }
+});
+
+test('processSingleRecord 下载后再次过滤混合记录，仅向发布器传递仍获授权的小红书', async () => {
+  const scheduler = createScheduler();
+  let publishedRecord = null;
+  scheduler.feishu = {
+    downloadAllAttachments: async () => {
+      writeAccounts({ xiaohongshu: { default: ['晓晓老师'] } });
+      return ['downloaded.png'];
+    },
+    markPlatformStatus: async () => {},
+    setNote: async () => {},
+    markPublished: async () => {},
+  };
+  const originalPublishRecord = publisher.publishRecord;
+  publisher.publishRecord = async record => {
+    publishedRecord = record;
+    return [{ success: true, finalized: true, skipped: true, platform: '小红书', account: '晓晓老师' }];
+  };
+  try {
+    await scheduler.processSingleRecord({
+      recordId: 'mixed-recheck', title: '混合下载后复核', attachments: ['a'], videoCover: [], contentType: '图文', note: '',
+      xiaohongshuAccount: '晓晓老师', xiaohongshuStatus: '待发布', douyinAccount: '抖音账号', douyinStatus: '待发布',
+    });
+    assert.equal(publishedRecord.xiaohongshuAccount, '晓晓老师');
+    assert.equal(publishedRecord.xiaohongshuStatus, '待发布');
+    assert.equal(publishedRecord.douyinAccount, '');
+    assert.equal(publishedRecord.douyinStatus, '');
+  } finally {
+    publisher.publishRecord = originalPublishRecord;
+    writeAccounts();
   }
 });
 

@@ -50,11 +50,6 @@ const DEFAULT_CONFIG = {
     ],
   },
   rules: {
-    // 知发内自动/立即发布的唯一账号授权源；空数组表示该平台不允许发布。
-    autoPublishAllowlist: {
-      xiaohongshu: ['晓晓老师', '芝士就是力量', '橙子老师', '小晴老师', '小陈老师', '小刘老师', '可乐', '拉面卷卷'],
-      douyin: [],
-    },
     douyinMaxTags: 5,
     titleMaxLength: 50,
     descMaxLength: 2000,
@@ -158,6 +153,7 @@ function getRuntimePaths() {
     workspaceRoot: WORKSPACE_ROOT,
     configDir,
     configPath: path.join(configDir, 'config.json'),
+    accountsPath: path.join(configDir, 'accounts.json'),
     dataDir,
     cacheDir: path.join(dataDir, 'cache'),
     tempDir: path.join(dataDir, 'tmp'),
@@ -561,6 +557,41 @@ function getRecordTempDir(recordId) {
   return path.join(paths.tempDir, 'yixiaoer-publish', safeRecordId);
 }
 
+// 自动发布授权唯一读取本机 accounts.json，绝不落入 config.json 或进程缓存。
+// 任一结构异常都 fail-closed，调用方可把 reason 记录到运行日志。
+function readXiaohongshuDefaultAuthorization(paths = getRuntimePaths()) {
+  const accountsPath = paths.accountsPath || path.join(paths.configDir, 'accounts.json');
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(accountsPath, 'utf-8'));
+  } catch (error) {
+    const reason = error.code === 'ENOENT' ? '账号授权文件不存在' : `账号授权文件无法解析：${error.message}`;
+    return { allowed: false, accounts: new Set(), accountsPath, reason };
+  }
+
+  if (!isPlainObject(data) || !isPlainObject(data.xiaohongshu) || !Array.isArray(data.xiaohongshu.default)) {
+    return { allowed: false, accounts: new Set(), accountsPath, reason: '账号授权文件缺少合法 xiaohongshu.default 数组' };
+  }
+
+  const names = data.xiaohongshu.default;
+  if (names.length === 0) {
+    return { allowed: false, accounts: new Set(), accountsPath, reason: '账号授权文件的 xiaohongshu.default 为空' };
+  }
+
+  const accounts = new Set();
+  for (const name of names) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return { allowed: false, accounts: new Set(), accountsPath, reason: '账号授权文件的 xiaohongshu.default 含非字符串或空白账号' };
+    }
+    const normalized = name.trim();
+    if (accounts.has(normalized)) {
+      return { allowed: false, accounts: new Set(), accountsPath, reason: '账号授权文件的 xiaohongshu.default 含 trim 后重复账号' };
+    }
+    accounts.add(normalized);
+  }
+  return { allowed: true, accounts, accountsPath, reason: '' };
+}
+
 function isFeishuTablePairConfigured(table) {
   return Boolean(table && table.appToken && table.tableId);
 }
@@ -589,6 +620,7 @@ module.exports = {
   DEFAULT_CONFIG,
   TOPIC_INDEX_VERSION,
   getRuntimePaths,
+  readXiaohongshuDefaultAuthorization,
   initializeAppStorage,
   loadConfig,
   saveConfig,

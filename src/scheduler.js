@@ -8,7 +8,7 @@ const {
   buildDesiredAccountNamesFromRecords,
   autoMapAccountMappings,
 } = require('./account-mapping.js');
-const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache } = require('./config-store.js');
+const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache, readXiaohongshuDefaultAuthorization } = require('./config-store.js');
 const { generateContent } = require('./ai-writer.js');
 const DEFAULT_RECENT_RECORD_GUARD_MS = 24 * 60 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
@@ -157,12 +157,14 @@ class Scheduler {
   }
 
   isAutoPublishAllowed(platform, account) {
-    const allowlist = this.config?.rules?.autoPublishAllowlist;
-    const accounts = allowlist && allowlist[platform];
-    // 运行时配置只要缺失、畸形或为空，就对该平台 fail-closed。
-    if (!Array.isArray(accounts) || accounts.length === 0) return false;
-    if (!accounts.every(name => typeof name === 'string' && name.trim())) return false;
-    return accounts.includes(account);
+    // 抖音在所有知发入口恒定拒绝，不能借 accounts.json 获得授权。
+    if (platform !== 'xiaohongshu') return false;
+    const authorization = readXiaohongshuDefaultAuthorization();
+    if (!authorization.allowed) {
+      this.log('warn', `⛔ 小红书授权文件 fail-closed：${authorization.reason}（${authorization.accountsPath}）`);
+      return false;
+    }
+    return typeof account === 'string' && authorization.accounts.has(account.trim());
   }
 
   filterAutoPublishRecord(record) {
@@ -538,6 +540,16 @@ class Scheduler {
         record.coverPath = coverPaths[0];
       }
 
+      // 下载素材可能耗时很长；在真正触发外部发布前重读动态授权，避免下载期间
+      // accounts.json 撤权后仍沿用旧的内存副本提交。此处只返回，不补写状态或账本：
+      // 尚未调用 publisher，不能把未发生的发布写成事实。
+      const reauthorizedRecord = this.filterAutoPublishRecord(record);
+      if (!reauthorizedRecord) {
+        this.log('warn', `⛔ 下载完成后账号授权已撤销，停止发布《${record.title}》`);
+        return { published: 0, failed: 0 };
+      }
+      record = reauthorizedRecord;
+
       const publishConfig = {
         yixiaoer: this.config.yixiaoer,
         bitbrowser: this.config.bitbrowser || {},
@@ -857,12 +869,18 @@ class Scheduler {
           break;
         }
 
-        const toPublish = this.takeQueuedPublishRecords()
+        let toPublish = this.takeQueuedPublishRecords()
           .map(record => this.filterAutoPublishRecord(record))
           .filter(Boolean);
         if (toPublish.length === 0) continue;
 
         this.log('info', `📋 找到 ${toPublish.length} 条待处理记录`);
+        // 队列等待期间 accounts.json 也可能被用户修改；登录和映射前再读一次，
+        // 确保被撤销授权的账号不会触达任何外部副作用。
+        toPublish = toPublish
+          .map(record => this.filterAutoPublishRecord(record))
+          .filter(Boolean);
+        if (toPublish.length === 0) continue;
         if (this.requiresYixiaoerLogin(toPublish)) {
           await publisher.ensureLogin(this.config.yixiaoer);
           await this.syncAccountMappingsForRecords(toPublish);
