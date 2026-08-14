@@ -622,8 +622,39 @@ def ai_writing_title_search_layer(title: str) -> str:
     return title[:idx] if idx >= 0 else title
 
 
+LEAD_GEN_GROUP_NAME = "引流号组"
+
+
+def load_lead_gen_accounts() -> set:
+    """读 accounts.json 取「引流号组」下的账号名集合。
+
+    引流号只用来占排期位，文案由用户事后在飞书手动填，因此这一组允许空
+    title/description 通过 dry-run（见 teacher-note-production/制作链路.md）。
+
+    fail-closed：accounts.json 读不到、解析失败、或没有该分组时一律返回空集合，
+    结果是所有记录都按原规则校验（该拦的照拦），不因配置缺失静默放行。
+    """
+    path = pathlib.Path.home() / "Library" / "Application Support" / "Zhifa" / "accounts.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    group = (data.get("accountGroups") or {}).get(LEAD_GEN_GROUP_NAME) or {}
+    if not isinstance(group, dict):
+        return set()
+    names = set()
+    for platform_accounts in group.values():
+        if isinstance(platform_accounts, list):
+            names.update(str(a) for a in platform_accounts if a)
+    return names
+
+
 def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, list[str]]]:
-    """校验标题 emoji/标点、正文字数与换行、标签平台上限，返回 (label, violations) 列表。"""
+    """校验标题 emoji/标点、正文字数与换行、标签平台上限，返回 (label, violations) 列表。
+
+    「引流号组」账号的记录豁免「title/description 为空」两项（仅这两项），
+    其余格式、字数、标签上限、场景词校验一律照跑。
+    """
     title_violations: list[str] = []
     description_violations: list[str] = []
     tag_violations: list[str] = []
@@ -637,10 +668,20 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
             ("AI writing scene word overreach", ["records 必须是数组，无法执行场景词越权校验"]),
         ]
 
+    lead_gen_accounts = load_lead_gen_accounts()
+
     for i, record in enumerate(records):
         if not isinstance(record, dict):
             continue
         note_key = record.get("noteKey", "")
+        # build-records 产出的记录里账号字段是 xiaohongshuAccount / douyinAccount，
+        # 没有 account 这个键——原先只读 account 会让 is_lead_gen 恒为 False，
+        # 「引流号组允许空文案占排期位」这条豁免从来没真正生效过（2026-08-14 实测）。
+        is_lead_gen = any(
+            str(record.get(field, "")).strip() in lead_gen_accounts
+            for field in ("account", "xiaohongshuAccount", "douyinAccount")
+            if str(record.get(field, "")).strip()
+        )
 
         title = record.get("title")
         title_str = str(title).strip() if title is not None else ""
@@ -663,17 +704,20 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
         description = record.get("description")
         description_str = str(description).strip() if description is not None else ""
         if not description_str:
-            description_violations.append(
-                f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
-            )
+            if not is_lead_gen:
+                description_violations.append(
+                    f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
+                )
         else:
-            # 上限与 src/ai-writer.js 的 SYSTEM_PROMPT 硬边界对齐（50–500）。
+            # 上限与 src/ai-writer.js 的 SYSTEM_PROMPT 硬边界对齐（50–200）。
             # 2026-08-07 修：commit e0de667「正文上限提到 500 字」只改了 ai-writer.js，
             # 漏改本校验器，导致按新规则写的 200–500 字正文全部被旧的 150 字上限拦死。
+            # 2026-08-13 修：ai-writer.js 收敛到 50–200 时本校验器又漏改一次（同一个坑），
+            # 此处同步为 50–200。改这个数必须两处一起改。
             desc_len = len(description_str)
-            if not (50 <= desc_len <= 500):
+            if not (50 <= desc_len <= 200):
                 description_violations.append(
-                    f"records[{i}] description 字数 {desc_len} 不在 50–500 范围内（noteKey={note_key}）"
+                    f"records[{i}] description 字数 {desc_len} 不在 50–200 范围内（noteKey={note_key}）"
                 )
             if "\n" not in description_str:
                 description_violations.append(
@@ -867,6 +911,7 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
 
     violations = []
     if isinstance(records, list):
+        lead_gen_accounts_for_title = load_lead_gen_accounts()
         for i, record in enumerate(records):
             if not isinstance(record, dict):
                 continue
@@ -874,9 +919,17 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
             title_str = str(title).strip() if title is not None else ""
             title_len = len(title_str)
             if title_len == 0:
-                violations.append(
-                    f"records[{i}] title 为空（noteKey={record.get('noteKey', '')}）"
-                )
+                # 引流号只占排期位，文案事后在飞书手动填，允许空标题；其他账号照拦。
+                # 账号字段与上面同理：build-records 出的是 xiaohongshuAccount /
+                # douyinAccount，只读 account 会让豁免恒不生效。
+                if not any(
+                    str(record.get(field, "")).strip() in lead_gen_accounts_for_title
+                    for field in ("account", "xiaohongshuAccount", "douyinAccount")
+                    if str(record.get(field, "")).strip()
+                ):
+                    violations.append(
+                        f"records[{i}] title 为空（noteKey={record.get('noteKey', '')}）"
+                    )
             elif not (10 <= title_len <= 20):
                 violations.append(
                     f"records[{i}] title 字数 {title_len} 不在 10–20 范围内（noteKey={record.get('noteKey', '')}，title={title_str!r}）"
@@ -2255,7 +2308,7 @@ def link_or_copy_image(src_path: str, dest_path: str) -> bool:
 
 def cmd_export_manual(
     scan_json_file: str,
-    content_json_file: str,
+    content_json_file: str | None,
     output_dir: str,
     schedule_json_file: str | None = None,
 ) -> None:
@@ -2263,14 +2316,18 @@ def cmd_export_manual(
 
     不带 --schedule：按 scan.json 的主题/笔记顺序编号，文件夹名 {序号}_{标题}。
     带 --schedule：按排期发布时间先后编号，文件夹名 {序号}_{账号}_{月-日 时:分}_{标题}。
+
+    content_json 可选（2026-08-13）：引流号这类笔记本来就不写文案，只需要图。
+    不传时只导图、不生成 文案.txt；传了则每个 noteKey 都必须有文案，缺了报错退出
+    ——既然给了文案文件就说明本意要文案，缺失是漏写而非故意留空。
     """
     scan_entries = load_scan_entries(scan_json_file)
-    content_json_file = os.path.expanduser(content_json_file)
     output_dir = os.path.expanduser(output_dir)
-
-    if not os.path.isfile(content_json_file):
-        print(f"文案映射文件不存在：{content_json_file}", file=sys.stderr)
-        sys.exit(1)
+    if content_json_file:
+        content_json_file = os.path.expanduser(content_json_file)
+        if not os.path.isfile(content_json_file):
+            print(f"文案映射文件不存在：{content_json_file}", file=sys.stderr)
+            sys.exit(1)
 
     if os.path.isdir(output_dir) and os.listdir(output_dir):
         print(f"目标目录已存在且非空：{output_dir}，请换个目录名或先清空", file=sys.stderr)
@@ -2285,18 +2342,21 @@ def cmd_export_manual(
                 continue
             note_map[note_key] = {"topic": topic_name, "note": note}
 
-    content_payload = read_json_file(content_json_file)
-    if isinstance(content_payload, list):
-        content_map = {
-            str(item.get("noteKey") or ""): item
-            for item in content_payload
-            if isinstance(item, dict) and item.get("noteKey")
-        }
-    elif isinstance(content_payload, dict):
-        content_map = content_payload
+    if content_json_file:
+        content_payload = read_json_file(content_json_file)
+        if isinstance(content_payload, list):
+            content_map = {
+                str(item.get("noteKey") or ""): item
+                for item in content_payload
+                if isinstance(item, dict) and item.get("noteKey")
+            }
+        elif isinstance(content_payload, dict):
+            content_map = content_payload
+        else:
+            print(f"文案映射格式错误：{content_json_file} 需要 JSON 对象或数组", file=sys.stderr)
+            sys.exit(1)
     else:
-        print(f"文案映射格式错误：{content_json_file} 需要 JSON 对象或数组", file=sys.stderr)
-        sys.exit(1)
+        content_map = {}
 
     use_schedule = bool(schedule_json_file)
     plan = []
@@ -2349,13 +2409,14 @@ def cmd_export_manual(
     # 先做一遍全量文案检查，缺失一次性列出，不写一半停一半
     missing_content = []
     resolved_content = {}
-    for entry in plan:
-        note_key = entry["noteKey"]
-        content = content_map.get(note_key) or content_map.get(entry["topic"])
-        if not content or not isinstance(content, dict):
-            missing_content.append(note_key)
-            continue
-        resolved_content[note_key] = content
+    if content_json_file:
+        for entry in plan:
+            note_key = entry["noteKey"]
+            content = content_map.get(note_key) or content_map.get(entry["topic"])
+            if not content or not isinstance(content, dict):
+                missing_content.append(note_key)
+                continue
+            resolved_content[note_key] = content
     if missing_content:
         print(f"文案映射缺失，共 {len(missing_content)} 个 noteKey：", file=sys.stderr)
         for note_key in missing_content:
@@ -2373,13 +2434,14 @@ def cmd_export_manual(
     for idx, entry in enumerate(plan, 1):
         note_key = entry["noteKey"]
         note = entry["note"]
-        content = resolved_content[note_key]
+        content = resolved_content.get(note_key) or {}
         title = str(content.get("title") or "").strip()
         description = str(content.get("description") or "")
         tags = content.get("tags") if isinstance(content.get("tags"), list) else []
         tag_line = " ".join(f"#{str(t).lstrip('#').strip()}" for t in tags if str(t).strip())
 
-        folder_title = truncate_title_for_folder(title)
+        # 没有文案时（引流号只导图）用主题+笔记标识当文件夹名，避免全是 001_ 002_
+        folder_title = truncate_title_for_folder(title or note_key.replace("/", "-"))
         if use_schedule:
             time_part = entry["parsedTime"].strftime("%m-%d %H:%M")
             raw_name = f"{idx:03d}_{entry['account']}_{time_part}_{folder_title}"
@@ -2396,13 +2458,14 @@ def cmd_export_manual(
         note_dir = os.path.join(output_dir, folder_name)
         os.makedirs(note_dir, exist_ok=False)
 
-        content_text = (
-            f"【标题】\n{title}\n\n"
-            f"【正文】\n{description}\n\n"
-            f"【标签】\n{tag_line}\n"
-        )
-        with open(os.path.join(note_dir, "文案.txt"), "w", encoding="utf-8") as f:
-            f.write(content_text)
+        if content:
+            content_text = (
+                f"【标题】\n{title}\n\n"
+                f"【正文】\n{description}\n\n"
+                f"【标签】\n{tag_line}\n"
+            )
+            with open(os.path.join(note_dir, "文案.txt"), "w", encoding="utf-8") as f:
+                f.write(content_text)
 
         images = order_note_images(note.get("images") or [])
         note_copied = False
@@ -2678,8 +2741,13 @@ def main() -> None:
         help="把已合成的笔记（图片+文案）导出到本地文件夹，供手动打开复制发布",
     )
     export_manual_parser.add_argument("scan_json", help="scan 或 scan-many 生成的 JSON 文件路径")
-    export_manual_parser.add_argument("content_json", help="标题/正文/标签映射 JSON 文件路径")
     export_manual_parser.add_argument("output_dir", help="导出目标目录（须为空或不存在）")
+    export_manual_parser.add_argument(
+        "--content",
+        default=None,
+        metavar="CONTENT_JSON",
+        help="标题/正文/标签映射 JSON。可选——不传则只导图、不生成 文案.txt（引流号这类不写文案的批次走这条）；传了则每个 noteKey 都必须有文案，缺了报错退出",
+    )
     export_manual_parser.add_argument(
         "--schedule",
         default=None,
@@ -2772,7 +2840,7 @@ def main() -> None:
     elif args.command == "export-manual":
         cmd_export_manual(
             args.scan_json,
-            args.content_json,
+            args.content,
             args.output_dir,
             schedule_json_file=args.schedule,
         )
