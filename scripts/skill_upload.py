@@ -625,28 +625,50 @@ def ai_writing_title_search_layer(title: str) -> str:
 LEAD_GEN_GROUP_NAME = "引流号组"
 
 
-def load_lead_gen_accounts() -> set:
-    """读 accounts.json 取「引流号组」下的账号名集合。
+def load_lead_gen_accounts() -> dict:
+    """读 accounts.json 取「引流号组」下的账号名，**按平台分开返回**。
 
     引流号只用来占排期位，文案由用户事后在飞书手动填，因此这一组允许空
     title/description 通过 dry-run（见 teacher-note-production/制作链路.md）。
 
-    fail-closed：accounts.json 读不到、解析失败、或没有该分组时一律返回空集合，
-    结果是所有记录都按原规则校验（该拦的照拦），不因配置缺失静默放行。
+    返回 {"xiaohongshu": set, "douyin": set}。分平台是必须的：同一个 IP 在两个
+    平台常用同名账号（2026-08-18 实例：抖音「橙子老师」与小红书「橙子老师」），
+    此前返回不分平台的名字集合，会让同名的小红书产品号（可乐店铺·橙子老师）
+    也吃到引流号空文案豁免，等于对它关掉了这道拦截。
+
+    fail-closed：accounts.json 读不到、解析失败、或没有该分组时一律返回各平台空
+    集合，结果是所有记录都按原规则校验（该拦的照拦），不因配置缺失静默放行。
     """
+    empty = {"xiaohongshu": set(), "douyin": set()}
     path = pathlib.Path.home() / "Library" / "Application Support" / "Zhifa" / "accounts.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return set()
+        return empty
     group = (data.get("accountGroups") or {}).get(LEAD_GEN_GROUP_NAME) or {}
     if not isinstance(group, dict):
-        return set()
-    names = set()
-    for platform_accounts in group.values():
-        if isinstance(platform_accounts, list):
-            names.update(str(a) for a in platform_accounts if a)
-    return names
+        return empty
+    out = {"xiaohongshu": set(), "douyin": set()}
+    for platform in ("xiaohongshu", "douyin"):
+        accounts = group.get(platform)
+        if isinstance(accounts, list):
+            out[platform] = {str(a) for a in accounts if a}
+    return out
+
+
+def _is_lead_gen_record(record: dict, lead_gen: dict) -> bool:
+    """记录是否属于引流号：平台字段只比对应平台的账号集。
+
+    `account` 是不带平台信息的旧字段，只能比两平台并集（向后兼容）。
+    """
+    xhs = str(record.get("xiaohongshuAccount", "")).strip()
+    dy = str(record.get("douyinAccount", "")).strip()
+    if xhs and xhs in lead_gen["xiaohongshu"]:
+        return True
+    if dy and dy in lead_gen["douyin"]:
+        return True
+    legacy = str(record.get("account", "")).strip()
+    return bool(legacy) and legacy in (lead_gen["xiaohongshu"] | lead_gen["douyin"])
 
 
 def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, list[str]]]:
@@ -677,11 +699,7 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
         # build-records 产出的记录里账号字段是 xiaohongshuAccount / douyinAccount，
         # 没有 account 这个键——原先只读 account 会让 is_lead_gen 恒为 False，
         # 「引流号组允许空文案占排期位」这条豁免从来没真正生效过（2026-08-14 实测）。
-        is_lead_gen = any(
-            str(record.get(field, "")).strip() in lead_gen_accounts
-            for field in ("account", "xiaohongshuAccount", "douyinAccount")
-            if str(record.get(field, "")).strip()
-        )
+        is_lead_gen = _is_lead_gen_record(record, lead_gen_accounts)
 
         title = record.get("title")
         title_str = str(title).strip() if title is not None else ""
@@ -922,11 +940,7 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
                 # 引流号只占排期位，文案事后在飞书手动填，允许空标题；其他账号照拦。
                 # 账号字段与上面同理：build-records 出的是 xiaohongshuAccount /
                 # douyinAccount，只读 account 会让豁免恒不生效。
-                if not any(
-                    str(record.get(field, "")).strip() in lead_gen_accounts_for_title
-                    for field in ("account", "xiaohongshuAccount", "douyinAccount")
-                    if str(record.get(field, "")).strip()
-                ):
+                if not _is_lead_gen_record(record, lead_gen_accounts_for_title):
                     violations.append(
                         f"records[{i}] title 为空（noteKey={record.get('noteKey', '')}）"
                     )
