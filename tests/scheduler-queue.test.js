@@ -43,13 +43,18 @@ function createScheduler() {
   return scheduler;
 }
 
-test('accounts.json.xiaohongshu.default 是唯一授权源，抖音恒定拒绝', () => {
+// 2026-08-20 用户放开抖音：两个平台各自以 accounts.json 的 <platform>.default 为唯一授权源。
+// 原断言「抖音恒定拒绝」固化的是放开前的旧规则，已随代码同步更新。
+test('accounts.json 的 <platform>.default 是各平台唯一授权源', () => {
   const scheduler = createScheduler();
   writeAccounts({ xiaohongshu: { default: ['  甲老师  ', '乙老师'] }, douyin: { default: ['抖音账号'] } });
   assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '甲老师'), true);
   assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '乙老师'), true);
   assert.equal(scheduler.isAutoPublishAllowed('xiaohongshu', '非名单小红书'), false);
-  assert.equal(scheduler.isAutoPublishAllowed('douyin', '抖音账号'), false);
+  assert.equal(scheduler.isAutoPublishAllowed('douyin', '抖音账号'), true);
+  assert.equal(scheduler.isAutoPublishAllowed('douyin', '非名单抖音'), false);
+  // 平台名本身不合法时仍然拒绝，不因放开抖音而放宽
+  assert.equal(scheduler.isAutoPublishAllowed('weibo', '抖音账号'), false);
   writeAccounts();
 });
 

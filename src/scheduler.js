@@ -8,7 +8,7 @@ const {
   buildDesiredAccountNamesFromRecords,
   autoMapAccountMappings,
 } = require('./account-mapping.js');
-const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache, readXiaohongshuDefaultAuthorization } = require('./config-store.js');
+const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache, readPlatformDefaultAuthorization } = require('./config-store.js');
 const { generateContent } = require('./ai-writer.js');
 const DEFAULT_RECENT_RECORD_GUARD_MS = 24 * 60 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
@@ -157,11 +157,13 @@ class Scheduler {
   }
 
   isAutoPublishAllowed(platform, account) {
-    // 抖音在所有知发入口恒定拒绝，不能借 accounts.json 获得授权。
-    if (platform !== 'xiaohongshu') return false;
-    const authorization = readXiaohongshuDefaultAuthorization();
+    // 2026-08-20 用户放开抖音：两个平台走同一套 accounts.json fail-closed 授权，
+    // 不再对抖音硬编码拒绝。平台名之外的取值仍然拒绝。
+    if (platform !== 'xiaohongshu' && platform !== 'douyin') return false;
+    const authorization = readPlatformDefaultAuthorization(platform);
     if (!authorization.allowed) {
-      this.log('warn', `⛔ 小红书授权文件 fail-closed：${authorization.reason}（${authorization.accountsPath}）`);
+      const label = platform === 'douyin' ? '抖音' : '小红书';
+      this.log('warn', `⛔ ${label}授权文件 fail-closed：${authorization.reason}（${authorization.accountsPath}）`);
       return false;
     }
     return typeof account === 'string' && authorization.accounts.has(account.trim());

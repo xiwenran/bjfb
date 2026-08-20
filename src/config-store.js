@@ -559,7 +559,49 @@ function getRecordTempDir(recordId) {
 
 // 自动发布授权唯一读取本机 accounts.json，绝不落入 config.json 或进程缓存。
 // 任一结构异常都 fail-closed，调用方可把 reason 记录到运行日志。
+// 按平台读 accounts.json 的 <platform>.default 做 fail-closed 授权校验。
+// 2026-08-20：抖音此前在 scheduler 里被一行 `platform !== 'xiaohongshu'` 硬编码拒绝，
+// 改 skill 条文和 accounts.json 都绕不过去（建档能成，发布时被这行拦下）。
+// 现在两个平台走同一套机制：文件缺失/格式错/空数组/含空白/有重复 → 一律拒绝。
+function readPlatformDefaultAuthorization(platform, paths = getRuntimePaths()) {
+  const accountsPath = paths.accountsPath || path.join(paths.configDir, 'accounts.json');
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(accountsPath, 'utf-8'));
+  } catch (error) {
+    const reason = error.code === 'ENOENT' ? '账号授权文件不存在' : `账号授权文件无法解析：${error.message}`;
+    return { allowed: false, accounts: new Set(), accountsPath, reason };
+  }
+
+  if (!isPlainObject(data) || !isPlainObject(data[platform]) || !Array.isArray(data[platform].default)) {
+    return { allowed: false, accounts: new Set(), accountsPath, reason: `账号授权文件缺少合法 ${platform}.default 数组` };
+  }
+
+  const names = data[platform].default;
+  if (names.length === 0) {
+    return { allowed: false, accounts: new Set(), accountsPath, reason: `账号授权文件的 ${platform}.default 为空` };
+  }
+
+  const accounts = new Set();
+  for (const name of names) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return { allowed: false, accounts: new Set(), accountsPath, reason: `账号授权文件的 ${platform}.default 含非字符串或空白账号` };
+    }
+    const normalized = name.trim();
+    if (accounts.has(normalized)) {
+      return { allowed: false, accounts: new Set(), accountsPath, reason: `账号授权文件的 ${platform}.default 含 trim 后重复账号` };
+    }
+    accounts.add(normalized);
+  }
+  return { allowed: true, accounts, accountsPath, reason: '' };
+}
+
+// 向后兼容：旧调用方保持原名可用
 function readXiaohongshuDefaultAuthorization(paths = getRuntimePaths()) {
+  return readPlatformDefaultAuthorization('xiaohongshu', paths);
+}
+
+function __legacy_readXiaohongshuDefaultAuthorization(paths = getRuntimePaths()) {
   const accountsPath = paths.accountsPath || path.join(paths.configDir, 'accounts.json');
   let data;
   try {
@@ -621,6 +663,7 @@ module.exports = {
   TOPIC_INDEX_VERSION,
   getRuntimePaths,
   readXiaohongshuDefaultAuthorization,
+  readPlatformDefaultAuthorization,
   initializeAppStorage,
   loadConfig,
   saveConfig,
