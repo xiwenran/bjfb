@@ -2164,11 +2164,17 @@ const server = http.createServer(async (req, res) => {
         }
         // 3. 清本地 ledger，把飞书状态改回"待发布"以便下次 checkAndPublish 重发
         publisher.unmarkAsPublished(recordId, platform);
+        // 3.1 账本（publishedCache）和 scheduler 内存里的最近发布保护（recentlyPublishedRecords）
+        // 是两道独立的防重复机制：只清账本，24 小时内 enqueuePublishRecords 仍会因
+        // isRecordRecentlyPublished 命中而把这条记录跳过，导致"立即补发"等入队路径捞不到它，
+        // 即使账本和飞书状态都已经改回"待发布"。这里必须一并解除，不要以为多余而删掉。
+        const recentGuardCleared = scheduler.clearRecentlyPublishedRecord(recordId);
         await feishu.markPlatformStatus(recordId, platform, '待发布');
         return sendJson(res, {
           success: true,
-          message: `已允许 ${platform}(${currentAccount}) 同账号重发，下次发布检查时会重新提交`,
+          message: `已允许 ${platform}(${currentAccount}) 同账号重发，账本与最近发布保护均已解除，下次发布检查或"立即补发"都能重新捞到`,
           historyAccounts: history,
+          recentGuardCleared,
         });
       } catch (e) {
         sendJson(res, { success: false, error: e.message }, 500);

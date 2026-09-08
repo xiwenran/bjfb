@@ -397,6 +397,15 @@ class Scheduler {
     return this.recentlyPublishedRecords.has(recordId);
   }
 
+  clearRecentlyPublishedRecord(recordId) {
+    if (!recordId) return false;
+    const deleted = this.recentlyPublishedRecords.delete(recordId);
+    if (deleted) {
+      this.log('info', `已解除《${recordId}》的最近发布保护，允许重新发布`);
+    }
+    return deleted;
+  }
+
   enqueuePublishRecords(records = [], options = {}) {
     const allowRecentPublished = options.allowRecentPublished === true;
     let queued = 0;
