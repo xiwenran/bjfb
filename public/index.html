@@ -320,6 +320,13 @@
   }
   .account-group-row.selected .account-group-row-count { color: var(--accent-deep, #07a251); }
 
+  /* 总览页中栏：分类条目列表，复用 account-group-row 单行形态 */
+  .overview-nav-list {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+  }
+
   /* ===== Accounts ===== */
   .account-list { display: flex; flex-direction: column; gap: 8px; }
   .account-item {
@@ -567,7 +574,7 @@
 
   .shell {
     display: grid;
-    grid-template-columns: 108px minmax(420px, 500px) minmax(620px, 1fr);
+    grid-template-columns: 108px minmax(340px, 380px) minmax(620px, 1fr);
     gap: 14px;
     height: 100vh;
     padding: 14px;
@@ -587,41 +594,6 @@
     display: flex;
     flex-direction: column;
     gap: 22px;
-  }
-
-  .brand-stack {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    text-align: center;
-  }
-
-  .brand-mark {
-    width: 64px;
-    height: 64px;
-    border-radius: 20px;
-    display: grid;
-    place-items: center;
-    font-size: 30px;
-    font-weight: 800;
-    color: #fff;
-    background: linear-gradient(180deg, #08c762 0%, #06ad56 100%);
-    box-shadow: 0 12px 24px rgba(7, 193, 96, 0.22);
-  }
-
-  .brand-copy h1 {
-    font-size: 18px;
-    font-weight: 800;
-    color: var(--ink);
-    letter-spacing: -0.03em;
-  }
-
-  .brand-copy p {
-    margin-top: 4px;
-    font-size: 12px;
-    line-height: 1.55;
-    color: var(--muted);
   }
 
   .rail-group {
@@ -798,6 +770,7 @@
   .toolbar-actions .btn {
     min-height: 34px;
     padding: 6px 14px;
+    font-size: 13px;
   }
 
   .workspace-scroll {
@@ -839,8 +812,7 @@
   }
 
   #section-overview > .workspace-stack > .workspace-card,
-  #section-setup > .workspace-stack > .workspace-card,
-  #section-data > .workspace-stack > .workspace-card {
+  #section-setup > .workspace-stack > .workspace-card {
     flex: 1;
   }
 
@@ -1079,7 +1051,6 @@
   .preview-meta-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
   }
 
   .preview-list-item,
@@ -1088,12 +1059,16 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 16px 18px;
-    border-radius: 18px;
-    background: var(--panel-soft);
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
     color: var(--ink);
     font-size: 13px;
     line-height: 1.6;
+  }
+
+  .preview-list-item:last-child,
+  .preview-meta-item:last-child {
+    border-bottom: none;
   }
 
   .preview-meta-item span:first-child {
@@ -1238,7 +1213,7 @@
 
   @media (max-width: 1480px) {
     .shell {
-      grid-template-columns: 100px minmax(380px, 450px) minmax(440px, 1fr);
+      grid-template-columns: 100px minmax(320px, 360px) minmax(440px, 1fr);
     }
 
     .workspace-head-copy h2 {
@@ -2358,14 +2333,6 @@
 <body>
 <div class="shell">
   <aside class="primary-rail">
-    <div class="brand-stack">
-      <div class="brand-mark">知</div>
-      <div class="brand-copy">
-        <h1>知发</h1>
-        <p>笔记多平台发布工具</p>
-      </div>
-    </div>
-
     <div class="rail-group">
       <button class="primary-nav-btn active" data-section="overview" onclick="switchSection('overview')">
         <span class="primary-nav-icon">🏠</span>
@@ -2378,10 +2345,6 @@
       <button class="primary-nav-btn" data-section="import" onclick="switchSection('import')">
         <span class="primary-nav-icon">📁</span>
         <span>导入</span>
-      </button>
-      <button class="primary-nav-btn" data-section="data" onclick="switchSection('data')">
-        <span class="primary-nav-icon">📊</span>
-        <span>数据</span>
       </button>
     </div>
 
@@ -2428,30 +2391,17 @@
       <section class="workspace-view active" id="section-overview">
         <div class="workspace-stack">
           <div class="workspace-card">
-            <h3>常用入口</h3>
-            <div class="card-intro">中栏只保留直接可操作的入口，运行状态、当前任务、扫描窗口和日志已经统一收进右侧预览区。</div>
-            <div class="quick-entry-grid">
-              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('feishu', { preserveSection: true });">
-                <h4>飞书接入</h4>
-                <p>补全 App ID、App Token 和 Table ID，完成多维表格接入。</p>
-              </button>
-              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('accounts', { preserveSection: true });">
-                <h4>账号授权</h4>
-                <p>查看蚁小二账号在线、实名和映射状态。</p>
-              </button>
-              <!-- BITBROWSER_HIDDEN: 比特浏览器渠道已停用，恢复时删除本注释块，取消下方按钮的注释包裹
-              <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true });">
-                <h4>比特浏览器</h4>
-                <p>同步飞书账号并维护 browserId 映射关系。</p>
-              </button>
-              BITBROWSER_HIDDEN -->
-              <button class="quick-entry-card" onclick="switchSection('data')">
-                <h4>备份与迁移</h4>
-                <p>导入导出配置或完整数据，管理本机数据位置。</p>
-              </button>
-            </div>
+            <h3>运行总览</h3>
+            <div class="card-intro">选择下方分类，右侧查看对应详情。</div>
+            <div class="overview-nav-list" id="overviewNavList"></div>
           </div>
         </div>
+        <!-- BITBROWSER_HIDDEN: 比特浏览器渠道已停用，恢复时删除本注释块，取消下方按钮的注释包裹（原位于总览页“常用入口”快捷卡片，总览页改版后此处仅保留占位，不再渲染）
+        <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true });">
+          <h4>比特浏览器</h4>
+          <p>同步飞书账号并维护 browserId 映射关系。</p>
+        </button>
+        BITBROWSER_HIDDEN -->
       </section>
 
       <section class="workspace-view" id="section-publish">
@@ -2520,36 +2470,11 @@
                 <span class="subnav-btn-title">AI 写作</span>
                 <span class="subnav-btn-meta">自动生成标题正文标签</span>
               </button>
+              <button class="subnav-btn" data-setup-pane="backup" onclick="switchSetupPane('backup')">
+                <span class="subnav-btn-title">数据与备份</span>
+                <span class="subnav-btn-meta">导入导出配置和完整数据</span>
+              </button>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="workspace-view" id="section-data">
-        <div class="workspace-stack">
-          <div class="workspace-card">
-            <h3>导入与导出</h3>
-            <div class="card-intro">备份迁移和本机数据目录统一收敛到这里，避免和接入配置混在一起。</div>
-            <div class="data-grid" style="margin-top:16px;">
-              <div class="workspace-card" style="padding:18px; background:#fff;">
-                <h3 style="font-size:15px;font-weight:600;">配置备份</h3>
-                <div class="config-note" style="margin-top:8px;">只导出配置，适合在不同机器间迁移接入信息与映射规则。</div>
-                <div class="settings-actions" style="margin-top:14px;">
-                  <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
-                  <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
-                </div>
-              </div>
-              <div class="workspace-card" style="padding:18px; background:#fff;">
-                <h3 style="font-size:15px;font-weight:600;">完整数据</h3>
-                <div class="config-note" style="margin-top:8px;">包含配置和发布账本，不包含缓存与临时文件。</div>
-                <div class="settings-actions" style="margin-top:14px;">
-                  <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
-                  <button class="btn btn-sm btn-secondary" onclick="triggerDataImport()">导入完整数据</button>
-                </div>
-              </div>
-            </div>
-            <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
-            <input id="dataImportFile" type="file" accept="application/json" style="display:none" onchange="handleDataImport(event)">
           </div>
         </div>
       </section>
@@ -2765,6 +2690,46 @@
           </div>
         </div>
       </div>
+      <div class="setup-pane" id="setup-pane-backup">
+        <div class="workspace-card">
+          <h3>导入与导出</h3>
+          <div class="card-intro">备份迁移和本机数据目录统一收敛到这里，避免和接入配置混在一起。</div>
+          <div class="data-grid" style="margin-top:16px;">
+            <div class="workspace-card" style="padding:18px; background:#fff;">
+              <h3 style="font-size:15px;font-weight:600;">配置备份</h3>
+              <div class="config-note" style="margin-top:8px;">只导出配置，适合在不同机器间迁移接入信息与映射规则。</div>
+              <div class="settings-actions" style="margin-top:14px;">
+                <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
+                <button class="btn btn-sm btn-secondary" onclick="triggerConfigImport()">导入配置备份</button>
+              </div>
+            </div>
+            <div class="workspace-card" style="padding:18px; background:#fff;">
+              <h3 style="font-size:15px;font-weight:600;">完整数据</h3>
+              <div class="config-note" style="margin-top:8px;">包含配置和发布账本，不包含缓存与临时文件。</div>
+              <div class="settings-actions" style="margin-top:14px;">
+                <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
+                <button class="btn btn-sm btn-secondary" onclick="triggerDataImport()">导入完整数据</button>
+              </div>
+            </div>
+          </div>
+          <input id="configImportFile" type="file" accept="application/json" style="display:none" onchange="handleConfigImport(event)">
+          <input id="dataImportFile" type="file" accept="application/json" style="display:none" onchange="handleDataImport(event)">
+        </div>
+        <div class="workspace-card" style="margin-top:12px;">
+          <h3>本机数据摘要</h3>
+          <div class="preview-meta-list" style="margin-top:12px;">
+            <div class="preview-meta-item"><span>配置文件</span><span id="backupConfigPath">等待读取</span></div>
+            <div class="preview-meta-item"><span>数据目录</span><span id="backupDataDir">等待读取</span></div>
+            <div class="preview-meta-item"><span>缓存目录</span><span id="backupCacheDir">等待读取</span></div>
+            <div class="preview-meta-item"><span>发布账本</span><span id="backupLedgerPath">等待读取</span></div>
+          </div>
+          <div class="preview-list" style="margin-top:12px;">
+            <div class="preview-list-item">配置备份只包含接入信息与映射规则，适合快速迁移到另一台电脑。</div>
+            <div class="preview-list-item">完整数据会额外包含发布账本，不会包含缓存和临时文件。</div>
+            <div class="preview-list-item">备份文件里可能含有真实密钥，只建议保存到可信位置。</div>
+          </div>
+        </div>
+      </div>
     </div>
   </aside>
 </div>
@@ -2856,6 +2821,7 @@ let accountStatusData = [];
 let latestMusicValidation = null;
 let scheduledTasksData = [];
 let latestPendingCount = '-';
+let selectedOverviewSection = 'status'; // 总览页中栏当前选中的分类行 key，右栏据此只渲染对应区块
 const MAX_LOG_ENTRIES = 200;
 
 // 素材导入页状态
@@ -3085,14 +3051,6 @@ const SECTION_META = {
     previewEyebrow: '配置摘要',
     previewTitle: '配置摘要',
     previewDescription: '选中左侧设置项后，右侧会展示对应的连接状态、账号概况或调度策略。'
-  },
-  data: {
-    eyebrow: '数据',
-    title: '数据',
-    description: '备份当前配置和数据，或在设备之间迁移发布记录与账号信息。',
-    previewEyebrow: '数据摘要',
-    previewTitle: '本机数据摘要',
-    previewDescription: '当前配置文件位置、数据目录和备份范围集中展示，方便随时迁移或恢复。'
   }
 };
 
@@ -3144,6 +3102,14 @@ const SETUP_META = {
     previewEyebrow: 'AI 配置',
     previewTitle: 'AI 写作状态',
     previewDescription: '显示 AI 写作启用状态、服务商配置和最近生成记录。'
+  },
+  backup: {
+    eyebrow: '设置 / 数据与备份',
+    title: '数据与备份',
+    description: '备份当前配置和数据，或在设备之间迁移发布记录与账号信息。',
+    previewEyebrow: '数据摘要',
+    previewTitle: '本机数据摘要',
+    previewDescription: '当前配置文件位置、数据目录和备份范围集中展示，方便随时迁移或恢复。'
   }
 };
 
@@ -3219,7 +3185,23 @@ function ensureSetupPaneLoaded(pane) {
     loadMasterPublisherSetting();
   } else if (pane === 'ai-writing') {
     loadAiWritingConfig();
+  } else if (pane === 'backup') {
+    updateBackupPathsDisplay();
+    if (!feishuConfigLoaded) loadFeishuConfig();
   }
+}
+
+function updateBackupPathsDisplay() {
+  const map = {
+    backupConfigPath: latestRuntimePaths.configPath,
+    backupDataDir: latestRuntimePaths.dataDir,
+    backupCacheDir: latestRuntimePaths.cacheDir,
+    backupLedgerPath: latestRuntimePaths.ledgerPath,
+  };
+  Object.entries(map).forEach(([id, value]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value || '等待读取';
+  });
 }
 
 function updateWorkspaceCopy() {
@@ -3248,9 +3230,6 @@ function switchSection(section) {
   if (section === 'setup') {
     switchSetupPane(activeSetupPane, { preserveSection: true });
     return;
-  }
-  if (section === 'data' && !feishuConfigLoaded) {
-    loadFeishuConfig();
   }
   if (section === 'import') {
     importEnsureAccounts();
@@ -3287,7 +3266,7 @@ function switchTab(tabName) {
     overview: { section: 'overview' },
     publish: { section: 'publish' },
     records: { section: 'publish' },
-    data: { section: 'data' },
+    data: { section: 'setup', pane: 'backup' },
     feishu: { section: 'setup', pane: 'feishu' },
     accounts: { section: 'setup', pane: 'accounts' },
     bitbrowser: { section: 'setup', pane: 'bitbrowser' },
@@ -3528,34 +3507,67 @@ async function refreshScheduledTasks() {
   }
 }
 
+// 总览页中栏：5 个分类条目的紧凑列表，点击后 selectedOverviewSection 变化，右栏只渲染对应区块
+function renderOverviewNavList() {
+  const container = document.getElementById('overviewNavList');
+  if (!container) return;
+  const running = latestStatusData?.running;
+  const progress = latestStatusData?.currentProgress || null;
+  const periods0 = periods[0];
+  const windowSummary = periods0
+    ? `${periods0.startTime}-${periods0.endTime}${periods.length > 1 ? ` 等${periods.length}段` : ''}`
+    : '未设置';
+  const latestLog = logEntries[logEntries.length - 1];
+  const rows = [
+    { key: 'status', label: '运行概况', value: running ? '运行中' : (latestStatusData ? '已停止' : '加载中') },
+    { key: 'task', label: '当前任务', value: progress ? getProgressLabel(progress.stage) : '空闲' },
+    { key: 'upcoming', label: '即将发布', value: `${formatCount(scheduledTasksData.length)} 条` },
+    { key: 'window', label: '扫描窗口', value: windowSummary },
+    { key: 'activity', label: '最近动态', value: latestLog ? latestLog.time : (logEntries.length ? `${logEntries.length} 条` : '暂无') },
+  ];
+  container.innerHTML = rows.map(row => `
+    <div class="account-group-row ${selectedOverviewSection === row.key ? 'selected' : ''}" onclick="selectOverviewSection('${row.key}')">
+      <span class="account-group-row-label">${escapeHtml(row.label)}</span>
+      <span class="account-group-row-count">${escapeHtml(row.value)}</span>
+    </div>
+  `).join('');
+}
+
+function selectOverviewSection(key) {
+  selectedOverviewSection = key;
+  renderContextPreview();
+}
+
 function renderOverviewPreview() {
+  renderOverviewNavList();
   const running = latestStatusData?.running;
   const progress = latestStatusData?.currentProgress || null;
   const periodSummary = getScheduleSummary(4);
-  const recentLogSummary = logEntries.slice(-5).reverse().map(log => (
+  const recentLogSummary = logEntries.slice(-20).reverse().map(log => (
     `<strong>[${escapeHtml(log.time)}]</strong> ${escapeHtml(log.message)}`
   ));
   const taskSummary = scheduledTasksData.slice(0, 8).map(t =>
     `${escapeHtml(t.title || t.recordId)} · ${new Date(t.publishTime).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} <span style="color:#aeaeb2">(${formatRemainingTime(t.remainingMs)})</span>`
   );
 
-  return [
-    buildPreviewMetaBlock('运行概况', [
+  const blocks = {
+    status: buildPreviewMetaBlock('运行概况', [
       { label: '服务', value: running ? '运行中' : (latestStatusData ? '已停止' : '加载中') },
       { label: '待发布', value: formatCount(latestPendingCount) },
       { label: '已排队任务', value: formatCount(scheduledTasksData.length) },
       { label: '下次检查', value: latestStatusData?.nextCheck || '-' },
     ]),
-    buildPreviewMetaBlock('当前任务', [
+    task: buildPreviewMetaBlock('当前任务', [
       { label: '阶段', value: progress ? getProgressLabel(progress.stage) : '空闲' },
       { label: '标题', value: progress?.title || '当前没有正在处理的发布任务' },
       { label: '平台', value: progress?.platform || '-' },
       { label: '账号', value: progress?.account || '-' },
     ]),
-    buildPreviewListBlock('即将发布', taskSummary, '当前没有排队中的定时任务'),
-    buildPreviewListBlock('扫描窗口', periodSummary.map(item => escapeHtml(item)), '还没有定时扫描窗口配置'),
-    buildPreviewListBlock('最近动态', recentLogSummary, '等待新的运行日志'),
-  ].join('');
+    upcoming: buildPreviewListBlock('即将发布', taskSummary, '当前没有排队中的定时任务'),
+    window: buildPreviewListBlock('扫描窗口', periodSummary.map(item => escapeHtml(item)), '还没有定时扫描窗口配置'),
+    activity: buildPreviewListBlock('最近动态', recentLogSummary, '等待新的运行日志'),
+  };
+  return blocks[selectedOverviewSection] || blocks.status;
 }
 
 // 发布页右栏单条记录卡片：账号分组选中后，该账号下每条记录各出一张，
@@ -5678,22 +5690,6 @@ function importResetFull() {
 
 // ===== 素材导入页相关函数结束 =====
 
-function renderDataPreview() {
-  return [
-    buildPreviewMetaBlock('路径信息', [
-      { label: '配置文件', value: latestRuntimePaths.configPath || '等待读取' },
-      { label: '数据目录', value: latestRuntimePaths.dataDir || '等待读取' },
-      { label: '缓存目录', value: latestRuntimePaths.cacheDir || '等待读取' },
-      { label: '发布账本', value: latestRuntimePaths.ledgerPath || '等待读取' },
-    ]),
-    buildPreviewListBlock('导入导出说明', [
-      '配置备份只包含接入信息与映射规则，适合快速迁移到另一台电脑。',
-      '完整数据会额外包含发布账本，不会包含缓存和临时文件。',
-      '备份文件里可能含有真实密钥，只建议保存到可信位置。'
-    ]),
-  ].join('');
-}
-
 function renderContextPreview() {
   const contentEl = document.getElementById('contextPreviewContent');
   const setupPaneEl = document.getElementById('setupPanePreview');
@@ -5715,8 +5711,6 @@ function renderContextPreview() {
     html = renderOverviewPreview();
   } else if (activeSection === 'publish') {
     html = renderPublishPreview();
-  } else if (activeSection === 'data') {
-    html = renderDataPreview();
   } else if (activeSection === 'import') {
     html = renderImportPreview();
   }
@@ -6423,6 +6417,7 @@ async function loadFeishuConfig(force = false) {
     if (storagePathEl) storagePathEl.textContent = runtimePaths.configPath
       ? `本机数据位置：配置文件 ${runtimePaths.configPath}；数据目录 ${runtimePaths.dataDir || '-'}`
       : '配置会保存到当前系统用户目录。';
+    updateBackupPathsDisplay();
     const hasCoreConfig = !!(feishu.appId && feishu.appToken && feishu.tableId);
     statusEl.className = `config-status ${hasCoreConfig ? 'success' : ''}`.trim();
     statusEl.textContent = hasCoreConfig
