@@ -674,21 +674,16 @@
     overflow: hidden;
   }
 
-  .workspace-toolbar {
-    display: grid;
-    grid-template-columns: minmax(max-content, 1fr) auto;
-    align-items: center;
-    gap: 16px;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--line);
-    background: #ffffff;
-  }
-
-  .workspace-head-copy {
-    min-width: 0;
+  /* 中栏顶部标题行已移除（融景形态：左侧导航高亮即表示当前位置，不重复显示标题）；
+     workspaceEyebrow/workspaceTitle 仍以隐藏元素保留在 DOM 中，供 updateWorkspaceCopy() 写入，
+     右栏 hero 区（#contextPreviewTitle 等）复用同一批文案。 */
+  .workspace-controls {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 12px;
   }
 
   .workspace-eyebrow {
@@ -716,45 +711,16 @@
     box-shadow: 0 0 0 6px rgba(7, 193, 96, 0.12);
   }
 
-  .workspace-head-copy h2 {
-    font-size: 17px;
-    line-height: 1.1;
-    letter-spacing: -0.03em;
-    color: var(--ink);
-    font-weight: 700;
-    white-space: nowrap;
-  }
-
-  .workspace-head-copy p {
-    margin-top: 6px;
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--muted);
-  }
-
-  .workspace-head-tools {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    align-items: flex-end;
-  }
-
   .toolbar-status {
     display: flex;
     gap: 6px;
   }
 
-  /* hidden 属性优先级需高于 display:flex，否则切到非发布页时状态区/操作区不会真的隐藏 */
-  .toolbar-status[hidden],
-  .toolbar-actions[hidden] {
-    display: none;
-  }
-
   .status-chip {
-    padding: 6px 12px;
+    padding: 4px 10px;
     border-radius: 10px;
-    background: #f5f4f2;
-    border: 1px solid var(--line);
+    background: var(--input-bg);
+    border: none;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -763,13 +729,13 @@
 
   .status-chip-label {
     font-size: 11px;
-    color: #8a95a3;
+    color: var(--ink-2);
     font-weight: 500;
   }
 
   .status-chip-value {
-    font-size: 13px;
-    font-weight: 700;
+    font-size: 12px;
+    font-weight: 500;
     color: var(--ink);
   }
 
@@ -872,6 +838,12 @@
     font-size: 12px;
     line-height: 1.72;
     color: var(--muted);
+  }
+
+  /* 融景形态：中栏区块标题居中；右栏（详情阅读区）保持左对齐不受影响 */
+  .workspace-main .workspace-card h3,
+  .workspace-main .card-intro {
+    text-align: center;
   }
 
   .quick-entry-grid {
@@ -1187,10 +1159,6 @@
       grid-template-columns: 100px minmax(320px, 360px) minmax(440px, 1fr);
     }
 
-    .workspace-head-copy h2 {
-      font-size: 17px;
-    }
-
     .preview-hero h3 {
       font-size: 40px;
     }
@@ -1205,10 +1173,6 @@
     .workspace-preview {
       grid-column: 2;
       grid-row: 2;
-    }
-
-    .workspace-head-copy {
-      min-height: auto;
     }
 
     .toolbar-status {
@@ -2214,7 +2178,7 @@
   }
   .import-time-bar button:hover { background: var(--accent-deep); }
   .import-card-actions { display:flex; align-items:center; gap: 8px; padding-top: 8px; border-top:1px solid var(--line); flex-wrap:wrap; }
-  .import-card-preview-btn { font-size:11px; padding: 4px 8px; border-radius:5px; border:1px solid var(--line); background:#fff; color:var(--muted); cursor:pointer; }
+  .import-card-preview-btn { font-size:11px; padding: 4px 8px; border-radius:4px; border:1px solid var(--line); background:#fff; color:var(--muted); cursor:pointer; }
   .import-card-preview-btn:hover { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
   .import-card-actions input {
     flex: 1;
@@ -2329,34 +2293,12 @@
   </aside>
 
   <main class="workspace-main">
-    <header class="workspace-toolbar">
-      <div class="workspace-head-copy">
-        <div class="workspace-eyebrow" id="workspaceEyebrow" hidden>总览</div>
-        <h2 id="workspaceTitle">总览</h2>
-      </div>
-      <div class="workspace-head-tools">
-        <div class="toolbar-status" hidden>
-          <div class="status-chip">
-            <span class="status-chip-label">服务</span>
-            <span class="status-chip-value" id="toolbarServiceStatus">加载中</span>
-          </div>
-          <div class="status-chip">
-            <span class="status-chip-label">待发布</span>
-            <span class="status-chip-value" id="toolbarPendingCount">-</span>
-          </div>
-          <div class="status-chip">
-            <span class="status-chip-label">下次检查</span>
-            <span class="status-chip-value" id="toolbarNextCheck">-</span>
-          </div>
-        </div>
-        <div class="toolbar-actions" hidden>
-          <button class="btn btn-sm btn-secondary" onclick="refreshRecords(true)">刷新</button>
-          <button class="btn btn-sm btn-secondary" id="btnStart" onclick="startScheduler()">启动</button>
-          <button class="btn btn-sm btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止</button>
-          <button class="btn btn-sm btn-primary" onclick="publishNow()">立即补发</button>
-        </div>
-      </div>
-    </header>
+    <!-- 中栏顶部标题行已移除（左侧导航高亮即表示当前位置）；workspaceEyebrow/workspaceTitle 隐藏保留，
+         updateWorkspaceCopy() 仍写入这两个元素，右栏 hero 区复用同一批文案 -->
+    <div hidden>
+      <div class="workspace-eyebrow" id="workspaceEyebrow">总览</div>
+      <h2 id="workspaceTitle">总览</h2>
+    </div>
 
     <div class="workspace-scroll">
       <section class="workspace-view active" id="section-overview">
@@ -2364,6 +2306,29 @@
           <div class="workspace-card">
             <h3>运行总览</h3>
             <div class="card-intro">选择下方分类，右侧查看对应详情。</div>
+            <div id="overviewControlsMount">
+              <div class="workspace-controls" id="workspaceControls">
+                <div class="toolbar-status">
+                  <div class="status-chip">
+                    <span class="status-chip-value" id="toolbarServiceStatus">加载中</span>
+                  </div>
+                  <div class="status-chip">
+                    <span class="status-chip-label">待发布</span>
+                    <span class="status-chip-value" id="toolbarPendingCount">-</span>
+                  </div>
+                  <div class="status-chip">
+                    <span class="status-chip-label">下次</span>
+                    <span class="status-chip-value" id="toolbarNextCheck">-</span>
+                  </div>
+                </div>
+                <div class="toolbar-actions">
+                  <button class="btn btn-sm btn-secondary" onclick="refreshRecords(true)">刷新</button>
+                  <button class="btn btn-sm btn-secondary" id="btnStart" onclick="startScheduler()">启动</button>
+                  <button class="btn btn-sm btn-danger" id="btnStop" onclick="stopScheduler()" disabled>停止</button>
+                  <button class="btn btn-sm btn-primary" onclick="publishNow()">立即补发</button>
+                </div>
+              </div>
+            </div>
             <div class="overview-nav-list" id="overviewNavList"></div>
           </div>
         </div>
@@ -2380,6 +2345,7 @@
           <div class="workspace-card">
             <h3>待发布记录</h3>
             <div class="card-intro">按账号分组，点击账号在右侧查看该账号的全部待发布记录。</div>
+            <div id="publishControlsMount"></div>
             <div style="margin-top: 12px; position:relative;">
               <input id="recordSearchInput" type="text" placeholder="搜索记录标题…" oninput="filterRecords(this.value)"
                 style="width:100%; padding: 8px 12px 8px 32px; border:1px solid rgba(0,0,0,0.1); border-radius:8px; font-size:13px; background:#f8f8fb; color:#1d1d1f; box-sizing:border-box;">
@@ -2390,7 +2356,7 @@
               <button class="btn btn-sm btn-secondary" id="recordMoreBtn" onclick="showMoreRecords()" style="display:none;">显示更多</button>
             </div>
             <div id="recordList" class="record-list">
-              <div class="empty">点击右上角“刷新数据”加载记录</div>
+              <div class="empty">点击上方“刷新”加载记录</div>
             </div>
           </div>
         </div>
@@ -3121,6 +3087,21 @@ function formatCount(value) {
   return String(value);
 }
 
+// 服务端给的是 toLocaleString('zh-CN') 全量时间（如 2026/9/9 06:00:00），
+// 在只有几百像素宽的控制条里会把按钮挤出可视区。这里按距今远近压缩：
+// 今天只留时分，明天加前缀，更远才补月日；解析失败时原样返回，不吞信息。
+function formatNextCheckShort(raw) {
+  if (!raw) return '-';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
+  if (dayDiff === 0) return hm;
+  if (dayDiff === 1) return `明天 ${hm}`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
 function ensureSelectedRecord() {
   if (!recordListData.length) {
     selectedRecordKey = '';
@@ -3189,6 +3170,18 @@ function updateWorkspaceCopy() {
   document.getElementById('contextPreviewDescription').textContent = meta.previewDescription;
 }
 
+// 服务状态 / 操作按钮是单份 DOM（#workspaceControls），总览页和发布页都要显示，
+// 切页时把它挪到当前页对应的挂载点，不复制第二份 DOM（避免 onclick 重复绑定 / id 冲突）。
+// 导入页、设置页不需要这组控制，切走时不挪动，随所在 section 一起被 display:none 隐藏。
+function mountWorkspaceControls(section) {
+  const controls = document.getElementById('workspaceControls');
+  if (!controls) return;
+  const mount = section === 'overview' ? document.getElementById('overviewControlsMount')
+    : section === 'publish' ? document.getElementById('publishControlsMount')
+    : null;
+  if (mount) mount.appendChild(controls);
+}
+
 function switchSection(section) {
   activeSection = section;
   document.querySelectorAll('.primary-nav-btn').forEach(item => {
@@ -3197,11 +3190,7 @@ function switchSection(section) {
   document.querySelectorAll('.workspace-view').forEach(panel => {
     panel.classList.toggle('active', panel.id === `section-${section}`);
   });
-  // 发布相关的服务状态 / 操作按钮只在发布页显示，其余页面只保留左侧标题
-  const toolbarStatusEl = document.querySelector('.toolbar-status');
-  const toolbarActionsEl = document.querySelector('.toolbar-actions');
-  if (toolbarStatusEl) toolbarStatusEl.hidden = section !== 'publish';
-  if (toolbarActionsEl) toolbarActionsEl.hidden = section !== 'publish';
+  mountWorkspaceControls(section);
   updateWorkspaceCopy();
   if (section === 'publish' && !recordListData.length) {
     refreshRecords(true);
@@ -3566,7 +3555,7 @@ function renderAccountGroupRecordCard(record) {
   const publishBtnHtml = canPublishNow
     ? `<div style="padding-top: 12px;">
         <button onclick="publishRecord('${escapeJsSingleQuotedString(record.recordId)}')" style="
-          width:100%; padding: 10px 0; border:none; border-radius:12px;
+          width:100%; padding: 10px 0; border:none; border-radius:18px;
           background:var(--accent); color:#fff; font-size:13px; font-weight:600;
           cursor:pointer; transition: opacity .15s;
         " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">立即发布</button>
@@ -3574,13 +3563,13 @@ function renderAccountGroupRecordCard(record) {
       </div>`
     : (hasProcessing
       ? `<div style="padding-top: 12px;">
-          <div style="padding: 10px 12px; border-radius:12px; background:#fff7ed; color:#c2410c; font-size:12px; line-height:1.5;">
+          <div style="padding: 10px 12px; border-radius:10px; background:#fff7ed; color:#c2410c; font-size:12px; line-height:1.5;">
             这条记录已经提交到蚁小二，正在等待平台处理，暂时不建议重复触发。
           </div>
         </div>`
       : (hasFailed
         ? `<div style="padding-top: 12px;">
-            <div style="padding: 10px 12px; border-radius:12px; background:#fff1f2; color:#be123c; font-size:12px; line-height:1.5;">
+            <div style="padding: 10px 12px; border-radius:10px; background:#fff1f2; color:#be123c; font-size:12px; line-height:1.5;">
               当前有平台处于发布失败状态。按全局规则，只有待发布状态才能再次发布；如需重发，请先在飞书把对应平台状态改回待发布。
             </div>
           </div>`
@@ -3599,7 +3588,7 @@ function renderAccountGroupRecordCard(record) {
     ? `<div style="padding-top: 10px;">
         <button id="aiGenBtn-${escapeHtml(record.recordId)}"
           onclick="triggerAiGenerate('${escapeJsSingleQuotedString(record.recordId)}')"
-          style="width:100%; padding: 8px 0; border:1px solid var(--accent); border-radius:12px;
+          style="width:100%; padding: 8px 0; border:1px solid var(--accent); border-radius:10px;
             background:#fff; color:var(--accent); font-size:12px; font-weight:500;
             cursor:pointer; transition: background .15s;"
           onmouseover="this.style.background='var(--accent-soft)'"
@@ -4754,7 +4743,7 @@ function importShowNotePreview(noteKey) {
   if (!grid || !title) return;
   title.textContent = note.folderName + ' — ' + (note.imageCount || 0) + ' 张图片';
   grid.innerHTML = (note.images || []).map(img =>
-    `<img src="/api/file?path=${encodeURIComponent(img.path)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px"
+    `<img src="/api/file?path=${encodeURIComponent(img.path)}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px"
        onerror="this.style.background='#f0f0f0'">`
   ).join('');
   document.getElementById('importImgModal').style.display = 'flex';
@@ -5219,11 +5208,11 @@ function renderImportPreviewCards() {
               <summary style="font-size:11px;color:var(--muted);cursor:pointer;">正文（点击展开）</summary>
               <textarea class="import-preview-desc" data-record-key="${escapeAttr(recordKey)}"
                 oninput="importUpdatePreviewItem(this)"
-                style="width:100%;margin-top: 6px;font-size:12px;padding: 8px;border:1px solid var(--line);border-radius:6px;resize:vertical;min-height:80px;box-sizing:border-box;">${escapeHtml(desc)}</textarea>
+                style="width:100%;margin-top: 6px;font-size:12px;padding: 8px;border:1px solid var(--line);border-radius:8px;resize:vertical;min-height:80px;box-sizing:border-box;">${escapeHtml(desc)}</textarea>
             </details>
           </div>` : ''}
           ${tags.length ? `<div style="margin-top: 6px;display:flex;flex-wrap:wrap;gap: 4px;">
-            ${tags.map(t => `<span style="font-size:11px;background:var(--accent-soft);color:var(--accent);padding: 2px 8px;border-radius:12px;">${escapeHtml(t)}</span>`).join('')}
+            ${tags.map(t => `<span style="font-size:11px;background:var(--accent-soft);color:var(--accent);padding: 2px 8px;border-radius:10px;">${escapeHtml(t)}</span>`).join('')}
           </div>` : ''}
         </div>`;
   }
@@ -5799,7 +5788,7 @@ async function refreshStatus() {
     }
     const nextCheckEl = document.getElementById('nextCheck');
     if (nextCheckEl) nextCheckEl.textContent = status.nextCheck || '-';
-    document.getElementById('toolbarNextCheck').textContent = status.nextCheck || '-';
+    document.getElementById('toolbarNextCheck').textContent = formatNextCheckShort(status.nextCheck);
     if (pendingResp && pendingResp.success) {
       const countText = formatCount(pendingResp.count);
       const pendingCountEl = document.getElementById('pendingCount');
@@ -6848,7 +6837,7 @@ document.getElementById('musicPreviewPlayer').addEventListener('ended', () => { 
 document.getElementById('musicPreviewPlayer').addEventListener('pause', () => { if (!document.getElementById('musicPreviewPlayer').ended) { currentPreviewUrl = ''; refreshMusicPreviewButtons(); } });
 </script>
 <div id="importImgModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center" onclick="importClosePreview()">
-  <div style="background:#fff;border-radius:12px;padding: 24px;max-width:800px;max-height:80vh;overflow-y:auto;width:90%" onclick="event.stopPropagation()">
+  <div style="background:#fff;border-radius:10px;padding: 24px;max-width:800px;max-height:80vh;overflow-y:auto;width:90%" onclick="event.stopPropagation()">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom: 12px">
       <span style="font-size:12px;font-weight:600" id="importImgModalTitle">图片预览</span>
       <button onclick="importClosePreview()" style="background:none;border:none;font-size:20px;cursor:pointer">✕</button>
