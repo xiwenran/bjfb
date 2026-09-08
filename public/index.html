@@ -328,7 +328,7 @@
   }
   .account-group-row:hover { background: rgba(0,0,0,0.04); }
   .account-group-row.selected {
-    background: var(--accent-soft, #e4f5ea);
+    background: rgba(7, 193, 96, 0.06);
     border-color: #a8ddb8;
     color: var(--accent-deep, #07a251);
   }
@@ -582,9 +582,7 @@
   }
 
   body {
-    background:
-      radial-gradient(circle at top left, rgba(7, 193, 96, 0.08), transparent 24%),
-      linear-gradient(180deg, #f6f7f8 0%, #eef1f3 100%);
+    background: var(--app-bg);
     color: var(--ink);
     overflow: hidden;
   }
@@ -680,9 +678,9 @@
   .workspace-controls {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 8px;
     margin-top: 12px;
   }
 
@@ -895,7 +893,7 @@
   .overview-stat {
     padding: 16px;
     border-radius: 16px;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(245, 248, 241, 0.96) 100%);
+    background: var(--panel);
     border: 1px solid rgba(23, 32, 23, 0.06);
   }
 
@@ -947,7 +945,7 @@
   }
 
   .subnav-btn.active {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     color: var(--accent-deep);
     border-color: #bce8cc;
   }
@@ -994,10 +992,9 @@
   .preview-hero {
     padding: 24px 24px;
     border-radius: 16px;
-    background:
-      radial-gradient(circle at top right, rgba(7, 193, 96, 0.13), transparent 30%),
-      linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
-    border: 1px solid var(--line);
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--line);
   }
 
   .preview-hero h3 {
@@ -1117,9 +1114,7 @@
   }
 
   .progress-card {
-    background:
-      radial-gradient(circle at top right, rgba(7, 193, 96, 0.09), transparent 30%),
-      linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+    background: var(--panel);
     border-radius: 16px;
     border: 1px solid #d9ebe1;
     box-shadow: none;
@@ -1236,7 +1231,7 @@
   }
   .import-stat-box {
     flex: 1;
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     border-radius: 10px;
     padding: 12px 14px;
     text-align: center;
@@ -1349,7 +1344,7 @@
   }
   .import-batch-apply-btn {
     border: none;
-    background: linear-gradient(135deg, var(--accent), #06ad55);
+    background: var(--accent);
     color: #fff;
     border-radius: 10px;
     padding: 12px 24px;
@@ -1418,7 +1413,7 @@
     cursor: pointer;
   }
   .import-table-tab.active {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     border-color: var(--accent);
     color: var(--accent);
   }
@@ -1508,7 +1503,7 @@
     gap: 6px;
     padding: 4px 10px;
     border-radius: 999px;
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     color: var(--accent);
     font-size: 12px;
     font-weight: 500;
@@ -1597,7 +1592,7 @@
     cursor: pointer;
   }
   .import-pool-picker-tool:hover:not(:disabled) {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
   }
   .import-pool-picker-tool:disabled {
     opacity: .35;
@@ -1619,7 +1614,7 @@
     color: var(--ink);
   }
   .import-pool-picker-item:hover {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
   }
   .import-pool-picker-item input[type="checkbox"] {
     accent-color: var(--accent);
@@ -1677,7 +1672,7 @@
   }
   .import-pool-rr-btn {
     border: 1px solid var(--accent);
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     color: var(--accent);
     border-radius: 10px;
     padding: 8px 14px;
@@ -1740,10 +1735,10 @@
     transition: background 0.15s, color 0.15s;
   }
   .import-tw-preset-btn:hover:not(:disabled) {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
   }
   .import-tw-preset-btn.active {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     color: var(--accent);
     opacity: 0.5;
     cursor: default;
@@ -1771,7 +1766,7 @@
   }
   .import-tw-apply-btn {
     border: 1px solid var(--accent);
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     color: var(--accent);
     border-radius: 10px;
     padding: 8px 14px;
@@ -1824,7 +1819,7 @@
     cursor: pointer;
   }
   .import-table tbody tr:hover td {
-    background: #f3f8f5;
+    background: var(--input-bg);
   }
   .import-table tbody tr.selected td:first-child {
     border-left: 2px solid var(--accent);
@@ -1948,7 +1943,7 @@
     cursor: pointer;
   }
   .import-table-header-menu button:hover {
-    background: #f3f8f5;
+    background: var(--input-bg);
     color: var(--accent);
   }
   .import-table-empty {
@@ -2125,7 +2120,7 @@
   .import-preview-back:hover {
     border-color: var(--accent);
     color: var(--accent);
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
   }
   .import-toast {
     position: fixed;
@@ -2230,7 +2225,7 @@
     cursor: pointer;
   }
   .import-preview-action.active {
-    background: var(--accent-soft);
+    background: rgba(7, 193, 96, 0.06);
     border-color: var(--accent);
     color: var(--accent);
   }
