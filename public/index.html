@@ -163,7 +163,7 @@
     margin-bottom: 16px;
     border: 1px solid rgba(0,122,255,0.1);
     background: #fff;
-    border-radius: 14px;
+    border-radius: 10px;
     padding: 16px 20px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   }
@@ -196,7 +196,7 @@
   /* ===== Panel ===== */
   .panel {
     background: #fff;
-    border-radius: 14px;
+    border-radius: 10px;
     padding: 20px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     border: 1px solid rgba(0,0,0,0.05);
@@ -278,7 +278,7 @@
   .record-list { display: flex; flex-direction: column; gap: 10px; }
   .record-item {
     border: 1px solid rgba(0,0,0,0.06);
-    border-radius: 12px;
+    border-radius: 10px;
     padding: 14px;
     transition: border-color 0.15s, box-shadow 0.15s;
     background: #fff;
@@ -321,7 +321,7 @@
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: 15px; font-weight: 600; color: #3a3a3c;
     padding: 10px 12px; margin-bottom: 6px;
-    cursor: pointer; border-radius: 12px;
+    cursor: pointer; border-radius: 10px;
     border: 1px solid transparent;
     transition: background 0.12s, border-color 0.12s;
     user-select: none;
@@ -347,7 +347,7 @@
   /* ===== Accounts ===== */
   .account-list { display: flex; flex-direction: column; gap: 8px; }
   .account-item {
-    border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; padding: 14px 16px;
+    border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; padding: 14px 16px;
     display: flex; justify-content: space-between; gap: 16px; align-items: center; background: #fff;
   }
   .account-main { display: flex; flex-direction: column; gap: 3px; }
@@ -365,7 +365,7 @@
   /* ===== Mapping ===== */
   .mapping-panel-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
   .mapping-row {
-    border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; padding: 14px 16px;
+    border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; padding: 14px 16px;
     display: flex; flex-direction: column; gap: 10px; background: #fff;
   }
   .mapping-row-top {
@@ -435,7 +435,7 @@
   }
   .period-row label { font-size: 13px; color: #3a3a3c; white-space: nowrap; }
   .period-row input, .period-row select {
-    padding: 6px 10px; border: 1px solid rgba(0,0,0,0.12); border-radius: 7px;
+    padding: 6px 10px; border: 1px solid rgba(0,0,0,0.12); border-radius: 8px;
     font-size: 13px; width: 90px; background: #fff; color: #1d1d1f;
   }
   .period-row input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 3px rgba(0,113,227,0.14); }
@@ -450,21 +450,21 @@
 
   /* ===== Music ===== */
   .music-shell {
-    border: 1px solid rgba(0,0,0,0.06); border-radius: 14px; background: #f9f9fb; padding: 18px;
+    border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; background: #f9f9fb; padding: 18px;
   }
   .current-music {
-    padding: 14px 18px; background: #f2f2f7; border-radius: 12px; margin-bottom: 14px;
+    padding: 14px 18px; background: #f2f2f7; border-radius: 10px; margin-bottom: 14px;
     border: 1px solid rgba(0,0,0,0.05); display: flex; align-items: center; gap: 12px;
   }
   .music-status { font-size: 13px; color: #8e8e93; font-weight: 500; }
   .music-status.selected { color: #248a3d; font-weight: 600; }
   .music-search-row { display: grid; grid-template-columns: minmax(0,1fr) 120px 120px; gap: 12px; margin-bottom: 14px; }
   .music-search-input {
-    width: 100%; padding: 12px 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px;
+    width: 100%; padding: 12px 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px;
     font-size: 13px; background: #fff; color: #1d1d1f; transition: border-color 0.2s, box-shadow 0.2s;
   }
   .music-search-input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 4px rgba(0,113,227,0.12); }
-  .music-results { max-height: 360px; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; background: white; display: block; }
+  .music-results { max-height: 360px; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; background: white; display: block; }
   .music-item { padding: 14px 18px; border-bottom: 1px solid rgba(0,0,0,0.04); cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 12px; transition: background 0.12s; }
   .music-item:last-child { border-bottom: none; }
   .music-item:hover { background: #f5f5f7; }
@@ -492,7 +492,7 @@
   }
   .music-modal.open { display: flex; }
   .music-modal-card {
-    width: min(940px, 100%); max-height: 88vh; background: #fff; border-radius: 20px;
+    width: min(940px, 100%); max-height: 88vh; background: #fff; border-radius: 16px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.18); display: flex; flex-direction: column; overflow: hidden;
   }
   .music-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px 14px; border-bottom: 1px solid rgba(0,0,0,0.06); }
@@ -504,19 +504,19 @@
   .music-tabs { display: flex; gap: 24px; overflow-x: auto; padding-bottom: 0; border-bottom: 1px solid rgba(0,0,0,0.06); }
   .music-tab { border: none; background: transparent; color: #aeaeb2; font-size: 13px; font-weight: 600; padding: 4px 0 12px; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; transition: color 0.12s; }
   .music-tab.active { color: #0071e3; border-bottom-color: #0071e3; }
-  .music-library-list { min-height: 220px; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 14px; background: #fdfdfe; }
+  .music-library-list { min-height: 220px; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; background: #fdfdfe; }
   .music-library-item { display: flex; align-items: center; gap: 14px; padding: 13px 18px; border-bottom: 1px solid rgba(0,0,0,0.04); transition: background 0.12s; }
   .music-library-item:hover { background: #f5f5f7; }
   .music-library-item:last-child { border-bottom: none; }
   .music-play-btn { width: 36px; height: 36px; border-radius: 50%; border: none; background: #e5e5ea; color: #1d1d1f; cursor: pointer; font-size: 13px; flex-shrink: 0; transition: background 0.12s; }
   .music-play-btn.playing { background: #0071e3; color: #fff; }
-  .music-use-btn { border: none; background: #0071e3; color: white; border-radius: 9px; padding: 8px 15px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity 0.12s; }
+  .music-use-btn { border: none; background: #0071e3; color: white; border-radius: 8px; padding: 8px 15px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity 0.12s; }
   .music-use-btn:hover { opacity: 0.82; }
   .music-load-more { margin: 10px auto 0; display: block; }
 
   /* ===== Log Panel ===== */
   .log-panel {
-    background: #161618; border-radius: 12px; padding: 16px; color: #e5e5ea;
+    background: #161618; border-radius: 10px; padding: 16px; color: #e5e5ea;
     font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace; font-size: 12px;
     max-height: calc(100vh - 220px); overflow-y: auto;
   }
@@ -606,7 +606,7 @@
   .primary-rail {
     background: var(--side);
     border: 1px solid var(--line);
-    border-radius: 28px;
+    border-radius: 16px;
     padding: 24px 14px;
     display: flex;
     flex-direction: column;
@@ -629,53 +629,41 @@
   }
 
   .primary-nav-btn {
-    border: 1px solid transparent;
+    border: none;
     background: transparent;
-    border-radius: 24px;
-    padding: 14px 10px 16px;
-    color: var(--muted);
+    border-radius: 10px;
+    padding: 12px 8px;
+    color: var(--ink-2);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
-    min-height: 94px;
+    gap: 6px;
+    min-height: 68px;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 500;
     cursor: pointer;
-    transition: transform .18s ease, background .18s ease, color .18s ease, border-color .18s ease;
+    transition: background .15s ease, color .15s ease;
   }
 
   .primary-nav-btn:hover {
-    background: #f8faf9;
-    border-color: #dce6df;
+    background: var(--input-bg);
     color: var(--ink);
   }
 
   .primary-nav-btn.active {
-    background: var(--accent-soft);
-    color: var(--accent-deep);
-    border-color: #a8ddb8;
-  }
-
-  .primary-nav-btn.active .primary-nav-icon {
-    background: rgba(7, 193, 96, 0.12);
-    border-color: #a8ddb8;
+    background: rgba(7, 193, 96, 0.06);
+    color: var(--accent);
   }
 
   .primary-nav-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 16px;
     display: grid;
     place-items: center;
-    font-size: 24px;
-    background: #f7f9fb;
-    border: 1px solid var(--line);
+    font-size: 22px;
   }
 
   .workspace-main,
   .workspace-preview {
-    border-radius: 32px;
+    border-radius: 16px;
     background: var(--panel-strong);
     border: 1px solid var(--line);
   }
@@ -895,7 +883,7 @@
 
   .quick-entry-card {
     border: 1px solid var(--line);
-    border-radius: 22px;
+    border-radius: 16px;
     background: #f9fbfc;
     padding: 18px;
     width: 100%;
@@ -934,7 +922,7 @@
 
   .overview-stat {
     padding: 18px;
-    border-radius: 22px;
+    border-radius: 16px;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(245, 248, 241, 0.96) 100%);
     border: 1px solid rgba(23, 32, 23, 0.06);
   }
@@ -967,7 +955,7 @@
 
   .subnav-btn {
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: 10px;
     background: var(--panel-strong);
     color: var(--ink);
     min-height: auto;
@@ -1152,7 +1140,7 @@
   .log-panel {
     height: min(56vh, 560px);
     background: #0f1513;
-    border-radius: 22px;
+    border-radius: 16px;
     border: 1px solid rgba(255, 255, 255, 0.06);
   }
 
@@ -1160,7 +1148,7 @@
     background:
       radial-gradient(circle at top right, rgba(7, 193, 96, 0.09), transparent 30%),
       linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
-    border-radius: 24px;
+    border-radius: 16px;
     border: 1px solid #d9ebe1;
     box-shadow: none;
   }
@@ -1372,7 +1360,7 @@
     border: none;
     background: var(--accent);
     color: #fff;
-    border-radius: 14px;
+    border-radius: 10px;
     padding: 14px 36px;
     font-size: 15px;
     font-weight: 600;
@@ -1399,7 +1387,7 @@
     border: none;
     background: linear-gradient(135deg, var(--accent), #06ad55);
     color: #fff;
-    border-radius: 12px;
+    border-radius: 10px;
     padding: 12px 24px;
     font-size: 13px;
     font-weight: 600;
@@ -1639,7 +1627,7 @@
     border: 1px solid var(--line);
     background: #fff;
     color: var(--accent);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 3px 8px;
     font-size: 11px;
     cursor: pointer;
@@ -1778,7 +1766,7 @@
   }
   .import-tw-preset-btn {
     border: 1px solid #bedbc8;
-    border-radius: 20px;
+    border-radius: 16px;
     background: #f8fcfa;
     color: var(--accent);
     font-size: 11px;
@@ -1978,7 +1966,7 @@
     min-width: 180px;
     background: #fff;
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 10px;
     box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
     padding: 8px;
     display: flex;
@@ -2048,7 +2036,7 @@
   .import-preview-account-card {
     background: #fff;
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: 10px;
     padding: 14px 16px;
   }
   .import-preview-account-head {
@@ -2183,7 +2171,7 @@
     min-width: 220px;
     max-width: 360px;
     padding: 12px 14px;
-    border-radius: 12px;
+    border-radius: 10px;
     background: rgba(29, 29, 31, 0.92);
     color: #fff;
     font-size: 12px;
@@ -2209,7 +2197,7 @@
     font-size: 12px;
     padding: 4px 8px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     background: #fff;
     color: var(--ink);
   }
@@ -2217,7 +2205,7 @@
   .import-time-bar button {
     font-size: 12px;
     padding: 5px 12px;
-    border-radius: 6px;
+    border-radius: 8px;
     border: none;
     background: var(--accent);
     color: #fff;
@@ -2233,7 +2221,7 @@
     font-size: 12px;
     padding: 4px 8px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     background: #fff;
     color: var(--ink);
     min-width: 0;
@@ -2261,7 +2249,7 @@
     font-weight: 500;
     padding: 6px 10px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     margin-top: 4px;
     box-sizing: border-box;
     color: var(--ink);
@@ -2271,7 +2259,7 @@
   .import-preview-action {
     font-size: 12px;
     padding: 4px 12px;
-    border-radius: 6px;
+    border-radius: 8px;
     border: 1px solid var(--line);
     background: #fff;
     color: var(--ink);
