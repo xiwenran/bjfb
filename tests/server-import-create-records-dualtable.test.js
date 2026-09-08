@@ -13,6 +13,15 @@ fs.rmSync(tempRoot, { recursive: true, force: true });
 process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
 
+// 固件用的图片路径必须是真实存在、文件头合法的 PNG，否则会被
+// src/server.js 的 filterUsableImages() 判为 unreadable/not_an_image 剔除，
+// 记录会在走到本该测的双表路由分支之前就被 no_valid_images 拦截。
+// 留在磁盘上不清理，由主会话统一处理。
+const fixtureDir = path.join(tempRoot, 'fixtures');
+fs.mkdirSync(fixtureDir, { recursive: true });
+const fixtureImagePath = path.join(fixtureDir, '1.png');
+fs.writeFileSync(fixtureImagePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x00]));
+
 const FeishuClient = require('../src/feishu.js');
 const { startServer, stopServer, config } = require('../src/server.js');
 
@@ -101,14 +110,14 @@ describe('server import integration (dual-table)', { concurrency: false }, () =>
           {
             noteKey: '专题A/xhs-001',
             topic: '专题A',
-            images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+            images: [{ name: '1.png', path: fixtureImagePath, size: 123 }],
             xiaohongshuAccount: '小红书账号A',
             douyinAccount: '',
           },
           {
             noteKey: '专题A/dy-001',
             topic: '专题A',
-            images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+            images: [{ name: '1.png', path: fixtureImagePath, size: 123 }],
             xiaohongshuAccount: '',
             douyinAccount: '抖音账号B',
           },

@@ -616,6 +616,77 @@ function sendJson(res, data, status = 200) {
   res.end(JSON.stringify(data));
 }
 
+// 过滤客户端传入的图片列表，剔除非真实图片文件（如 ExFAT/APFS 外置盘产生的
+// AppleDouble 资源叉文件 ._xxx.jpg：文件头非图片 magic number，但后缀是 .jpg，
+// 用后缀过滤拦不住，蚁小二探测真实类型后会拒收，导致整篇笔记推送失败）。
+// 只读文件头前 12 字节判定类型，不整文件读入内存（单批可能上千张图）。
+function filterUsableImages(list) {
+  const usable = [];
+  const skipped = [];
+  let hadIoError = false;
+  const items = Array.isArray(list) ? list : [];
+  for (const item of items) {
+    const itemPath = item && item.path;
+    const itemName = (item && item.name) || (itemPath ? path.basename(itemPath) : '');
+    if (!itemPath) {
+      skipped.push({ name: itemName, reason: 'unreadable' });
+      continue;
+    }
+    if (path.basename(itemPath).startsWith('.')) {
+      skipped.push({ name: itemName, reason: 'dotfile' });
+      continue;
+    }
+    let header = null;
+    let fd = null;
+    try {
+      fd = fs.openSync(itemPath, 'r');
+      const buf = Buffer.alloc(12);
+      const bytesRead = fs.readSync(fd, buf, 0, 12, 0);
+      header = buf.slice(0, bytesRead);
+    } catch (err) {
+      // ENOENT（文件确实不存在）与其它 IO 错误（外置盘掉线/权限问题等环境故障）区分开，
+      // 前者是数据问题，后者不该被静默降级成「素材无效」。
+      if (err && err.code === 'ENOENT') {
+        skipped.push({ name: itemName, reason: 'missing', path: itemPath });
+      } else {
+        hadIoError = true;
+        skipped.push({ name: itemName, reason: 'io_error', path: itemPath, code: (err && err.code) || null });
+      }
+      continue;
+    } finally {
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch (_) {}
+      }
+    }
+    if (!header || header.length < 2) {
+      skipped.push({ name: itemName, reason: 'not_an_image' });
+      continue;
+    }
+    const isJpeg = header.length >= 3 && header[0] === 0xFF && header[1] === 0xD8 && header[2] === 0xFF;
+    const isPng = header.length >= 8
+      && header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47
+      && header[4] === 0x0D && header[5] === 0x0A && header[6] === 0x1A && header[7] === 0x0A;
+    const isGif = header.length >= 4
+      && header[0] === 0x47 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x38;
+    const isBmp = header[0] === 0x42 && header[1] === 0x4D;
+    const isWebp = header.length >= 12
+      && header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46
+      && header[8] === 0x57 && header[9] === 0x45 && header[10] === 0x42 && header[11] === 0x50;
+    let isHeic = false;
+    if (header.length >= 12
+      && header[4] === 0x66 && header[5] === 0x74 && header[6] === 0x79 && header[7] === 0x70) {
+      const brand = header.slice(8, 12).toString('ascii').toLowerCase();
+      if (['heic', 'heix', 'hevc', 'mif1', 'msf1'].includes(brand)) isHeic = true;
+    }
+    if (isJpeg || isPng || isGif || isBmp || isWebp || isHeic) {
+      usable.push(item);
+    } else {
+      skipped.push({ name: itemName, reason: 'not_an_image' });
+    }
+  }
+  return { usable, skipped, hadIoError };
+}
+
 function sendHtml(res, filePath) {
   const content = fs.readFileSync(filePath, 'utf-8');
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1430,8 +1501,8 @@ const server = http.createServer(async (req, res) => {
           noteTitle = '',
           noteKey = '',
           folderPath: recordFolderPath = '',
-          images = [],
-          videos = [],
+          images: rawImages = [],
+          videos: rawVideos = [],
           xiaohongshuAccount = '',
           douyinAccount = '',
           publishTime = '',
@@ -1442,16 +1513,84 @@ const server = http.createServer(async (req, res) => {
           overwrite = false,
           overwriteId = '',
         } = record;
+
+        // 客户端传 images:null 时，解构默认值只对 undefined 生效，null 会原样漏过去，
+        // 后面 rawImages.length 直接抛 TypeError；这里统一兜底成数组。
+        const safeRawImages = Array.isArray(rawImages) ? rawImages : [];
+
+        // 入口过滤：剔除混入的非图片文件（如 ExFAT 外置盘的 ._xxx 资源叉文件），
+        // 不让它们进入后续指纹计算 / AI 视觉识别 / 飞书上传。dryRun 也执行，保证预览结果与真实导入一致。
+        const { usable: images, skipped: skippedImages, hadIoError } = filterUsableImages(safeRawImages);
+        const videos = (Array.isArray(rawVideos) ? rawVideos : []).filter(v => {
+          const p = v && v.path;
+          return p && !path.basename(p).startsWith('.');
+        });
+        const skippedVideos = (Array.isArray(rawVideos) ? rawVideos : [])
+          .filter(v => {
+            const p = v && v.path;
+            return !p || path.basename(p).startsWith('.');
+          })
+          .map(v => ({ name: (v && v.name) || (v && v.path ? path.basename(v.path) : ''), reason: 'dotfile' }));
+        const skippedFiles = [...skippedImages, ...skippedVideos];
+        if (skippedFiles.length) {
+          writeImportLog(`过滤掉非图片/隐藏文件 noteKey=${noteKey}`, { noteKey, skippedFiles });
+        }
+
         const normalizedXiaohongshuAccount = String(xiaohongshuAccount || '').trim();
         const normalizedDouyinAccount = String(douyinAccount || '').trim();
         const fingerprintTopicKey = [topic, pptTopic].filter(Boolean).join('/');
+
+        // 过滤过程中出现非 ENOENT 的 IO 错误（外置盘掉线/权限异常等环境故障），
+        // 不能当成「素材本身无效」的普通业务失败去处理——那会把环境故障误报成数据问题。
+        if (hadIoError) {
+          const ioSkipped = skippedFiles.filter(f => f.reason === 'io_error');
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'storage_error',
+            skippedFiles,
+            message: `疑似存储设备异常或权限问题，请检查素材所在磁盘是否正常挂载：${ioSkipped.map(f => `${f.name}(${f.path || ''})`).join(', ')}`,
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        // 过滤后一张可用图片都不剩，但客户端确实传了图 → 整条记录不能继续走上传
+        if (safeRawImages.length > 0 && images.length === 0) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'no_valid_images',
+            skippedFiles,
+            message: `本条记录的 ${safeRawImages.length} 个图片文件全部被判定为无效（非真实图片或隐藏文件），已跳过：${skippedFiles.map(f => `${f.name}(${f.reason})`).join(', ')}`,
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        // 被剔除的文件里如果包含封面图（主序号 0），不能悄悄继续——那会建出一条没有封面的记录。
+        const filteredOutCover = skippedImages.some(f => {
+          const sk = parseAttachmentSortKey(f.name);
+          return sk && sk[0] === 0;
+        });
+        if (filteredOutCover) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'cover_filtered',
+            skippedFiles,
+            message: `封面图被判定为无效文件，已中止本条导入：${skippedImages.map(f => `${f.name}(${f.reason})`).join(', ')}`,
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
 
         // 是否覆盖模式（前端明确传 overwrite:true + overwriteId）
         const isOverwrite = !!(overwrite && overwriteId);
 
         // Step 1: 账号校验
         if (!normalizedXiaohongshuAccount && !normalizedDouyinAccount) {
-          results.push({ noteKey, status: 'failed', reason: 'no_account' });
+          results.push({ noteKey, status: 'failed', reason: 'no_account', ...(skippedFiles.length ? { skippedFiles } : {}) });
           if (!dryRun) pushImportProgress(noteKey, 'failed');
           continue;
         }
@@ -1461,6 +1600,7 @@ const server = http.createServer(async (req, res) => {
             status: 'failed',
             reason: 'multiple_platform_accounts',
             message: '同一条笔记不能同时填写小红书和抖音账号。请拆成两条记录：一条只填小红书账号，一条只填抖音账号。',
+            ...(skippedFiles.length ? { skippedFiles } : {}),
           });
           if (!dryRun) pushImportProgress(noteKey, 'failed');
           continue;
@@ -1538,12 +1678,13 @@ const server = http.createServer(async (req, res) => {
                   reason: 'topic_index_write_failed',
                   recordId: existingRecordId,
                   message: `飞书记录已存在，但主题索引补写失败，已停止本批且未重复建单: ${indexError.message}`,
+                  ...(skippedFiles.length ? { skippedFiles } : {}),
                 });
                 pushImportProgress(noteKey, 'failed');
                 break;
               }
             }
-            results.push({ noteKey, status: 'skipped', reason: 'fingerprint_exists', recordId: existingRecordId, existingStatus });
+            results.push({ noteKey, status: 'skipped', reason: 'fingerprint_exists', recordId: existingRecordId, existingStatus, ...(skippedFiles.length ? { skippedFiles } : {}) });
             if (!dryRun) pushImportProgress(noteKey, 'skipped');
             continue;
           }
@@ -1555,12 +1696,12 @@ const server = http.createServer(async (req, res) => {
           try {
             const targetRec = await feishu.getRecordById(overwriteId, targetPlatform);
             if (!targetRec) {
-              results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: `recordId ${overwriteId} 不存在` });
+              results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: `recordId ${overwriteId} 不存在`, ...(skippedFiles.length ? { skippedFiles } : {}) });
               if (!dryRun) pushImportProgress(noteKey, 'failed');
               continue;
             }
           } catch (verifyErr) {
-            results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: verifyErr.message });
+            results.push({ noteKey, status: 'failed', reason: 'overwrite_target_not_found', message: verifyErr.message, ...(skippedFiles.length ? { skippedFiles } : {}) });
             if (!dryRun) pushImportProgress(noteKey, 'failed');
             continue;
           }
@@ -1637,7 +1778,7 @@ const server = http.createServer(async (req, res) => {
               // 真正导入阶段（dryRun=false）降级为"空内容继续上传"——账号、时间、图片正常处理，
               // 只是标题/正文/标签为空，用户可以在飞书里手动补内容。这样 AI 偶发失败不会卡住整批。
               if (dryRun) {
-                results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message });
+                results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message, ...(skippedFiles.length ? { skippedFiles } : {}) });
                 continue;
               }
               // 非 dryRun：降级处理，记 warning 但继续走完图片上传 + 写飞书
@@ -1661,6 +1802,7 @@ const server = http.createServer(async (req, res) => {
             description: aiDescription,
             tags: aiTags,
             ...(previewMeta ? { aiImagesTruncated: previewMeta } : {}),
+            ...(skippedFiles.length ? { skippedFiles } : {}),
           });
           continue;
         }
@@ -1695,7 +1837,7 @@ const server = http.createServer(async (req, res) => {
           totalUploadMs += uploadMs; countUpload++;
           writeImportLog('图片上传耗时', { noteKey, imageCount: imagePathsForRecord.length, ms: uploadMs });
         } catch (uploadErr) {
-          results.push({ noteKey, status: 'failed', reason: 'upload_error', message: uploadErr.message });
+          results.push({ noteKey, status: 'failed', reason: 'upload_error', message: uploadErr.message, ...(skippedFiles.length ? { skippedFiles } : {}) });
           pushImportProgress(noteKey, 'failed');
           continue;
         }
@@ -1719,7 +1861,7 @@ const server = http.createServer(async (req, res) => {
             );
             uploadedVideoTokens = uploadedVids.map(u => ({ file_token: u.fileToken }));
           } catch (uploadErr) {
-            results.push({ noteKey, status: 'failed', reason: 'video_upload_error', message: uploadErr.message });
+            results.push({ noteKey, status: 'failed', reason: 'video_upload_error', message: uploadErr.message, ...(skippedFiles.length ? { skippedFiles } : {}) });
             pushImportProgress(noteKey, 'failed');
             continue;
           }
@@ -1827,6 +1969,7 @@ const server = http.createServer(async (req, res) => {
                 reason: 'topic_index_write_failed',
                 recordId: overwriteId,
                 message: `飞书记录已更新，但主题索引写入失败，已停止本批且未回滚飞书记录: ${indexError.message}`,
+                ...(skippedFiles.length ? { skippedFiles } : {}),
               });
               pushImportProgress(noteKey, 'failed');
               break;
@@ -1837,6 +1980,7 @@ const server = http.createServer(async (req, res) => {
               recordId: overwriteId,
               overwritten: true,
               ...extraMeta,
+              ...(skippedFiles.length ? { skippedFiles } : {}),
             });
           } else {
             const { recordId } = await feishu.createRecord(fields, targetPlatform);
@@ -1855,6 +1999,7 @@ const server = http.createServer(async (req, res) => {
                 reason: 'topic_index_write_failed',
                 recordId,
                 message: `飞书记录已创建，但主题索引写入失败，已停止本批且未回滚飞书记录: ${indexError.message}`,
+                ...(skippedFiles.length ? { skippedFiles } : {}),
               });
               pushImportProgress(noteKey, 'failed');
               break;
@@ -1864,6 +2009,7 @@ const server = http.createServer(async (req, res) => {
               status: 'success',
               recordId,
               ...extraMeta,
+              ...(skippedFiles.length ? { skippedFiles } : {}),
             });
           }
           pushImportProgress(noteKey, 'success');
@@ -1883,6 +2029,7 @@ const server = http.createServer(async (req, res) => {
             message: feishuErr.message,
             ...(feishuErr.feishuCode ? { feishuCode: feishuErr.feishuCode } : {}),
             ...(feishuErr.feishuMsg ? { feishuMsg: feishuErr.feishuMsg } : {}),
+            ...(skippedFiles.length ? { skippedFiles } : {}),
           });
           pushImportProgress(noteKey, 'failed');
         }

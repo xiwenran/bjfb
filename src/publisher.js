@@ -1083,6 +1083,16 @@ async function findRecentTaskByTitleAndAccount(yixiaoerConfig, platformName, tit
       const sameAccount = (normAccountId && itemAccountId === normAccountId)
         || (normAccountName && itemNickName === normAccountName);
       if (!sameAccount) return false;
+      // 已确认全部失败（allfailed）的任务不构成"已发布"证据：内容根本没有真正发出去
+      // （如蚁小二拒收素材导致 content-type not accept），继续拦截会让用户修好问题后
+      // 也无法在 12 小时窗口内重发。只放行明确等于 'allfailed' 的这一种状态；
+      // allsuccessful（已发布）、publishing（进行中，可能仍会成功，放行会造成真正的
+      // 重复发布）、字段缺失或任何其他/未来新增状态值一律保持拦截，不要改成
+      // "不等于 allsuccessful 就放行"这种反向逻辑。不要因为"看起来是冗余判断"而删除本段。
+      if (item?.taskSetStatus === 'allfailed') {
+        console.log(`  ℹ️ C1 命中同标题任务但已确认全部失败(allfailed)，允许重新提交: taskId=${item?.id || ''} platform=${platformName} account=${accountName}`);
+        return false;
+      }
       if (!item?.createdAt) return true;
       return new Date(item.createdAt).getTime() >= since;
     }) || null;

@@ -11,6 +11,16 @@ fs.rmSync(tempRoot, { recursive: true, force: true });
 process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
 
+// 固件用的图片路径必须是真实存在、文件头合法的 PNG，否则会被
+// src/server.js 的 filterUsableImages() 判为 unreadable/not_an_image 剔除，
+// 导致测试记录在走到本该测的业务分支之前就被 no_valid_images 拦截。
+// 这里手写最小合法 PNG 文件头（8 字节签名），不要求解码成图，只要能通过
+// filterUsableImages 的 magic number 判定。留在磁盘上不清理，由主会话统一处理。
+const fixtureDir = path.join(tempRoot, 'fixtures');
+fs.mkdirSync(fixtureDir, { recursive: true });
+const fixtureImagePath = path.join(fixtureDir, '1.png');
+fs.writeFileSync(fixtureImagePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x00]));
+
 const FeishuClient = require('../src/feishu.js');
 const { startServer, stopServer, config } = require('../src/server.js');
 
@@ -94,7 +104,7 @@ test('create-records should enforce trimmed account validation and keep single-p
       records: [{
         noteKey: '专题A/001',
         topic: '专题A',
-        images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+        images: [{ name: '1.png', path: fixtureImagePath, size: 123 }],
         xiaohongshuAccount: ' 小红书账号A ',
         douyinAccount: ' 抖音账号B ',
       }],
@@ -224,7 +234,7 @@ test('create-records should enforce trimmed account validation and keep single-p
           noteKey: '教务资料/期末家长会/001',
           topic: '教务资料',
           pptTopic: '期末家长会',
-          images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+          images: [{ name: '1.png', path: fixtureImagePath, size: 123 }],
           xiaohongshuAccount: '小红书账号A',
           douyinAccount: '',
         },
@@ -232,7 +242,7 @@ test('create-records should enforce trimmed account validation and keep single-p
           noteKey: '教务资料/暑假家长会/001',
           topic: '教务资料',
           pptTopic: '暑假家长会',
-          images: [{ name: '1.png', path: '/tmp/1.png', size: 123 }],
+          images: [{ name: '1.png', path: fixtureImagePath, size: 123 }],
           xiaohongshuAccount: '小红书账号A',
           douyinAccount: '',
         },
