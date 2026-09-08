@@ -182,7 +182,7 @@
   .progress-badge.active { background: rgba(0,122,255,0.1); color: #0071e3; }
   .progress-badge.success { background: rgba(52,199,89,0.12); color: #248a3d; }
   .progress-badge.failed { background: rgba(255,59,48,0.1); color: #d70015; }
-  .progress-title { font-size: 14px; font-weight: 600; color: #1d1d1f; letter-spacing: -0.1px; }
+  .progress-title { font-size: 15px; font-weight: 600; color: #1d1d1f; letter-spacing: -0.1px; }
   .progress-detail { font-size: 13px; color: #3a3a3c; line-height: 1.6; }
   .progress-meta {
     min-width: 220px;
@@ -229,7 +229,7 @@
     padding: 8px 16px;
     border: none;
     border-radius: 8px;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
     font-weight: 500;
     transition: opacity 0.12s, transform 0.1s;
@@ -267,7 +267,7 @@
     background: #fff;
   }
   .record-item:hover { border-color: rgba(0,113,227,0.25); box-shadow: 0 0 0 3px rgba(0,113,227,0.05); }
-  .record-item .title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #1d1d1f; }
+  .record-item .title { font-weight: 600; font-size: 15px; margin-bottom: 6px; color: #1d1d1f; }
   .record-item .meta { font-size: 12px; color: #8e8e93; display: flex; gap: 12px; flex-wrap: wrap; }
   .record-item .meta span { display: flex; align-items: center; gap: 3px; }
   .record-item .platform-status { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -292,27 +292,33 @@
     display: flex; align-items: center; justify-content: space-between;
     gap: 12px; flex-wrap: wrap;
   }
-  .record-section-title { font-size: 15px; font-weight: 700; color: #3a3a3c; }
+  .record-section-title { font-size: 15px; font-weight: 600; color: #3a3a3c; }
   .record-toggle {
     border: none; background: rgba(0,113,227,0.08); color: #0071e3;
     border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
     transition: background 0.12s;
   }
   .record-toggle:hover { background: rgba(0,113,227,0.14); }
-  .account-group { margin-top: 4px; }
-  .account-group-head {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 12px; font-weight: 600; color: #6e6e73;
-    padding: 8px 10px; margin-bottom: 2px;
-    cursor: pointer; border-radius: 10px;
-    transition: background 0.12s;
+  /* 发布页中栏账号分组行：只选中不展开，见 renderAccountGroupRows() */
+  .account-group-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 15px; font-weight: 600; color: #3a3a3c;
+    padding: 10px 12px; margin-bottom: 6px;
+    cursor: pointer; border-radius: 12px;
+    border: 1px solid transparent;
+    transition: background 0.12s, border-color 0.12s;
     user-select: none;
   }
-  .account-group-head:hover { background: rgba(0,0,0,0.04); }
-  .account-group-chevron { font-size: 10px; color: #aeaeb2; flex-shrink: 0; }
-  .account-group-head .account-group-count {
-    font-weight: 400; color: #aeaeb2; font-size: 11px; margin-left: auto;
+  .account-group-row:hover { background: rgba(0,0,0,0.04); }
+  .account-group-row.selected {
+    background: var(--accent-soft, #e4f5ea);
+    border-color: #a8ddb8;
+    color: var(--accent-deep, #07a251);
   }
+  .account-group-row-count {
+    font-weight: 500; color: #aeaeb2; font-size: 11px; flex-shrink: 0;
+  }
+  .account-group-row.selected .account-group-row-count { color: var(--accent-deep, #07a251); }
 
   /* ===== Accounts ===== */
   .account-list { display: flex; flex-direction: column; gap: 8px; }
@@ -321,7 +327,7 @@
     display: flex; justify-content: space-between; gap: 16px; align-items: center; background: #fff;
   }
   .account-main { display: flex; flex-direction: column; gap: 3px; }
-  .account-title { font-size: 14px; font-weight: 600; color: #1d1d1f; }
+  .account-title { font-size: 15px; font-weight: 600; color: #1d1d1f; }
   .account-meta { font-size: 12px; color: #aeaeb2; }
   .account-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .badge-ok, .badge-bad, .badge-map, .badge-unmap {
@@ -364,7 +370,7 @@
     grid-column: 1 / -1;
   }
   .config-label {
-    font-size: 13px; font-weight: 600; color: #3a3a3c;
+    font-size: 13px; font-weight: 500; color: #3a3a3c;
   }
   .config-input, .config-textarea {
     width: 100%; padding: 10px 12px; border: 1px solid rgba(0,0,0,0.1);
@@ -426,21 +432,21 @@
     padding: 14px 18px; background: #f2f2f7; border-radius: 12px; margin-bottom: 14px;
     border: 1px solid rgba(0,0,0,0.05); display: flex; align-items: center; gap: 12px;
   }
-  .music-status { font-size: 14px; color: #8e8e93; font-weight: 500; }
+  .music-status { font-size: 13px; color: #8e8e93; font-weight: 500; }
   .music-status.selected { color: #248a3d; font-weight: 600; }
   .music-search-row { display: grid; grid-template-columns: minmax(0,1fr) 120px 120px; gap: 12px; margin-bottom: 14px; }
   .music-search-input {
     width: 100%; padding: 12px 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px;
-    font-size: 15px; background: #fff; color: #1d1d1f; transition: border-color 0.2s, box-shadow 0.2s;
+    font-size: 13px; background: #fff; color: #1d1d1f; transition: border-color 0.2s, box-shadow 0.2s;
   }
   .music-search-input:focus { outline: none; border-color: #0071e3; box-shadow: 0 0 0 4px rgba(0,113,227,0.12); }
   .music-results { max-height: 360px; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 12px; background: white; display: block; }
   .music-item { padding: 14px 18px; border-bottom: 1px solid rgba(0,0,0,0.04); cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 12px; transition: background 0.12s; }
   .music-item:last-child { border-bottom: none; }
   .music-item:hover { background: #f5f5f7; }
-  .music-name { font-size: 15px; font-weight: 500; color: #1d1d1f; }
+  .music-name { font-size: 15px; font-weight: 600; color: #1d1d1f; }
   .music-select { color: #0071e3; font-size: 13px; font-weight: 600; white-space: nowrap; }
-  .music-empty { padding: 24px 18px; text-align: center; color: #aeaeb2; font-size: 14px; }
+  .music-empty { padding: 24px 18px; text-align: center; color: #aeaeb2; font-size: 13px; }
   .music-tools { display: flex; gap: 8px; margin-top: 12px; }
   .music-link-btn { background: transparent; border: 1px solid rgba(0,0,0,0.1); color: #3a3a3c; border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: 13px; font-weight: 500; transition: border-color 0.12s, color 0.12s; }
   .music-link-btn:hover { border-color: #0071e3; color: #0071e3; }
@@ -466,13 +472,13 @@
     box-shadow: 0 20px 60px rgba(0,0,0,0.18); display: flex; flex-direction: column; overflow: hidden;
   }
   .music-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px 14px; border-bottom: 1px solid rgba(0,0,0,0.06); }
-  .music-modal-head h3 { font-size: 19px; font-weight: 600; letter-spacing: -0.3px; color: #1d1d1f; }
+  .music-modal-head h3 { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; color: #1d1d1f; }
   .music-modal-close { width: 30px; height: 30px; border-radius: 50%; border: none; background: rgba(0,0,0,0.06); color: #6e6e73; cursor: pointer; font-size: 17px; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
   .music-modal-close:hover { background: rgba(0,0,0,0.12); }
   .music-modal-body { padding: 18px 26px 26px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
   .music-modal-search { display: grid; grid-template-columns: minmax(0,1fr) 96px; gap: 12px; }
   .music-tabs { display: flex; gap: 24px; overflow-x: auto; padding-bottom: 0; border-bottom: 1px solid rgba(0,0,0,0.06); }
-  .music-tab { border: none; background: transparent; color: #aeaeb2; font-size: 14px; font-weight: 600; padding: 4px 0 12px; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; transition: color 0.12s; }
+  .music-tab { border: none; background: transparent; color: #aeaeb2; font-size: 13px; font-weight: 600; padding: 4px 0 12px; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; transition: color 0.12s; }
   .music-tab.active { color: #0071e3; border-bottom-color: #0071e3; }
   .music-library-list { min-height: 220px; max-height: 50vh; overflow-y: auto; border: 1px solid rgba(0,0,0,0.06); border-radius: 14px; background: #fdfdfe; }
   .music-library-item { display: flex; align-items: center; gap: 14px; padding: 13px 18px; border-bottom: 1px solid rgba(0,0,0,0.04); transition: background 0.12s; }
@@ -497,7 +503,7 @@
   .log-panel .log-info { color: #64d2ff; }
 
   /* ===== Empty ===== */
-  .empty { text-align: center; color: #aeaeb2; padding: 40px; font-size: 14px; }
+  .empty { text-align: center; color: #aeaeb2; padding: 40px; font-size: 13px; }
 
   /* ===== Responsive ===== */
   @media (max-width: 768px) {
@@ -519,19 +525,33 @@
     .mapping-row { grid-template-columns: 1fr; }
   }
 
+  /* ============================================================
+     开关：比特浏览器渠道入口已停用（2026-09），代码保留未删除。
+     全部实际不再使用的账号已迁移到蚁小二渠道（飞书 106 条记录 0 条走比特浏览器映射）。
+     如需恢复入口：全文搜索 BITBROWSER_HIDDEN 标记，取消对应 HTML 注释包裹即可，
+     不涉及 JS 逻辑改动（setup-pane-bitbrowser 面板本体、相关函数均未删除）。
+     ============================================================ */
+
   :root {
-    --app-bg: #f2f1ef;
-    --app-bg-accent: #eef7f1;
+    /* 融景视觉对齐（微信风格）：色板源 ~/rongjing/ui/main_window.py 第 34-45 行 */
+    --app-bg: #F7F7F7;
+    --app-bg-accent: #F7F7F7;
     --panel: #ffffff;
     --panel-strong: #ffffff;
-    --panel-soft: #f7f9fb;
-    --line: #e5e9e4;
-    --line-strong: #d3dbd2;
-    --ink: #1f2329;
-    --muted: #68727d;
+    --panel-soft: #F0F0F0;
+    --side: #EFEFEF;
+    --line: #E5E5E5;
+    --line-strong: #C6C6C6;
+    --ink: #191919;
+    --ink-2: #888888;
+    --ink-3: #C6C6C6;
+    --muted: #888888;
     --accent: #07c160;
     --accent-deep: #06ad56;
     --accent-soft: #e4f5ea;
+    --input-bg: #F0F0F0;
+    --link-blue: #576B95;
+    --danger: #FA5151;
     --warning-soft: #fff5df;
     --shadow-soft: 0 14px 40px rgba(15, 23, 42, 0.07);
     --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
@@ -560,10 +580,9 @@
   }
 
   .primary-rail {
-    background: var(--panel-strong);
+    background: var(--side);
     border: 1px solid var(--line);
     border-radius: 28px;
-    box-shadow: var(--shadow-soft);
     padding: 24px 14px;
     display: flex;
     flex-direction: column;
@@ -641,7 +660,6 @@
     background: #f8faf9;
     border-color: #dce6df;
     color: var(--ink);
-    transform: translateY(-1px);
   }
 
   .primary-nav-btn.active {
@@ -671,7 +689,6 @@
     border-radius: 32px;
     background: var(--panel-strong);
     border: 1px solid var(--line);
-    box-shadow: var(--shadow-soft);
   }
 
   .workspace-main {
@@ -718,11 +735,11 @@
   }
 
   .workspace-head-copy h2 {
-    font-size: 26px;
+    font-size: 17px;
     line-height: 1.1;
     letter-spacing: -0.03em;
     color: var(--ink);
-    font-weight: 800;
+    font-weight: 700;
     white-space: nowrap;
   }
 
@@ -788,7 +805,7 @@
     min-height: 0;
     padding: 20px 24px 24px;
     overflow: auto;
-    background: #f5f4f2;
+    background: var(--app-bg);
   }
 
   .workspace-view {
@@ -817,8 +834,7 @@
   .workspace-card {
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 28px;
-    box-shadow: var(--shadow-card);
+    border-radius: 16px;
     padding: 24px;
   }
 
@@ -856,15 +872,15 @@
   }
 
   .workspace-card h3 {
-    font-size: 20px;
-    font-weight: 800;
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
     letter-spacing: -0.03em;
   }
 
   .card-intro {
     margin-top: 8px;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.72;
     color: var(--muted);
   }
@@ -893,19 +909,18 @@
   }
 
   .quick-entry-card:hover {
-    transform: translateY(-1px);
     border-color: #bce8cc;
     background: #f7fcf8;
   }
 
   .quick-entry-card h4 {
-    font-size: 16px;
-    font-weight: 800;
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
   }
 
   .quick-entry-card p {
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.6;
     color: var(--muted);
   }
@@ -941,31 +956,31 @@
   .overview-stat-value.running { color: var(--accent-deep); }
   .overview-stat-value.stopped { color: #d94841; }
 
+  /* 设置页中栏：单列紧凑列表（参照融景「模板库」形态），重心让给右栏配置表单 */
   .subnav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
     margin-bottom: 0;
   }
 
   .subnav-btn {
     border: 1px solid var(--line);
-    border-radius: 22px;
+    border-radius: 14px;
     background: var(--panel-strong);
     color: var(--ink);
-    min-height: 86px;
-    padding: 16px 18px;
+    min-height: auto;
+    padding: 11px 16px;
     cursor: pointer;
     transition: background .18s ease, color .18s ease, transform .18s ease, border-color .18s ease;
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: space-between;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 10px;
     text-align: left;
   }
 
   .subnav-btn:hover {
-    transform: translateY(-1px);
     border-color: #bce8cc;
     background: #f8fcfa;
   }
@@ -977,16 +992,21 @@
   }
 
   .subnav-btn-title {
-    font-size: 16px;
-    font-weight: 800;
-    line-height: 1.2;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
     white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .subnav-btn-meta {
     font-size: 12px;
-    line-height: 1.55;
+    font-weight: 400;
+    line-height: 1.4;
     color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .subnav-btn.active .subnav-btn-meta {
@@ -1007,17 +1027,16 @@
     gap: 16px;
     padding: 24px;
     overflow: auto;
-    background: #f3f8f5;
+    background: var(--app-bg);
   }
 
   .preview-hero {
     padding: 24px 26px;
-    border-radius: 28px;
+    border-radius: 16px;
     background:
       radial-gradient(circle at top right, rgba(7, 193, 96, 0.13), transparent 30%),
       linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
     border: 1px solid var(--line);
-    box-shadow: var(--shadow-card);
   }
 
   .preview-hero h3 {
@@ -1050,8 +1069,8 @@
   }
 
   .preview-block h4 {
-    font-size: 17px;
-    font-weight: 800;
+    font-size: 15px;
+    font-weight: 600;
     color: var(--ink);
     margin-bottom: 12px;
   }
@@ -1073,7 +1092,7 @@
     border-radius: 18px;
     background: var(--panel-soft);
     color: var(--ink);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.6;
   }
 
@@ -1089,7 +1108,7 @@
   }
 
   .preview-helper {
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.7;
     color: var(--muted);
   }
@@ -1104,8 +1123,6 @@
   }
 
   .record-item:hover {
-    transform: translateY(-1px) scale(1.005);
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
     border-color: rgba(7, 193, 96, 0.3);
     border-left-color: rgba(7, 193, 96, 0.3);
   }
@@ -1173,7 +1190,7 @@
   .btn-secondary:hover,
   .btn-success:hover,
   .btn-danger:hover {
-    transform: translateY(-1px);
+    filter: brightness(0.97);
   }
 
   .btn-primary,
@@ -1225,7 +1242,7 @@
     }
 
     .workspace-head-copy h2 {
-      font-size: 28px;
+      font-size: 17px;
     }
 
     .preview-hero h3 {
@@ -1334,8 +1351,7 @@
   .import-topic-nav {
     background: #fff;
     border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-card);
+    border-radius: 16px;
     padding: 12px 16px;
     display: flex;
     align-items: center;
@@ -1344,7 +1360,7 @@
     flex-wrap: wrap;
   }
   .import-topic-nav-info {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--ink);
   }
   .import-topic-nav-info strong {
@@ -1407,11 +1423,7 @@
     transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
   }
   .import-next-action-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
     box-shadow: 0 6px 16px rgba(7, 193, 96, 0.32);
-  }
-  .import-next-action-btn:active:not(:disabled) {
-    transform: translateY(0);
   }
   .import-next-action-btn:disabled {
     opacity: .4;
@@ -1431,7 +1443,7 @@
     color: #fff;
     border-radius: 12px;
     padding: 12px 24px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     box-shadow: 0 2px 10px rgba(7, 193, 96, 0.22);
@@ -1439,7 +1451,6 @@
     margin-top: 4px;
   }
   .import-batch-apply-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
     box-shadow: 0 6px 16px rgba(7, 193, 96, 0.3);
   }
   .import-batch-apply-btn:disabled {
@@ -1504,8 +1515,7 @@
   .import-pool-panel {
     background: #fff;
     border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-card);
+    border-radius: 16px;
     padding: 14px 16px;
     display: flex;
     flex-direction: column;
@@ -1518,7 +1528,7 @@
     gap: 12px;
   }
   .import-pool-title {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--ink);
   }
@@ -1601,7 +1611,7 @@
     background: transparent;
     color: inherit;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1;
     padding: 0;
   }
@@ -1772,8 +1782,7 @@
   .import-tw-panel {
     background: #fff;
     border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-card);
+    border-radius: 16px;
     padding: 14px 16px;
     display: flex;
     flex-direction: column;
@@ -1795,7 +1804,7 @@
     border-radius: 8px;
     background: #fff;
     color: var(--muted);
-    font-size: 14px;
+    font-size: 13px;
     padding: 7px 10px;
     cursor: pointer;
   }
@@ -1868,8 +1877,7 @@
   .import-table-panel {
     background: #fff;
     border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-card);
+    border-radius: 16px;
     overflow: hidden;
   }
   .import-table-scroll {
@@ -2093,7 +2101,7 @@
     margin-bottom: 10px;
   }
   .import-preview-account-name {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--ink);
   }
@@ -2431,10 +2439,12 @@
                 <h4>账号授权</h4>
                 <p>查看蚁小二账号在线、实名和映射状态。</p>
               </button>
+              <!-- BITBROWSER_HIDDEN: 比特浏览器渠道已停用，恢复时删除本注释块，取消下方按钮的注释包裹
               <button class="quick-entry-card" onclick="switchSection('setup'); switchSetupPane('bitbrowser', { preserveSection: true });">
                 <h4>比特浏览器</h4>
                 <p>同步飞书账号并维护 browserId 映射关系。</p>
               </button>
+              BITBROWSER_HIDDEN -->
               <button class="quick-entry-card" onclick="switchSection('data')">
                 <h4>备份与迁移</h4>
                 <p>导入导出配置或完整数据，管理本机数据位置。</p>
@@ -2448,7 +2458,7 @@
         <div class="workspace-stack">
           <div class="workspace-card">
             <h3>待发布记录</h3>
-            <div class="card-intro">按账号分组展示，展开后点击记录可在右侧查看详情并一键发布。</div>
+            <div class="card-intro">按账号分组，点击账号在右侧查看该账号的全部待发布记录。</div>
             <div style="margin-top:12px; position:relative;">
               <input id="recordSearchInput" type="text" placeholder="搜索记录标题…" oninput="filterRecords(this.value)"
                 style="width:100%; padding:8px 12px 8px 32px; border:1px solid rgba(0,0,0,0.1); border-radius:8px; font-size:13px; background:#f8f8fb; color:#1d1d1f; box-sizing:border-box;">
@@ -2492,10 +2502,12 @@
                 <span class="subnav-btn-title">账号授权</span>
                 <span class="subnav-btn-meta">查看蚁小二账号状态</span>
               </button>
+              <!-- BITBROWSER_HIDDEN: 比特浏览器渠道已停用，恢复时删除本注释块，取消下方按钮的注释包裹
               <button class="subnav-btn" data-setup-pane="bitbrowser" onclick="switchSetupPane('bitbrowser')">
                 <span class="subnav-btn-title">比特浏览器</span>
                 <span class="subnav-btn-meta">维护 browserId 映射</span>
               </button>
+              BITBROWSER_HIDDEN -->
               <button class="subnav-btn" data-setup-pane="schedule" onclick="switchSetupPane('schedule')">
                 <span class="subnav-btn-title">定时任务</span>
                 <span class="subnav-btn-meta">调整扫描窗口与间隔</span>
@@ -2520,7 +2532,7 @@
             <div class="card-intro">备份迁移和本机数据目录统一收敛到这里，避免和接入配置混在一起。</div>
             <div class="data-grid" style="margin-top:16px;">
               <div class="workspace-card" style="padding:18px; background:#fff;">
-                <h3 style="font-size:16px;">配置备份</h3>
+                <h3 style="font-size:15px;font-weight:600;">配置备份</h3>
                 <div class="config-note" style="margin-top:8px;">只导出配置，适合在不同机器间迁移接入信息与映射规则。</div>
                 <div class="settings-actions" style="margin-top:14px;">
                   <button class="btn btn-sm btn-secondary" onclick="exportConfigBackup()">导出配置备份</button>
@@ -2528,7 +2540,7 @@
                 </div>
               </div>
               <div class="workspace-card" style="padding:18px; background:#fff;">
-                <h3 style="font-size:16px;">完整数据</h3>
+                <h3 style="font-size:15px;font-weight:600;">完整数据</h3>
                 <div class="config-note" style="margin-top:8px;">包含配置和发布账本，不包含缓存与临时文件。</div>
                 <div class="settings-actions" style="margin-top:14px;">
                   <button class="btn btn-sm btn-secondary" onclick="exportDataBackup()">导出完整数据</button>
@@ -2665,7 +2677,7 @@
               </span>
             </label>
             <div>
-              <div style="font-size:14px;font-weight:500;color:var(--ink);" id="masterPublisherLabel">此设备为发布主机</div>
+              <div style="font-size:13px;font-weight:500;color:var(--ink);" id="masterPublisherLabel">此设备为发布主机</div>
               <div style="font-size:12px;color:var(--muted);margin-top:2px;" id="masterPublisherHint">开启后此设备将自动运行定时发布</div>
             </div>
           </div>
@@ -2828,6 +2840,8 @@ let recordListData = [];
 let recordRenderLimit = 80;
 let showCompletedRecords = false;
 let expandedAccountGroups = new Set();
+let selectedAccountGroupKey = ''; // 发布页中栏当前选中的账号分组 key（格式同 groupKey：sectionKey + ':' + accountLabel），右栏据此展示该账号下全部记录
+let accountGroupRecordsCache = new Map(); // 发布页中栏渲染时缓存 groupKey -> 该分组记录数组，供右栏取用，每次 renderRecordList 重建
 let recordSearchQuery = '';
 let logEntries = [];
 let bitbrowserMappings = [];
@@ -3053,8 +3067,8 @@ const SECTION_META = {
     title: '发布',
     description: '按账号查看待发内容，点击展开后选中记录，右侧可一键发布单条或查看发布详情。',
     previewEyebrow: '记录详情',
-    previewTitle: '发布记录详情',
-    previewDescription: '点击左侧任意记录，查看目标账号、发布时间和平台状态，并可立即触发发布。'
+    previewTitle: '账号待发布记录',
+    previewDescription: '选择左侧账号，逐条查看发布时间、内容类型和平台状态，可单条立即发布。'
   },
   import: {
     eyebrow: '素材导入',
@@ -3544,18 +3558,11 @@ function renderOverviewPreview() {
   ].join('');
 }
 
-function renderPublishPreview() {
-  const record = ensureSelectedRecord();
-  if (!record) {
-    return [
-      buildPreviewMetaBlock('记录状态', [
-        { label: '当前状态', value: '还没有加载到发布记录' },
-        { label: '建议动作', value: '先点击顶部“刷新数据”' },
-      ]),
-      buildPreviewListBlock('说明', ['如果飞书还未接入完成，请先到设置里的“飞书接入”补全配置。'])
-    ].join('');
-  }
-
+// 发布页右栏单条记录卡片：账号分组选中后，该账号下每条记录各出一张，
+// 字段和按钮与旧版单条详情一致（标题/发布时间/内容类型/素材数量/目标平台账号/发布备注/立即发布 + AI 生成）
+function renderAccountGroupRecordCard(record) {
+  // xhsDone/dyDone 与旧版单条详情逻辑保持一致地保留计算（原函数里同样未被后续引用），
+  // 避免因为重写丢失 '已发布' 判断分支，后续如需展示"已完成"状态可直接复用
   const xhsDone = record.xiaohongshuStatus === '已发布' || !record.xiaohongshuAccount;
   const dyDone = record.douyinStatus === '已发布' || !record.douyinAccount;
   const hasFailed = record.xiaohongshuStatus === '发布失败' || record.douyinStatus === '发布失败';
@@ -3566,23 +3573,23 @@ function renderPublishPreview() {
   );
 
   const publishBtnHtml = canPublishNow
-    ? `<div class="preview-block" style="padding-top:4px;">
+    ? `<div style="padding-top:12px;">
         <button onclick="publishRecord('${escapeJsSingleQuotedString(record.recordId)}')" style="
           width:100%; padding:10px 0; border:none; border-radius:12px;
-          background:var(--accent); color:#fff; font-size:14px; font-weight:600;
+          background:var(--accent); color:#fff; font-size:13px; font-weight:600;
           cursor:pointer; transition: opacity .15s;
         " onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">立即发布</button>
         <div style="font-size:11px; color:#aeaeb2; margin-top:6px; text-align:center;">只会发布状态为待发布的平台 · 会取消该记录的定时任务</div>
       </div>`
     : (hasProcessing
-      ? `<div class="preview-block" style="padding-top:4px;">
-          <div style="padding:10px 12px; border-radius:12px; background:#fff7ed; color:#c2410c; font-size:13px; line-height:1.5;">
+      ? `<div style="padding-top:12px;">
+          <div style="padding:10px 12px; border-radius:12px; background:#fff7ed; color:#c2410c; font-size:12px; line-height:1.5;">
             这条记录已经提交到蚁小二，正在等待平台处理，暂时不建议重复触发。
           </div>
         </div>`
       : (hasFailed
-        ? `<div class="preview-block" style="padding-top:4px;">
-            <div style="padding:10px 12px; border-radius:12px; background:#fff1f2; color:#be123c; font-size:13px; line-height:1.5;">
+        ? `<div style="padding-top:12px;">
+            <div style="padding:10px 12px; border-radius:12px; background:#fff1f2; color:#be123c; font-size:12px; line-height:1.5;">
               当前有平台处于发布失败状态。按全局规则，只有待发布状态才能再次发布；如需重发，请先在飞书把对应平台状态改回待发布。
             </div>
           </div>`
@@ -3590,36 +3597,69 @@ function renderPublishPreview() {
       )
     ;
 
+  const tagsHtml = [
+    ...(record.xiaohongshuAccount ? [`<span class="tag xhs">小红书 · ${escapeHtml(record.xiaohongshuAccount)}</span>`] : []),
+    ...(record.douyinAccount ? [`<span class="tag dy">抖音 · ${escapeHtml(record.douyinAccount)}</span>`] : []),
+    ...(record.xiaohongshuPublishChannel ? [`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(record.xiaohongshuPublishChannel)}</span>`] : []),
+  ].join(' ');
+  const platformStatusHtml = renderPlatformStatus(record);
+
+  const aiBtnHtml = latestStatusData?.config?.aiWriting?.apiKey
+    ? `<div style="padding-top:10px;">
+        <button id="aiGenBtn-${escapeHtml(record.recordId)}"
+          onclick="triggerAiGenerate('${escapeJsSingleQuotedString(record.recordId)}')"
+          style="width:100%; padding:8px 0; border:1px solid var(--accent); border-radius:12px;
+            background:#fff; color:var(--accent); font-size:12px; font-weight:500;
+            cursor:pointer; transition: background .15s;"
+          onmouseover="this.style.background='var(--accent-soft)'"
+          onmouseout="this.style.background='#fff'">
+          ✍️ AI 生成标题/正文/标签
+        </button>
+      </div>`
+    : '';
+
+  return `
+    <div class="preview-block group-record-card">
+      <div class="preview-meta-list">
+        <div class="preview-meta-item"><span>标题</span><span>${escapeHtml(record.title || '无标题')}</span></div>
+        <div class="preview-meta-item"><span>发布时间</span><span>${escapeHtml(formatDateTime(record.publishTime, '立即发布'))}</span></div>
+        <div class="preview-meta-item"><span>内容类型</span><span>${escapeHtml(record.contentType || '-')}</span></div>
+        <div class="preview-meta-item"><span>素材数量</span><span>${Array.isArray(record.attachments) ? record.attachments.length : 0} 个</span></div>
+      </div>
+      ${tagsHtml ? `<div class="preview-tags" style="margin-top:12px;">${tagsHtml}</div>` : ''}
+      ${platformStatusHtml ? `<div class="platform-status" style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">${platformStatusHtml}</div>` : ''}
+      ${record.note ? `<div class="preview-list-item" style="margin-top:10px;">${escapeHtml(record.note)}</div>` : ''}
+      ${publishBtnHtml}
+      ${aiBtnHtml}
+    </div>
+  `;
+}
+
+function renderPublishPreview() {
+  if (selectedAccountGroupKey && accountGroupRecordsCache.has(selectedAccountGroupKey)) {
+    const records = accountGroupRecordsCache.get(selectedAccountGroupKey) || [];
+    if (records.length) {
+      const accountLabel = selectedAccountGroupKey.slice(selectedAccountGroupKey.indexOf(':') + 1);
+      const cardsHtml = records.map(r => renderAccountGroupRecordCard(r)).join('');
+      return `
+        <div class="preview-block" style="padding-bottom:14px;">
+          <h4>${escapeHtml(accountLabel)}</h4>
+          <div style="font-size:12px;color:var(--muted);">共 ${records.length} 条记录</div>
+        </div>
+        ${cardsHtml}
+      `;
+    }
+  }
+
   return [
-    buildPreviewMetaBlock('当前选中记录', [
-      { label: '标题', value: record.title || '无标题' },
-      { label: '发布时间', value: formatDateTime(record.publishTime, '立即发布') },
-      { label: '内容类型', value: record.contentType || '-' },
-      { label: '素材数量', value: Array.isArray(record.attachments) ? `${record.attachments.length} 个` : '0 个' },
+    buildPreviewMetaBlock('记录状态', [
+      { label: '当前状态', value: recordListData.length ? '还没有选择账号分组' : '还没有加载到发布记录' },
     ]),
-    buildPreviewTagBlock('目标平台与账号', [
-      ...(record.xiaohongshuAccount ? [`<span class="tag xhs">小红书 · ${escapeHtml(record.xiaohongshuAccount)}</span>`] : []),
-      ...(record.douyinAccount ? [`<span class="tag dy">抖音 · ${escapeHtml(record.douyinAccount)}</span>`] : []),
-      ...(record.xiaohongshuPublishChannel ? [`<span class="tag" style="background:#ede9fe;color:#6d28d9">渠道: ${escapeHtml(record.xiaohongshuPublishChannel)}</span>`] : []),
-    ], '当前记录还没有配置目标账号'),
-    buildPreviewListBlock('发布备注', record.note ? [escapeHtml(record.note)] : [], '当前没有异常或备注信息'),
-    publishBtnHtml,
-    latestStatusData?.config?.aiWriting?.apiKey
-      ? `<div class="preview-block" style="padding-top:0;">
-          <button id="aiGenBtn-${escapeHtml(record.recordId)}"
-            onclick="triggerAiGenerate('${escapeJsSingleQuotedString(record.recordId)}')"
-            style="width:100%; padding:8px 0; border:1px solid var(--accent); border-radius:12px;
-              background:#fff; color:var(--accent); font-size:13px; font-weight:500;
-              cursor:pointer; transition: background .15s;"
-            onmouseover="this.style.background='var(--accent-soft)'"
-            onmouseout="this.style.background='#fff'">
-            ✍️ AI 生成标题/正文/标签
-          </button>
-          <div style="font-size:11px; color:#aeaeb2; margin-top:4px; text-align:center;">
-            依据飞书"笔记主题"字段生成内容并回写
-          </div>
-        </div>`
-      : '',
+    buildPreviewListBlock('说明', [
+      recordListData.length
+        ? '选择左侧账号，查看该账号的待发布记录。'
+        : '如果飞书还未接入完成，请先到设置里的“飞书接入”补全配置。'
+    ])
   ].join('');
 }
 
@@ -4185,7 +4225,9 @@ function renderImportPoolPanel(gc, xhsAccounts, dyAccounts) {
           <div class="import-pool-label">小红书渠道</div>
           <select class="import-pool-channel" onchange="importSetPoolChannel(this.value)">
             <option value="蚁小二" ${gc.channel === '蚁小二' ? 'selected' : ''}>蚁小二</option>
+            <!-- BITBROWSER_HIDDEN: 比特浏览器渠道已停用，恢复时删除本注释块，取消下方 option 的注释包裹
             <option value="比特浏览器" ${gc.channel === '比特浏览器' ? 'selected' : ''}>比特浏览器</option>
+            BITBROWSER_HIDDEN -->
           </select>
         </div>
       </div>
@@ -4762,7 +4804,7 @@ function renderImportPreview() {
   }
   if (!importRootPaths.length) {
     return `<div style="padding:28px 20px">
-      <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:12px">使用步骤</div>
+      <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:12px">使用步骤</div>
       <ol style="font-size:12px;color:var(--ink);line-height:1.9;padding-left:20px;margin:0 0 16px">
         <li>左侧点「📁 选择根目录」选素材文件夹</li>
         <li>在「批量配置」里填账号池、时间窗口、AI 写作主题</li>
@@ -5231,14 +5273,14 @@ function renderImportPreviewCards() {
   return `
     <div style="display:flex;flex-direction:column;height:100%;">
       <div style="padding:16px 20px 8px;border-bottom:1px solid var(--line);flex-shrink:0;">
-        <div style="font-size:14px;font-weight:600;color:var(--ink);">AI 内容预览</div>
+        <div style="font-size:15px;font-weight:600;color:var(--ink);">AI 内容预览</div>
         <div style="font-size:12px;color:var(--muted);margin-top:4px;">可直接编辑标题，正文展开后也可修改。确认后写入飞书。</div>
       </div>
       <div style="flex:1;overflow-y:auto;padding:12px 16px;">
         ${cardsHtml}
       </div>
       <div style="padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0;">
-        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;" id="btnConfirmImport"
+        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:13px;" id="btnConfirmImport"
           onclick="importConfirm()" ${confirmDisabled}>
           ${confirmText}
         </button>
@@ -5461,7 +5503,7 @@ function renderImportReport() {
   return `
     <div style="display:flex;flex-direction:column;height:100%;">
       <div style="padding:16px 20px 12px;border-bottom:1px solid var(--line);flex-shrink:0;">
-        <div style="font-size:14px;font-weight:600;color:var(--ink);margin-bottom:10px;">导入报告</div>
+        <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:10px;">导入报告</div>
         <div style="display:flex;gap:10px;">
           <div style="flex:1;text-align:center;padding:10px;background:var(--accent-soft);border-radius:8px;">
             <div style="font-size:20px;font-weight:700;color:var(--accent);">${success}</div>
@@ -5481,9 +5523,9 @@ function renderImportReport() {
         ${itemsHtml || '<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px;">无记录</div>'}
       </div>
       <div style="padding:14px 20px;border-top:1px solid var(--line);flex-shrink:0;display:flex;flex-direction:column;gap:8px;">
-        ${failed > 0 ? `<button class="btn btn-secondary" style="width:100%;padding:10px;font-size:14px;"
+        ${failed > 0 ? `<button class="btn btn-secondary" style="width:100%;padding:10px;font-size:13px;"
           onclick="importRetryFailed()">🔄 重试失败的 ${failed} 条</button>` : ''}
-        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:14px;"
+        <button class="btn btn-primary" style="width:100%;padding:10px;font-size:13px;"
           onclick="importResetFull()">关闭报告，继续导入</button>
       </div>
     </div>`;
@@ -5881,7 +5923,6 @@ function renderRecordList(records) {
   }
 
   const orderedRecords = [...pendingRecords, ...completedRecords];
-  const selectedRecord = ensureSelectedRecord();
   const visiblePending = pendingRecords.slice(0, recordRenderLimit);
   const visibleCompleted = showCompletedRecords ? completedRecords.slice(0, recordRenderLimit) : [];
   const visibleCount = visiblePending.length + visibleCompleted.length;
@@ -5892,18 +5933,6 @@ function renderRecordList(records) {
     visiblePending.length < pendingRecords.length
     || (showCompletedRecords && visibleCompleted.length < completedRecords.length)
   ) ? 'inline-flex' : 'none';
-
-  const renderCard = (r) => {
-    const recordKey = getRecordKey(r);
-    const selected = selectedRecord && getRecordKey(selectedRecord) === recordKey;
-    const platformStatusHtml = renderPlatformStatus(r);
-    const timeStr = r.publishTime ? new Date(r.publishTime).toLocaleString('zh-CN') : '立即发布';
-    return `<div class="record-item ${selected ? 'selected' : ''}" data-record-key="${escapeAttr(recordKey)}" onclick="selectRecord('${escapeJsSingleQuotedString(recordKey)}')">
-      <div class="title">${escapeHtml(r.title || '无标题')}</div>
-      <div class="meta"><span>⏰ ${escapeHtml(timeStr)}</span></div>
-      <div class="platform-status">${platformStatusHtml}</div>
-    </div>`;
-  };
 
   const groupByAccount = (list) => {
     const groups = new Map();
@@ -5918,20 +5947,19 @@ function renderRecordList(records) {
     return groups;
   };
 
-  const renderGroupedCards = (list, sectionKey) => {
+  // 发布页中栏：只渲染「账号名 + 条数」的干净分组行，不再展开子项列表；
+  // 点击某一行选中该账号分组，具体记录列表改到右栏 renderPublishPreview() 里显示。
+  accountGroupRecordsCache = new Map();
+  const renderAccountGroupRows = (list, sectionKey) => {
     const groups = groupByAccount(list);
-    if (groups.size <= 1) return list.map(renderCard).join('');
     let html = '';
     for (const [accountLabel, records] of groups) {
       const groupKey = sectionKey + ':' + accountLabel;
-      const isExpanded = expandedAccountGroups.has(groupKey);
-      html += `<div class="account-group">
-        <div class="account-group-head" onclick="toggleAccountGroup('${escapeJsSingleQuotedString(groupKey)}')">
-          <span class="account-group-chevron">${isExpanded ? '▼' : '▶'}</span>
-          <span>${escapeHtml(accountLabel)}</span>
-          <span class="account-group-count">${records.length} 条</span>
-        </div>
-        ${isExpanded ? records.map(renderCard).join('') : ''}
+      accountGroupRecordsCache.set(groupKey, records);
+      const isSelected = selectedAccountGroupKey === groupKey;
+      html += `<div class="account-group-row ${isSelected ? 'selected' : ''}" onclick="selectAccountGroup('${escapeJsSingleQuotedString(groupKey)}')">
+        <span class="account-group-row-label">${escapeHtml(accountLabel)}</span>
+        <span class="account-group-row-count">${records.length} 条</span>
       </div>`;
     }
     return html;
@@ -5942,7 +5970,7 @@ function renderRecordList(records) {
       <div class="record-section-head">
         <div class="record-section-title">待发布 (${pendingRecords.length})</div>
       </div>
-      ${visiblePending.length ? renderGroupedCards(visiblePending, 'pending') : '<div class="empty">当前没有待发布记录</div>'}
+      ${visiblePending.length ? renderAccountGroupRows(visiblePending, 'pending') : '<div class="empty">当前没有待发布记录</div>'}
     </div>
     <div class="record-section">
       <div class="record-section-head">
@@ -5950,10 +5978,14 @@ function renderRecordList(records) {
         <button class="record-toggle" onclick="toggleCompletedRecords()">${showCompletedRecords ? '收起已发布' : '展开已发布'}</button>
       </div>
       ${showCompletedRecords
-        ? (visibleCompleted.length ? renderGroupedCards(visibleCompleted, 'completed') : '<div class="empty">当前没有已发布记录</div>')
+        ? (visibleCompleted.length ? renderAccountGroupRows(visibleCompleted, 'completed') : '<div class="empty">当前没有已发布记录</div>')
         : '<div class="empty" style="padding:18px 0;">已发布记录默认折叠，点击右侧按钮展开</div>'}
     </div>
   `;
+  // 分组内容变化后，若之前选中的分组这一轮已不存在（比如被搜索过滤掉），清空选中态，右栏回落到引导文案
+  if (selectedAccountGroupKey && !accountGroupRecordsCache.has(selectedAccountGroupKey)) {
+    selectedAccountGroupKey = '';
+  }
   renderContextPreview();
 }
 
@@ -5972,12 +6004,19 @@ function filterRecords(query) {
   renderRecordList(recordListData);
 }
 
+// 发布页已改为中栏选账号／右栏看全部，此函数暂未使用，保留以备回退
 function toggleAccountGroup(key) {
   if (expandedAccountGroups.has(key)) {
     expandedAccountGroups.delete(key);
   } else {
     expandedAccountGroups.add(key);
   }
+  renderRecordList(recordListData);
+}
+
+// 发布页中栏点击账号分组行：选中/取消选中该分组，右栏据此展示该账号下全部记录
+function selectAccountGroup(key) {
+  selectedAccountGroupKey = (selectedAccountGroupKey === key) ? '' : key;
   renderRecordList(recordListData);
 }
 
