@@ -438,22 +438,23 @@ def normalize_batch_results(result: dict | None, batch_records: list, batch_idx:
 
 def run_ai_fallback(records: list) -> list:
     """
-    对 title 为空或 tags 为空列表的记录，调 AI 写作接口生成文案。
+    对 title、description 或 tags 任一为空的记录，调 AI 写作接口生成完整文案。
     成功则内存中更新，失败则加 __ai_failed_warning 标记。
     返回更新后的 records 列表。
     """
     needs_ai = []
     for i, rec in enumerate(records):
         title_empty = not rec.get("title", "").strip()
+        description_empty = not str(rec.get("description") or "").strip()
         tags_empty = not rec.get("tags", [])
-        if title_empty or tags_empty:
+        if title_empty or description_empty or tags_empty:
             needs_ai.append((i, rec))
 
     if not needs_ai:
-        print("AI fallback：所有记录均有标题和标签，跳过 AI 生成。")
+        print("AI fallback：所有记录均有标题、正文和标签，跳过 AI 生成。")
         return records
 
-    print(f"AI fallback：发现 {len(needs_ai)} 条记录缺少标题或标签，正在调用 AI 生成…")
+    print(f"AI fallback：发现 {len(needs_ai)} 条记录缺少标题、正文或标签，正在调用 AI 生成…")
 
     ai_failed_notes = []
     for i, rec in needs_ai:
@@ -470,7 +471,13 @@ def run_ai_fallback(records: list) -> list:
                 {"topic": topic, "platform": platform},
                 timeout=60,
             )
-            if resp and resp.get("title"):
+            if (
+                resp
+                and str(resp.get("title") or "").strip()
+                and str(resp.get("description") or "").strip()
+                and isinstance(resp.get("tags"), list)
+                and resp.get("tags")
+            ):
                 records[i] = {**rec, **{
                     k: v for k, v in resp.items()
                     if k in ("title", "description", "tags")
@@ -622,61 +629,8 @@ def ai_writing_title_search_layer(title: str) -> str:
     return title[:idx] if idx >= 0 else title
 
 
-LEAD_GEN_GROUP_NAME = "引流号组"
-
-
-def load_lead_gen_accounts() -> dict:
-    """读 accounts.json 取「引流号组」下的账号名，**按平台分开返回**。
-
-    引流号只用来占排期位，文案由用户事后在飞书手动填，因此这一组允许空
-    title/description 通过 dry-run（见 teacher-note-production/制作链路.md）。
-
-    返回 {"xiaohongshu": set, "douyin": set}。分平台是必须的：同一个 IP 在两个
-    平台常用同名账号（2026-08-18 实例：抖音「橙子老师」与小红书「橙子老师」），
-    此前返回不分平台的名字集合，会让同名的小红书产品号（可乐店铺·橙子老师）
-    也吃到引流号空文案豁免，等于对它关掉了这道拦截。
-
-    fail-closed：accounts.json 读不到、解析失败、或没有该分组时一律返回各平台空
-    集合，结果是所有记录都按原规则校验（该拦的照拦），不因配置缺失静默放行。
-    """
-    empty = {"xiaohongshu": set(), "douyin": set()}
-    path = pathlib.Path.home() / "Library" / "Application Support" / "Zhifa" / "accounts.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return empty
-    group = (data.get("accountGroups") or {}).get(LEAD_GEN_GROUP_NAME) or {}
-    if not isinstance(group, dict):
-        return empty
-    out = {"xiaohongshu": set(), "douyin": set()}
-    for platform in ("xiaohongshu", "douyin"):
-        accounts = group.get(platform)
-        if isinstance(accounts, list):
-            out[platform] = {str(a) for a in accounts if a}
-    return out
-
-
-def _is_lead_gen_record(record: dict, lead_gen: dict) -> bool:
-    """记录是否属于引流号：平台字段只比对应平台的账号集。
-
-    `account` 是不带平台信息的旧字段，只能比两平台并集（向后兼容）。
-    """
-    xhs = str(record.get("xiaohongshuAccount", "")).strip()
-    dy = str(record.get("douyinAccount", "")).strip()
-    if xhs and xhs in lead_gen["xiaohongshu"]:
-        return True
-    if dy and dy in lead_gen["douyin"]:
-        return True
-    legacy = str(record.get("account", "")).strip()
-    return bool(legacy) and legacy in (lead_gen["xiaohongshu"] | lead_gen["douyin"])
-
-
 def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, list[str]]]:
-    """校验标题 emoji/标点、正文字数与换行、标签平台上限，返回 (label, violations) 列表。
-
-    「引流号组」账号的记录豁免「title/description 为空」两项（仅这两项），
-    其余格式、字数、标签上限、场景词校验一律照跑。
-    """
+    """校验标题、正文最小排版和标签字段，返回 (label, violations) 列表。"""
     title_violations: list[str] = []
     description_violations: list[str] = []
     tag_violations: list[str] = []
@@ -690,17 +644,10 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
             ("AI writing scene word overreach", ["records 必须是数组，无法执行场景词越权校验"]),
         ]
 
-    lead_gen_accounts = load_lead_gen_accounts()
-
     for i, record in enumerate(records):
         if not isinstance(record, dict):
             continue
         note_key = record.get("noteKey", "")
-        # build-records 产出的记录里账号字段是 xiaohongshuAccount / douyinAccount，
-        # 没有 account 这个键——原先只读 account 会让 is_lead_gen 恒为 False，
-        # 「引流号组允许空文案占排期位」这条豁免从来没真正生效过（2026-08-14 实测）。
-        is_lead_gen = _is_lead_gen_record(record, lead_gen_accounts)
-
         title = record.get("title")
         title_str = str(title).strip() if title is not None else ""
         if title_str:
@@ -722,10 +669,9 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
         description = record.get("description")
         description_str = str(description).strip() if description is not None else ""
         if not description_str:
-            if not is_lead_gen:
-                description_violations.append(
-                    f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
-                )
+            description_violations.append(
+                f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
+            )
         else:
             # 上限与 src/ai-writer.js 的 SYSTEM_PROMPT 硬边界对齐（50–200）。
             # 2026-08-07 修：commit e0de667「正文上限提到 500 字」只改了 ai-writer.js，
@@ -741,14 +687,35 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
                 description_violations.append(
                     f"records[{i}] description 未包含换行分行（noteKey={note_key}）"
                 )
+            if not re.search(r"\n[ \t]*\n", description_str):
+                description_violations.append(
+                    f"records[{i}] description 内容块之间缺少空白行（noteKey={note_key}）"
+                )
+            paragraphs = [part.strip() for part in re.split(r"\n[ \t]*\n", description_str) if part.strip()]
+            if not any(re.match(r"^[\U0001F300-\U0001FAFF\u2600-\u27BF]", part) for part in paragraphs):
+                description_violations.append(
+                    f"records[{i}] description 至少需要一个段首 emoji（noteKey={note_key}）"
+                )
+            if re.search(r"(^|\s)#[^\s#]+", description_str):
+                description_violations.append(
+                    f"records[{i}] description 含 #标签，标签必须保留在 tags 字段（noteKey={note_key}）"
+                )
 
         tags = record.get("tags")
         if isinstance(tags, list) and tags:
             limit = ai_writing_platform_tag_limit(record)
-            if len(tags) > limit:
+            if len(tags) < 5:
+                tag_violations.append(
+                    f"records[{i}] tags 数量 {len(tags)} 少于下限 5（noteKey={note_key}）"
+                )
+            elif len(tags) > limit:
                 tag_violations.append(
                     f"records[{i}] tags 数量 {len(tags)} 超过平台上限 {limit}（noteKey={note_key}）"
                 )
+        else:
+            tag_violations.append(
+                f"records[{i}] tags 为空，标签必须撰写（noteKey={note_key}）"
+            )
 
         # 场景词越权校验：record 无 topic 字段时跳过（不强制要求所有调用方都带主题）
         # 标题搜索词层：裸词全表；正文：时段词裸词 + "预习/复习"仅强定性搭配
@@ -929,7 +896,6 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
 
     violations = []
     if isinstance(records, list):
-        lead_gen_accounts_for_title = load_lead_gen_accounts()
         for i, record in enumerate(records):
             if not isinstance(record, dict):
                 continue
@@ -937,13 +903,9 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
             title_str = str(title).strip() if title is not None else ""
             title_len = len(title_str)
             if title_len == 0:
-                # 引流号只占排期位，文案事后在飞书手动填，允许空标题；其他账号照拦。
-                # 账号字段与上面同理：build-records 出的是 xiaohongshuAccount /
-                # douyinAccount，只读 account 会让豁免恒不生效。
-                if not _is_lead_gen_record(record, lead_gen_accounts_for_title):
-                    violations.append(
-                        f"records[{i}] title 为空（noteKey={record.get('noteKey', '')}）"
-                    )
+                violations.append(
+                    f"records[{i}] title 为空（noteKey={record.get('noteKey', '')}）"
+                )
             elif not (10 <= title_len <= 20):
                 violations.append(
                     f"records[{i}] title 字数 {title_len} 不在 10–20 范围内（noteKey={record.get('noteKey', '')}，title={title_str!r}）"
@@ -1473,6 +1435,22 @@ def cmd_build_records(
             print(f"调度结果中的 noteKey 未在扫描结果中找到：{note_key}", file=sys.stderr)
             sys.exit(1)
         content = content_map.get(note_key) or content_map.get(note_hit["topic"]) or {}
+        title = str(content.get("title") or "").strip()
+        description = str(content.get("description") or "").strip()
+        tags = content.get("tags") if isinstance(content.get("tags"), list) else []
+        if not title or not description or not tags:
+            missing_fields = [
+                field for field, present in (
+                    ("title", bool(title)),
+                    ("description", bool(description)),
+                    ("tags", bool(tags)),
+                ) if not present
+            ]
+            print(
+                f"文案映射不完整：{note_key} 缺少 {', '.join(missing_fields)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         note = note_hit["note"]
         platform = str(item.get("platform") or "").strip()
         account = str(item.get("account") or "").strip()
@@ -1497,9 +1475,9 @@ def cmd_build_records(
             "douyinAccount": account if platform == "douyin" else "",
             "publishTime": publish_time,
             "xiaohongshuChannel": str(content.get("xiaohongshuChannel") or "蚁小二") if platform == "xiaohongshu" else "",
-            "title": str(content.get("title") or ""),
-            "description": str(content.get("description") or ""),
-            "tags": content.get("tags") if isinstance(content.get("tags"), list) else [],
+            "title": title,
+            "description": description,
+            "tags": tags,
         })
 
     output_payload = {"records": records}
@@ -2320,6 +2298,16 @@ def link_or_copy_image(src_path: str, dest_path: str) -> bool:
         return False
 
 
+def format_manual_copy_text(title: str, description: str, tags: list) -> str:
+    """按独立字段展示文案；标签置于末尾，并在文件末尾保留一个空白行。"""
+    tag_line = " ".join(f"#{str(tag).lstrip('#').strip()}" for tag in tags if str(tag).strip())
+    return (
+        f"【标题】\n{str(title).strip()}\n\n"
+        f"【正文】\n{str(description)}\n\n"
+        f"【标签】\n{tag_line}\n\n"
+    )
+
+
 def cmd_export_manual(
     scan_json_file: str,
     content_json_file: str | None,
@@ -2331,8 +2319,8 @@ def cmd_export_manual(
     不带 --schedule：按 scan.json 的主题/笔记顺序编号，文件夹名 {序号}_{标题}。
     带 --schedule：按排期发布时间先后编号，文件夹名 {序号}_{账号}_{月-日 时:分}_{标题}。
 
-    content_json 可选（2026-08-13）：引流号这类笔记本来就不写文案，只需要图。
-    不传时只导图、不生成 文案.txt；传了则每个 noteKey 都必须有文案，缺了报错退出
+    content_json 可选：只有明确只导图时才不传，此时不生成 文案.txt。
+    传了则每个 noteKey 都必须有完整文案，缺了报错退出
     ——既然给了文案文件就说明本意要文案，缺失是漏写而非故意留空。
     """
     scan_entries = load_scan_entries(scan_json_file)
@@ -2430,6 +2418,14 @@ def cmd_export_manual(
             if not content or not isinstance(content, dict):
                 missing_content.append(note_key)
                 continue
+            if (
+                not str(content.get("title") or "").strip()
+                or not str(content.get("description") or "").strip()
+                or not isinstance(content.get("tags"), list)
+                or not content.get("tags")
+            ):
+                missing_content.append(note_key)
+                continue
             resolved_content[note_key] = content
     if missing_content:
         print(f"文案映射缺失，共 {len(missing_content)} 个 noteKey：", file=sys.stderr)
@@ -2452,9 +2448,7 @@ def cmd_export_manual(
         title = str(content.get("title") or "").strip()
         description = str(content.get("description") or "")
         tags = content.get("tags") if isinstance(content.get("tags"), list) else []
-        tag_line = " ".join(f"#{str(t).lstrip('#').strip()}" for t in tags if str(t).strip())
-
-        # 没有文案时（引流号只导图）用主题+笔记标识当文件夹名，避免全是 001_ 002_
+        # 明确只导图时用主题+笔记标识当文件夹名，避免全是 001_ 002_
         folder_title = truncate_title_for_folder(title or note_key.replace("/", "-"))
         if use_schedule:
             time_part = entry["parsedTime"].strftime("%m-%d %H:%M")
@@ -2473,11 +2467,7 @@ def cmd_export_manual(
         os.makedirs(note_dir, exist_ok=False)
 
         if content:
-            content_text = (
-                f"【标题】\n{title}\n\n"
-                f"【正文】\n{description}\n\n"
-                f"【标签】\n{tag_line}\n"
-            )
+            content_text = format_manual_copy_text(title, description, tags)
             with open(os.path.join(note_dir, "文案.txt"), "w", encoding="utf-8") as f:
                 f.write(content_text)
 
@@ -2760,7 +2750,7 @@ def main() -> None:
         "--content",
         default=None,
         metavar="CONTENT_JSON",
-        help="标题/正文/标签映射 JSON。可选——不传则只导图、不生成 文案.txt（引流号这类不写文案的批次走这条）；传了则每个 noteKey 都必须有文案，缺了报错退出",
+        help="标题/正文/标签映射 JSON。可选——只有明确只导图时才不传，且不生成 文案.txt；传了则每个 noteKey 都必须有完整文案，缺了报错退出",
     )
     export_manual_parser.add_argument(
         "--schedule",

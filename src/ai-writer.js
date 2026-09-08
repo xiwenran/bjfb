@@ -69,13 +69,11 @@ const SYSTEM_PROMPT = `你是一线教师账号的内容助手，帮教师把教
 
 **排版**
 
-段落要有分量，2 到 4 行为主，整篇 3 到 5 段。句子之间用逗号连着走，一段说完一件事再换行。
+用短句换行，同一件事可以连续写两三行；内容换到下一块时空一行，让每块内容看得清。段数跟着真实内容走，不为凑版式硬拆。
 
-松散体现在句子层面，不是靠把每句拆成一行——那样看着碎，读起来累。
+emoji 放在内容段段首当视觉锚点，至少有一个段首 emoji。挑跟这一段内容对得上的符号，避开促销感强的连串感叹和 💰🔥 这类组合。
 
-只有一种情况可以单独占一行：那句跟正事无关的废话。孤零零杵着才有味道。
-
-正文里可以用 emoji，放在段首当视觉锚点，不放段尾，全篇 2 到 4 个。挑跟这一段内容对得上的符号，避开促销感强的（连串感叹、💰🔥 这类）。不是每段都要放，没合适的就不放。
+正文只写正文，不把 #标签 塞进 description。标签集中保留在 tags 独立字段，展示时与正文之间空一行。
 
 正文 200 字以内。写到 100 多字把该说的说清楚就可以收，不必凑字数——结构性资料（全册教案这类）本来就没那么多可说的，硬凑出来的都是水话。
 
@@ -92,8 +90,9 @@ const SYSTEM_PROMPT = `你是一线教师账号的内容助手，帮教师把教
 2. 标题白名单 emoji 最多 1 个（📌 🔥 ✅ 💡 ✨ 📝），可以 0 个：2 个及以上会被打回，白名单外的 emoji 不算数。
 3. 标题标点最多 1 个（书名号《》与 emoji 不计入标点）。
 4. description 50-200 字。
-5. 标签数量：小红书最多 10 个，抖音最多 5 个，每个以 # 开头。
-6. 禁止营销话术与平台敏感词（标题和正文都适用）：
+5. description 使用真实换行，至少有一处空白行分隔内容块，且至少一个内容段以 emoji 开头；description 内不得出现 #标签。
+6. 标签数量：小红书 5-10 个，抖音 5 个，每个以 # 开头。
+7. 禁止营销话术与平台敏感词（标题和正文都适用）：
    引导互动类——关注我、私信我、评论区见、点赞收藏、点个赞、双击666、快码住、赶紧、别错过、一键三连、关注不迷路、直接用、直接套用、点击收藏、建议收藏、码住备用、赶紧收藏；
    平台敏感类——微信、wx、加我、v我、购买、下单、链接、二维码、免费领取、低价、白嫖、带货、佣金、分销、扫码。
 
@@ -112,7 +111,7 @@ const SYSTEM_PROMPT = `你是一线教师账号的内容助手，帮教师把教
 4. 字段固定：title → description → tags。
 
 示例（仅示意格式和口吻，不要照抄句式）：
-{"title":"北师大四上数学《乘法》课件笔记","description":"北师大版四年级上册数学第三单元《乘法》课件\\n覆盖：卫星运行时间、有多少名观众、神奇的计算工具","tags":["#北师大数学","#四上数学","#数学课件","#乘法","#小学数学","#教师备课"]}`;
+{"title":"北师大四上数学《乘法》课件笔记","description":"🧭北师大版四年级上册数学第三单元乘法课件\\n卫星运行时间和观众数量放在一起对照\\n\\n📚先看算理，再顺着例题练笔算\\n计算工具放到最后单独处理","tags":["#北师大数学","#四上数学","#数学课件","#乘法","#小学数学","#教师备课"]}`;
 
 // ─────────────────────────────────────────────
 // 工具函数
@@ -410,12 +409,27 @@ function validateGenerated(content, platform, availableArtifacts) {
     if (descBanned) {
       violations.push(`正文含禁用词「${descBanned}」`);
     }
+    if (!description.includes('\n')) {
+      violations.push('正文未使用真实换行');
+    }
+    if (!/\n[ \t]*\n/.test(description)) {
+      violations.push('正文内容块之间缺少空白行');
+    }
+    const paragraphs = description.split(/\n[ \t]*\n/).map(part => part.trim()).filter(Boolean);
+    if (!paragraphs.some(paragraph => /^\p{Extended_Pictographic}/u.test(paragraph))) {
+      violations.push('正文至少需要一个段首 emoji 作为视觉锚点');
+    }
+    if (/(^|\s)#[^\s#]+/u.test(description)) {
+      violations.push('正文中出现 #标签，标签必须保留在 tags 字段');
+    }
   }
 
   // ── 标签 ──
   const limit = platformTagLimit(platform);
   if (tags.length === 0) {
     violations.push('标签为空');
+  } else if (tags.length < 5) {
+    violations.push(`标签数量 ${tags.length} 少于下限 5`);
   } else if (tags.length > limit) {
     violations.push(`标签数量 ${tags.length} 超过平台上限 ${limit}（${platform === 'douyin' ? '抖音' : '小红书'}）`);
   }

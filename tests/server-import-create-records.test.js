@@ -10,21 +10,40 @@ const tempRoot = path.join(os.tmpdir(), 'zhifa-server-import-test');
 fs.rmSync(tempRoot, { recursive: true, force: true });
 process.env.NOTE_PUBLISHER_CONFIG_DIR = path.join(tempRoot, 'config');
 process.env.NOTE_PUBLISHER_DATA_DIR = path.join(tempRoot, 'data');
+fs.mkdirSync(process.env.NOTE_PUBLISHER_CONFIG_DIR, { recursive: true });
+fs.writeFileSync(path.join(process.env.NOTE_PUBLISHER_CONFIG_DIR, 'config.json'), JSON.stringify({
+  feishu: { appId: '', appSecret: '', appToken: '', tableId: '' },
+  aiWriting: { enabled: false },
+}), 'utf8');
 
 // 固件用的图片路径必须是真实存在、文件头合法的 PNG，否则会被
 // src/server.js 的 filterUsableImages() 判为 unreadable/not_an_image 剔除，
 // 导致测试记录在走到本该测的业务分支之前就被 no_valid_images 拦截。
-// 这里手写最小合法 PNG 文件头（8 字节签名），不要求解码成图，只要能通过
-// filterUsableImages 的 magic number 判定。留在磁盘上不清理，由主会话统一处理。
+// 使用真实可解码的 1x1 PNG，确保固件同时通过文件头与像素解码。
+// 留在磁盘上不清理，由主会话统一处理。
 const fixtureDir = path.join(tempRoot, 'fixtures');
 fs.mkdirSync(fixtureDir, { recursive: true });
 const fixtureImagePath = path.join(fixtureDir, '1.png');
-fs.writeFileSync(fixtureImagePath, Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x00]));
+fs.writeFileSync(fixtureImagePath, Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64'
+));
 
 const FeishuClient = require('../src/feishu.js');
 const { startServer, stopServer, config } = require('../src/server.js');
 
 function requestJson({ method, urlPath, body }) {
+  const requestBody = body && Array.isArray(body.records)
+    ? {
+        ...body,
+        records: body.records.map(record => ({
+          title: '四年级上册乘法课件笔记',
+          description: '🧭四年级上册乘法课件围绕算理与计算步骤展开\n从情境问题进入，梳理估算、列式和竖式计算之间的关系\n\n📚页面按知识点、例题和课堂练习依次组织\n讲解时可以逐步展示，让学生边观察边说清每一步的依据',
+          tags: ['#四年级数学', '#数学课件', '#乘法计算', '#课堂练习', '#教师备课'],
+          ...record,
+        })),
+      }
+    : body;
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1',
@@ -49,7 +68,7 @@ function requestJson({ method, urlPath, body }) {
       });
     });
     req.on('error', reject);
-    if (body !== undefined) req.write(JSON.stringify(body));
+    if (requestBody !== undefined) req.write(JSON.stringify(requestBody));
     req.end();
   });
 }

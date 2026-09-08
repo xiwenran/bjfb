@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const url = require('url');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const Scheduler = require('./scheduler.js');
 const publisher = require('./publisher.js');
 const FeishuClient = require('./feishu.js');
@@ -28,7 +29,7 @@ const {
   appendDiagnosticEvent,
   saveRuntimeState,
 } = require('./config-store.js');
-const { generateContent, testConnection } = require('./ai-writer.js');
+const { generateContent, testConnection, validateGenerated } = require('./ai-writer.js');
 const { getAvailableArtifacts } = require('./artifact-lookup.js');
 const { validateImportSchedule } = require('./scheduler-allocator.js');
 const {
@@ -616,11 +617,21 @@ function sendJson(res, data, status = 200) {
   res.end(JSON.stringify(data));
 }
 
+function sharpSupportsInputFormat(format) {
+  const sharpFormat = format === 'heic' ? 'heif' : format;
+  const input = sharp.format[sharpFormat] && sharp.format[sharpFormat].input;
+  if (!input || input.file !== true) return false;
+  if (format !== 'heic') return true;
+  return Array.isArray(input.fileSuffix)
+    && input.fileSuffix.some(suffix => ['.heic', '.heif'].includes(String(suffix).toLowerCase()));
+}
+
 // 过滤客户端传入的图片列表，剔除非真实图片文件（如 ExFAT/APFS 外置盘产生的
 // AppleDouble 资源叉文件 ._xxx.jpg：文件头非图片 magic number，但后缀是 .jpg，
 // 用后缀过滤拦不住，蚁小二探测真实类型后会拒收，导致整篇笔记推送失败）。
-// 只读文件头前 12 字节判定类型，不整文件读入内存（单批可能上千张图）。
-function filterUsableImages(list) {
+// 先读文件头做快速类型过滤，再让 sharp 遍历像素做真实解码；同一请求内按
+// 路径和 stat 标识复用解码结果，文件发生变化后会自动失效。
+async function filterUsableImages(list, decodeCache = new Map()) {
   const usable = [];
   const skipped = [];
   let hadIoError = false;
@@ -637,9 +648,11 @@ function filterUsableImages(list) {
       continue;
     }
     let header = null;
+    let fileStat = null;
     let fd = null;
     try {
       fd = fs.openSync(itemPath, 'r');
+      fileStat = fs.fstatSync(fd);
       const buf = Buffer.alloc(12);
       const bytesRead = fs.readSync(fd, buf, 0, 12, 0);
       header = buf.slice(0, bytesRead);
@@ -678,10 +691,59 @@ function filterUsableImages(list) {
       const brand = header.slice(8, 12).toString('ascii').toLowerCase();
       if (['heic', 'heix', 'hevc', 'mif1', 'msf1'].includes(brand)) isHeic = true;
     }
-    if (isJpeg || isPng || isGif || isBmp || isWebp || isHeic) {
+    const imageFormat = isJpeg ? 'jpeg'
+      : isPng ? 'png'
+        : isGif ? 'gif'
+          : isBmp ? 'bmp'
+            : isWebp ? 'webp'
+              : isHeic ? 'heic'
+                : '';
+    if (!(isJpeg || isPng || isGif || isBmp || isWebp || isHeic)) {
+      skipped.push({ name: itemName, reason: 'not_an_image' });
+      continue;
+    }
+    if (!sharpSupportsInputFormat(imageFormat)) {
+      skipped.push({ name: itemName, reason: 'unsupported_image_format', format: imageFormat });
+      continue;
+    }
+
+    const cacheKey = [
+      path.resolve(itemPath),
+      fileStat.dev,
+      fileStat.ino,
+      fileStat.size,
+      fileStat.mtimeMs,
+      fileStat.ctimeMs,
+    ].join('|');
+    let decodeResult = decodeCache.get(cacheKey);
+    if (!decodeResult) {
+      try {
+        // stats() 必须读取实际像素；metadata() 只解析头部，不能拦截签名正确但截断的图片。
+        await sharp(itemPath, { failOn: 'warning' }).stats();
+        decodeResult = { usable: true };
+      } catch (err) {
+        const ioCodes = new Set(['EACCES', 'EPERM', 'EIO', 'ENODEV', 'ESTALE', 'EBUSY']);
+        if (err && ioCodes.has(err.code)) {
+          decodeResult = { usable: false, reason: 'io_error', code: err.code };
+        } else if (err && err.code === 'ENOENT') {
+          decodeResult = { usable: false, reason: 'missing' };
+        } else {
+          decodeResult = { usable: false, reason: 'not_decodable' };
+        }
+      }
+      decodeCache.set(cacheKey, decodeResult);
+    }
+
+    if (decodeResult.usable) {
       usable.push(item);
     } else {
-      skipped.push({ name: itemName, reason: 'not_an_image' });
+      if (decodeResult.reason === 'io_error') hadIoError = true;
+      skipped.push({
+        name: itemName,
+        reason: decodeResult.reason,
+        ...(decodeResult.reason === 'io_error' || decodeResult.reason === 'missing' ? { path: itemPath } : {}),
+        ...(decodeResult.code ? { code: decodeResult.code } : {}),
+      });
     }
   }
   return { usable, skipped, hadIoError };
@@ -1468,6 +1530,14 @@ const server = http.createServer(async (req, res) => {
       const recordImagesByNoteKey = new Map();
       // 同主题 AI 结果缓存：topic → {title, description, tags}
       const topicAiCache = new Map();
+      // 所有图片先在请求内完成预检，之后才允许进入任何外部上传。
+      // 同一路径且 stat 未变化时复用解码结果；缓存随本次 create 请求结束而释放。
+      const imageDecodeCache = new Map();
+      const imagePreflights = [];
+      for (const record of records) {
+        const rawImages = Array.isArray(record && record.images) ? record.images : [];
+        imagePreflights.push(await filterUsableImages(rawImages, imageDecodeCache));
+      }
 
       // SSE 进度推送辅助函数（仅 dryRun=false 时使用）
       const pushImportProgress = (noteKey, status) => {
@@ -1491,7 +1561,7 @@ const server = http.createServer(async (req, res) => {
         }
       };
 
-      for (const record of records) {
+      for (const [recordIndex, record] of records.entries()) {
         const {
           topic = '',
           topicOverride = '',
@@ -1520,7 +1590,7 @@ const server = http.createServer(async (req, res) => {
 
         // 入口过滤：剔除混入的非图片文件（如 ExFAT 外置盘的 ._xxx 资源叉文件），
         // 不让它们进入后续指纹计算 / AI 视觉识别 / 飞书上传。dryRun 也执行，保证预览结果与真实导入一致。
-        const { usable: images, skipped: skippedImages, hadIoError } = filterUsableImages(safeRawImages);
+        const { usable: images, skipped: skippedImages, hadIoError } = imagePreflights[recordIndex];
         const videos = (Array.isArray(rawVideos) ? rawVideos : []).filter(v => {
           const p = v && v.path;
           return p && !path.basename(p).startsWith('.');
@@ -1555,19 +1625,6 @@ const server = http.createServer(async (req, res) => {
           continue;
         }
 
-        // 过滤后一张可用图片都不剩，但客户端确实传了图 → 整条记录不能继续走上传
-        if (safeRawImages.length > 0 && images.length === 0) {
-          results.push({
-            noteKey,
-            status: 'failed',
-            reason: 'no_valid_images',
-            skippedFiles,
-            message: `本条记录的 ${safeRawImages.length} 个图片文件全部被判定为无效（非真实图片或隐藏文件），已跳过：${skippedFiles.map(f => `${f.name}(${f.reason})`).join(', ')}`,
-          });
-          if (!dryRun) pushImportProgress(noteKey, 'failed');
-          continue;
-        }
-
         // 被剔除的文件里如果包含封面图（主序号 0），不能悄悄继续——那会建出一条没有封面的记录。
         const filteredOutCover = skippedImages.some(f => {
           const sk = parseAttachmentSortKey(f.name);
@@ -1580,6 +1637,47 @@ const server = http.createServer(async (req, res) => {
             reason: 'cover_filtered',
             skippedFiles,
             message: `封面图被判定为无效文件，已中止本条导入：${skippedImages.map(f => `${f.name}(${f.reason})`).join(', ')}`,
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        const unsupportedImages = skippedImages.filter(f => f.reason === 'unsupported_image_format');
+        if (unsupportedImages.length > 0) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'unsupported_image_format',
+            skippedFiles,
+            message: `当前运行环境不支持解码以下图片格式，已中止本条导入：${unsupportedImages.map(f => `${f.name}(${f.format})`).join(', ')}`,
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        // 过滤后一张可用图片都不剩，但客户端确实传了图 → 整条记录不能继续走上传。
+        if (safeRawImages.length > 0 && images.length === 0) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'no_valid_images',
+            skippedFiles,
+            message: `本条记录的 ${safeRawImages.length} 个图片文件全部被判定为无效（非真实图片或隐藏文件），已跳过：${skippedFiles.map(f => `${f.name}(${f.reason})`).join(', ')}`,
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        // AppleDouble 点文件允许剔除后继续；其它正文图一旦不可解码，必须阻断整条记录，
+        // 避免少图上传后仍被误认为完整成功。
+        const blockingInvalidImages = skippedImages.filter(f => f.reason !== 'dotfile');
+        if (blockingInvalidImages.length > 0) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'invalid_images',
+            skippedFiles,
+            message: `本条记录包含不可用图片，已中止导入且未上传任何素材：${blockingInvalidImages.map(f => `${f.name}(${f.reason})`).join(', ')}`,
           });
           if (!dryRun) pushImportProgress(noteKey, 'failed');
           continue;
@@ -1715,8 +1813,23 @@ const server = http.createServer(async (req, res) => {
         const topicForAi = typeof topicOverride === 'string' && topicOverride.trim()
           ? topicOverride.trim()
           : topic;
+        let availableArtifactsForValidation;
+        if (recordFolderPath) {
+          try {
+            availableArtifactsForValidation = await getAvailableArtifacts(recordFolderPath);
+          } catch (artifactErr) {
+            writeImportLog('配套件清单查询未接通', {
+              noteKey,
+              reason: artifactErr.reason || 'unknown',
+              message: artifactErr.message,
+            });
+          }
+        }
 
-        if (!aiTitle) {
+        const contentIncomplete = !String(aiTitle || '').trim()
+          || !String(aiDescription || '').trim()
+          || !aiTags.some(tag => String(tag || '').trim());
+        if (contentIncomplete) {
           const aiConfig = config.aiWriting;
           if (aiConfig && aiConfig.enabled && aiConfig.apiKey) {
             // 缓存 key 用 noteKey（文件夹维度），而不是 topic
@@ -1742,21 +1855,8 @@ const server = http.createServer(async (req, res) => {
                   douyinAccount: normalizedDouyinAccount,
                   imagePaths: images.map(i => i.path), // 传实际路径供 AI 视觉识别
                 };
-                // 红线④配套件回查：有本地笔记目录路径时查资产库，拿到该产品真实登记的配套件清单。
-                // 查不到归属或查询失败都不设置 availableArtifacts，validateGenerated 按 fail-closed
-                // 处理（提到教案/逐字稿/学习单/板书的正文一律打回）；reason 区分「这份笔记没登记归属」
-                // 与「查询本身失败」，写进导入日志方便排查，不因查不到就放行。
-                if (recordFolderPath) {
-                  try {
-                    aiRecord.availableArtifacts = await getAvailableArtifacts(recordFolderPath);
-                  } catch (artifactErr) {
-                    writeImportLog('配套件清单查询未接通', {
-                      noteKey,
-                      reason: artifactErr.reason || 'unknown',
-                      message: artifactErr.message,
-                    });
-                  }
-                }
+                // 红线④配套件回查：生成与最终导入校验复用同一份查询结果。
+                aiRecord.availableArtifacts = availableArtifactsForValidation;
                 // U0 耗时埋点：AI 生成
                 const t0_ai = Date.now();
                 const aiResult = await generateContent(aiConfig, aiRecord);
@@ -1774,22 +1874,45 @@ const server = http.createServer(async (req, res) => {
                 if (cacheKey) topicAiCache.set(cacheKey, { title: aiTitle, description: aiDescription, tags: aiTags });
               }
             } catch (aiErr) {
-              // AI 生成失败：dryRun 阶段把错误信息回传给前端展示「跳过/空建/重试」选项；
-              // 真正导入阶段（dryRun=false）降级为"空内容继续上传"——账号、时间、图片正常处理，
-              // 只是标题/正文/标签为空，用户可以在飞书里手动补内容。这样 AI 偶发失败不会卡住整批。
-              if (dryRun) {
-                results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message, ...(skippedFiles.length ? { skippedFiles } : {}) });
-                continue;
-              }
-              // 非 dryRun：降级处理，记 warning 但继续走完图片上传 + 写飞书
-              aiTitle = '';
-              aiDescription = '';
-              aiTags = [];
-              // record.__aiFailureWarning 是临时局部属性,前端拿不到;
-              // 真正暴露给前端:在 results 里用专门字段(下面 success 分支会把它带上)
-              record.__aiFailureWarning = aiErr.message;
+              // 文案三项任一缺失且 AI 无法补齐时，该条记录明确失败；
+              // 禁止以空标题、空正文或空标签继续上传图片并写入飞书。
+              results.push({ noteKey, status: 'failed', reason: 'ai_error', message: aiErr.message, ...(skippedFiles.length ? { skippedFiles } : {}) });
+              if (!dryRun) pushImportProgress(noteKey, 'failed');
+              continue;
             }
           }
+        }
+
+        const finalContentIncomplete = !String(aiTitle || '').trim()
+          || !String(aiDescription || '').trim()
+          || !aiTags.some(tag => String(tag || '').trim());
+        if (finalContentIncomplete) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'content_incomplete',
+            message: '标题、正文和标签均为必填项，请补齐后再导入。',
+            ...(skippedFiles.length ? { skippedFiles } : {}),
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
+        }
+
+        const contentViolations = validateGenerated(
+          { title: aiTitle, description: aiDescription, tags: aiTags },
+          targetPlatform,
+          availableArtifactsForValidation
+        );
+        if (contentViolations.length > 0) {
+          results.push({
+            noteKey,
+            status: 'failed',
+            reason: 'content_invalid',
+            message: `文案未通过导入校验：${contentViolations.join('；')}`,
+            ...(skippedFiles.length ? { skippedFiles } : {}),
+          });
+          if (!dryRun) pushImportProgress(noteKey, 'failed');
+          continue;
         }
 
         // dryRun: 只返回 AI 生成内容，不写飞书

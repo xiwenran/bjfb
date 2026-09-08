@@ -3,16 +3,17 @@ const assert = require('node:assert/strict');
 
 const { validateGenerated } = require('../src/ai-writer.js');
 
-// 2026-07-10 重构后口径：校验器只管硬边界——标题 8-20 字（全字符计数）、
-// 正文非空、标签数量/格式、营销话术禁词。钩子/emoji/标点/场景词规则已废弃。
+// 校验器只管可机械确认的边界：标题字数、正文长度与最小排版、
+// 标签数量/格式、营销话术禁词。内容真实性仍由 SYSTEM_PROMPT 与人工预览把关。
 
 function baseContent(overrides = {}) {
   return {
     title: '北师大四上数学《乘法》课件笔记',
     description:
-      '北师大版四年级上册数学第三单元《乘法》课件\n' +
-      '覆盖：卫星运行时间、有多少名观众、神奇的计算工具\n' +
-      '第三单元一共九个课时，练习设计比课本多两道拔高题',
+      '🧭北师大版四年级上册数学第三单元乘法课件\n' +
+      '卫星运行时间、有多少名观众、神奇的计算工具\n\n' +
+      '📚三个内容点顺着乘法计算往下走\n' +
+      '先讲算理，再看计算工具怎么用',
     tags: ['#北师大数学', '#四上数学', '#数学课件', '#乘法', '#小学数学'],
     ...overrides,
   };
@@ -83,6 +84,35 @@ test('validateGenerated rejects empty description', () => {
 test('validateGenerated rejects empty tags array', () => {
   const violations = validateGenerated(baseContent({ tags: [] }), 'xiaohongshu');
   assert.ok(violations.some(v => v.includes('标签为空')), violations.join('; '));
+});
+
+test('validateGenerated rejects description without a blank line between content blocks', () => {
+  const content = baseContent({
+    description: '🧭北师大版四年级上册数学第三单元乘法课件\n卫星运行时间和神奇的计算工具\n📚先讲算理，再看计算工具怎么用',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu');
+  assert.ok(violations.some(v => v.includes('空白行')), violations.join('; '));
+});
+
+test('validateGenerated rejects description without a paragraph-leading emoji', () => {
+  const content = baseContent({
+    description: '北师大版四年级上册数学第三单元乘法课件\n卫星运行时间和神奇的计算工具\n\n先讲算理，再看计算工具怎么用',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu');
+  assert.ok(violations.some(v => v.includes('段首 emoji')), violations.join('; '));
+});
+
+test('validateGenerated rejects hashtags duplicated into description', () => {
+  const content = baseContent({
+    description: baseContent().description + '\n\n#四上数学 #教师备课',
+  });
+  const violations = validateGenerated(content, 'xiaohongshu');
+  assert.ok(violations.some(v => v.includes('标签必须保留在 tags 字段')), violations.join('; '));
+});
+
+test('validateGenerated rejects fewer than five tags', () => {
+  const violations = validateGenerated(baseContent({ tags: ['#北师大数学', '#四上数学'] }), 'xiaohongshu');
+  assert.ok(violations.some(v => v.includes('少于下限 5')), violations.join('; '));
 });
 
 test('validateGenerated rejects tags exceeding xiaohongshu limit of 10', () => {

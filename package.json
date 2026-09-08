@@ -23,7 +23,8 @@
   "dependencies": {
     "axios": "^1.6.0",
     "form-data": "^4.0.5",
-    "playwright-core": "^1.58.2"
+    "playwright-core": "^1.58.2",
+    "sharp": "0.35.4"
   },
   "devDependencies": {
     "electron": "^37.10.3",
