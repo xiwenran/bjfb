@@ -356,6 +356,75 @@ function buildPotentialConflictItems({ topicGroups, candidateAccountsByPlatform,
   return currentItems;
 }
 
+function buildAssignedConflictItems({ assignments, currentItems, candidateAccountsByPlatform, accountGroups }) {
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    throw createConfigError('assignments 必须是非空数组');
+  }
+  const topicByNoteKey = new Map(
+    currentItems.map(item => [String(item.noteKey || '').trim(), item])
+  );
+  const allowedAccounts = new Map(
+    Object.entries(candidateAccountsByPlatform).map(([platform, accounts]) => [
+      platform,
+      new Set(accounts.map(account => String(account || '').trim())),
+    ])
+  );
+  const seen = new Set();
+  return assignments.map((assignment, index) => {
+    if (!assignment || typeof assignment !== 'object' || Array.isArray(assignment)) {
+      throw createConfigError(`assignments[${index}] 必须是对象`);
+    }
+    const noteKey = String(assignment.noteKey || '').trim();
+    const platform = String(assignment.platform || '').trim();
+    const account = String(assignment.account || '').trim();
+    const date = String(assignment.date || '').trim();
+    const topic = topicByNoteKey.get(noteKey);
+    if (!topic) throw createConfigError(`assignments[${index}] noteKey 不在本批 noteFolders 中：${noteKey || '(空)'}`);
+    if (!['xiaohongshu', 'douyin'].includes(platform)) {
+      throw createConfigError(`assignments[${index}] platform 不受支持：${platform || '(空)'}`);
+    }
+    if (!account || !allowedAccounts.get(platform)?.has(account)) {
+      throw createConfigError(`assignments[${index}] 账号未在本次 ${platform} 候选计划中：${account || '(空)'}`);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)
+        || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+      throw createConfigError(`assignments[${index}] date 不是合法 ISO 日期：${date || '(空)'}`);
+    }
+    const assignmentKey = `${platform}\u0000${noteKey}`;
+    if (seen.has(assignmentKey)) {
+      throw createConfigError(`assignments 中同平台 noteKey 重复：${platform}/${noteKey}`);
+    }
+    seen.add(assignmentKey);
+    const storeGroup = String(accountGroups[account] || '').trim();
+    if (!storeGroup) throw createConfigError(`账号"${account}"未配置店铺组，无法检查同主题间隔`);
+    return {
+      ...topic,
+      platform,
+      account,
+      storeGroup,
+      assignmentDate: date,
+      potential: false,
+    };
+  });
+}
+
+function buildAssignmentAwareTopicFingerprint(payload, assignedItems) {
+  const baseFingerprint = buildTopicCheckFingerprint(payload);
+  if (!Array.isArray(assignedItems)) return baseFingerprint;
+  const normalizedAssignments = assignedItems
+    .map(item => ({
+      noteKey: item.noteKey,
+      platform: item.platform,
+      account: item.account,
+      date: item.assignmentDate,
+    }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify([baseFingerprint, normalizedAssignments]))
+    .digest('hex');
+}
+
 async function loadTopicSpacingContext(payload) {
   const candidateAccountsByPlatform = normalizeTopicSpacingInput(payload);
   // describeCurrentTopics 的第二个参数其实没在函数体内使用（历史遗留的死参数，不在本次
@@ -416,7 +485,15 @@ async function loadTopicSpacingContext(payload) {
     history,
     accountGroups: payload.accountGroups,
   });
-  const potentialItems = buildPotentialConflictItems({
+  const assignedItems = payload.assignments === undefined
+    ? null
+    : buildAssignedConflictItems({
+        assignments: payload.assignments,
+        currentItems,
+        candidateAccountsByPlatform,
+        accountGroups: payload.accountGroups,
+      });
+  const conflictItems = assignedItems || buildPotentialConflictItems({
     topicGroups,
     candidateAccountsByPlatform,
     accountGroups: payload.accountGroups,
@@ -427,8 +504,8 @@ async function loadTopicSpacingContext(payload) {
     reservations,
     timeReservations,
     unparsableRecordIds,
-    conflicts: findCrossAccountTopicConflicts({ currentItems: potentialItems, reservations }),
-    inputFingerprint: buildTopicCheckFingerprint(payload),
+    conflicts: findCrossAccountTopicConflicts({ currentItems: conflictItems, reservations }),
+    inputFingerprint: buildAssignmentAwareTopicFingerprint(payload, assignedItems),
   };
 }
 

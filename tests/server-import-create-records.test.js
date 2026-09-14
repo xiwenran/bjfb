@@ -598,6 +598,85 @@ test('topic spacing endpoints use indexed server context and fresh confirmation'
   assert.equal(twoNotesSameTopic.statusCode, 200);
   assert.equal(twoNotesSameTopic.body.requiresConfirmation, true);
 
+  const assignmentBase = {
+    seed: 'fixed-assignment-check',
+    noteFolders: [
+      { topic: '主题甲', templates: ['T0'] },
+      { topic: '主题乙', templates: ['T0'] },
+    ],
+    accounts: {
+      xiaohongshu_regular: ['账号甲', '账号乙', '账号丙', '账号丁', '账号戊'],
+      xiaohongshu_special: [],
+      douyin: [],
+    },
+    accountGroups: {
+      账号甲: '店铺一',
+      账号乙: '店铺一',
+      账号丙: '店铺二',
+      账号丁: '店铺三',
+      账号戊: '店铺四',
+    },
+    timeSlots: { regular: ['2026-09-14 19:05-22:00'], special: [] },
+    assignments: [
+      { noteKey: '主题甲/T0', platform: 'xiaohongshu', account: '账号甲', date: '2026-09-14' },
+      { noteKey: '主题乙/T0', platform: 'xiaohongshu', account: '账号乙', date: '2026-09-14' },
+    ],
+  };
+  const exactAssignments = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/topic-spacing-check',
+    body: assignmentBase,
+  });
+  assert.equal(exactAssignments.statusCode, 200);
+  assert.equal(exactAssignments.body.requiresConfirmation, false);
+  assert.deepEqual(exactAssignments.body.conflicts, []);
+
+  const changedBinding = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/topic-spacing-check',
+    body: {
+      ...assignmentBase,
+      assignments: [
+        { ...assignmentBase.assignments[0], account: '账号乙' },
+        assignmentBase.assignments[1],
+      ],
+    },
+  });
+  assert.equal(changedBinding.statusCode, 200);
+  assert.notEqual(changedBinding.body.inputFingerprint, exactAssignments.body.inputFingerprint);
+
+  const crossStoreAssignments = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/topic-spacing-check',
+    body: {
+      ...assignmentBase,
+      noteFolders: [{ topic: '主题甲', templates: ['T0', 'T1'] }],
+      assignments: [
+        { noteKey: '主题甲/T0', platform: 'xiaohongshu', account: '账号甲', date: '2026-09-14' },
+        { noteKey: '主题甲/T1', platform: 'xiaohongshu', account: '账号丙', date: '2026-09-14' },
+      ],
+    },
+  });
+  assert.equal(crossStoreAssignments.statusCode, 200);
+  assert.equal(crossStoreAssignments.body.conflicts.length, 1);
+  assert.equal(crossStoreAssignments.body.conflicts[0].scope, 'cross_store');
+
+  const invalidAssignment = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/topic-spacing-check',
+    body: {
+      ...assignmentBase,
+      assignments: [{
+        noteKey: '主题甲/不存在',
+        platform: 'xiaohongshu',
+        account: '账号甲',
+        date: '2026-09-14',
+      }],
+    },
+  });
+  assert.equal(invalidAssignment.statusCode, 400);
+  assert.match(invalidAssignment.body.error, /noteKey 不在本批 noteFolders/);
+
   fs.writeFileSync(topicIndexPath, '{broken', 'utf8');
   const brokenIndex = await requestJson({ method: 'POST', urlPath: '/api/import/topic-spacing-check', body: payload });
   assert.equal(brokenIndex.statusCode, 500);
