@@ -376,12 +376,13 @@ function determinePlatform(record) {
 // availableArtifacts：调用方传入的该产品已确认存在的配套件 artifact_key 数组（可选）。
 // 见文件底部「配套件回查架构说明」——ai-writer.js 不直接连教师产品资产库的 sqlite，
 // 由调用方查库后把清单传进来；不传时红线④对提到配套件的正文一律 fail-closed。
-function validateGenerated(content, platform, availableArtifacts) {
+function validateGenerated(content, platform, availableArtifacts, options = {}) {
   const violations = [];
   const title = String(content?.title || '');
   const description = String(content?.description || '');
   const tags = Array.isArray(content?.tags) ? content.tags : [];
   const combinedText = `${title}\n${description}`;
+  const allowEmptyDescription = options?.allowEmptyDescription === true && !description.trim();
 
   // ── 标题 ──
   if (!title) {
@@ -398,9 +399,9 @@ function validateGenerated(content, platform, availableArtifacts) {
   }
 
   // ── 正文 ──
-  if (!description.trim()) {
+  if (!description.trim() && !allowEmptyDescription) {
     violations.push('正文为空，正文必须撰写');
-  } else {
+  } else if (description.trim()) {
     const descLen = countCodepoints(description);
     if (descLen < 50 || descLen > 200) {
       violations.push(`正文字数 ${descLen} 不在 50-200 区间`);

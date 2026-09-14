@@ -81,6 +81,50 @@ test('validateGenerated rejects empty description', () => {
   assert.ok(violations.some(v => v.includes('正文为空')), violations.join('; '));
 });
 
+test('validateGenerated allows empty description only with explicit boolean option', () => {
+  const content = baseContent({ description: '' });
+  assert.deepEqual(
+    validateGenerated(content, 'xiaohongshu', undefined, { allowEmptyDescription: true }),
+    []
+  );
+  for (const value of [false, 'true', 1, null]) {
+    const violations = validateGenerated(
+      content,
+      'xiaohongshu',
+      undefined,
+      { allowEmptyDescription: value }
+    );
+    assert.ok(violations.some(v => v.includes('正文为空')), `${value}: ${violations.join('; ')}`);
+  }
+});
+
+test('allowEmptyDescription does not relax non-empty description, title, or tags validation', () => {
+  const options = { allowEmptyDescription: true };
+  const badDescription = validateGenerated(
+    baseContent({ description: '太短' }),
+    'xiaohongshu',
+    undefined,
+    options
+  );
+  assert.ok(badDescription.some(v => v.includes('正文字数')), badDescription.join('; '));
+
+  const badTitle = validateGenerated(
+    baseContent({ title: '', description: '' }),
+    'xiaohongshu',
+    undefined,
+    options
+  );
+  assert.ok(badTitle.some(v => v.includes('标题为空')), badTitle.join('; '));
+
+  const badTags = validateGenerated(
+    baseContent({ description: '', tags: [] }),
+    'xiaohongshu',
+    undefined,
+    options
+  );
+  assert.ok(badTags.some(v => v.includes('标签为空')), badTags.join('; '));
+});
+
 test('validateGenerated rejects empty tags array', () => {
   const violations = validateGenerated(baseContent({ tags: [] }), 'xiaohongshu');
   assert.ok(violations.some(v => v.includes('标签为空')), violations.join('; '));

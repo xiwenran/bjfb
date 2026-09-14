@@ -286,7 +286,7 @@ test('create-records should enforce trimmed account validation and keep single-p
         contentGroup: '教务资料',
         accountGroup: '教师店',
         pptTopic: '期末家长会',
-        title: '期末家长会资料',
+        title: '期末家长会资料包',
         images: [],
         xiaohongshuAccount: '小红书账号A',
       }],
@@ -310,7 +310,7 @@ test('create-records should enforce trimmed account validation and keep single-p
         noteKey: '教务资料/期末家长会/preview',
         topic: '教务资料',
         pptTopic: '期末家长会',
-        title: '期末家长会预览',
+        title: '期末家长会预览资料',
         images: [],
         xiaohongshuAccount: '小红书账号A',
       }],
@@ -318,6 +318,96 @@ test('create-records should enforce trimmed account validation and keep single-p
   });
   assert.equal(dryRunResponse.body.results[0].status, 'preview');
   assert.equal(fs.existsSync(topicIndexPath), false);
+
+  const defaultEmptyDescriptionResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: true,
+      records: [{
+        noteKey: '教务资料/空正文/默认拒绝',
+        topic: '教务资料',
+        description: '',
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(defaultEmptyDescriptionResponse.body.results[0].status, 'failed');
+  assert.equal(defaultEmptyDescriptionResponse.body.results[0].reason, 'content_incomplete');
+
+  const allowedEmptyDescriptionResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: true,
+      records: [{
+        noteKey: '教务资料/空正文/显式允许',
+        topic: '教务资料',
+        description: '',
+        allowEmptyDescription: true,
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(allowedEmptyDescriptionResponse.body.results[0].status, 'preview');
+  assert.equal(allowedEmptyDescriptionResponse.body.results[0].description, '');
+
+  const stringFlagResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: true,
+      records: [{
+        noteKey: '教务资料/空正文/字符串拒绝',
+        topic: '教务资料',
+        description: '',
+        allowEmptyDescription: 'true',
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(stringFlagResponse.body.results[0].status, 'failed');
+  assert.equal(stringFlagResponse.body.results[0].reason, 'content_incomplete');
+
+  const badNonemptyDescriptionResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: true,
+      records: [{
+        noteKey: '教务资料/空正文/非空坏正文',
+        topic: '教务资料',
+        description: '太短',
+        allowEmptyDescription: true,
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(badNonemptyDescriptionResponse.body.results[0].status, 'failed');
+  assert.equal(badNonemptyDescriptionResponse.body.results[0].reason, 'content_invalid');
+
+  const missingTitleWithFlagResponse = await requestJson({
+    method: 'POST',
+    urlPath: '/api/import/create-records',
+    body: {
+      dryRun: true,
+      records: [{
+        noteKey: '教务资料/空正文/标题仍必填',
+        topic: '教务资料',
+        title: '',
+        description: '',
+        allowEmptyDescription: true,
+        images: [],
+        xiaohongshuAccount: '小红书账号A',
+      }],
+    },
+  });
+  assert.equal(missingTitleWithFlagResponse.body.results[0].status, 'failed');
+  assert.equal(missingTitleWithFlagResponse.body.results[0].reason, 'content_incomplete');
 
   fs.mkdirSync(path.dirname(topicIndexPath), { recursive: true });
   fs.writeFileSync(`${topicIndexPath}.lock`, '{}', 'utf8');
@@ -327,8 +417,8 @@ test('create-records should enforce trimmed account validation and keep single-p
     urlPath: '/api/import/create-records',
     body: {
       records: [
-        { noteKey: '锁测试/001', topic: '锁测试', title: '锁测试一', images: [], xiaohongshuAccount: '小红书账号A' },
-        { noteKey: '锁测试/002', topic: '锁测试', title: '锁测试二', images: [], xiaohongshuAccount: '小红书账号A' },
+        { noteKey: '锁测试/001', topic: '锁测试', title: '锁定测试资料一号', images: [], xiaohongshuAccount: '小红书账号A' },
+        { noteKey: '锁测试/002', topic: '锁测试', title: '锁定测试资料二号', images: [], xiaohongshuAccount: '小红书账号A' },
       ],
     },
   });
@@ -342,7 +432,7 @@ test('create-records should enforce trimmed account validation and keep single-p
   const repairResponse = await requestJson({
     method: 'POST',
     urlPath: '/api/import/create-records',
-    body: { records: [{ noteKey: '锁测试/001', topic: '锁测试', title: '锁测试一', images: [], xiaohongshuAccount: '小红书账号A' }] },
+    body: { records: [{ noteKey: '锁测试/001', topic: '锁测试', title: '锁定测试资料一号', images: [], xiaohongshuAccount: '小红书账号A' }] },
   });
   assert.equal(repairResponse.body.results[0].status, 'skipped');
   assert.equal(createRecordCalls, callsBeforeLockedBatch + 1);

@@ -186,6 +186,33 @@ def build_note_pool(note_folders) -> tuple[list[tuple[str, str]], int, int]:
     return pool, topic_count, template_count
 
 
+def build_assigned_note_pool(note_folders) -> tuple[list[tuple[str, str]], int]:
+    """显式绑定只要求 noteKey 来自 scan，不要求各主题拥有相同模板集合。"""
+    if not isinstance(note_folders, list) or not note_folders:
+        raise ScheduleError("noteFolders 必须是非空数组")
+    pool: list[tuple[str, str]] = []
+    seen_topics: set[str] = set()
+    for folder in note_folders:
+        if not isinstance(folder, dict):
+            raise ScheduleError("noteFolders 中存在非对象项")
+        topic = str(folder.get("topic") or "").strip()
+        if not topic:
+            raise ScheduleError("noteFolders 中存在空 topic")
+        if topic in seen_topics:
+            raise ScheduleError(f"主题「{topic}」在 noteFolders 中重复出现")
+        seen_topics.add(topic)
+        templates_raw = folder.get("templates")
+        if not isinstance(templates_raw, list):
+            raise ScheduleError(f"主题「{topic}」的 templates 必须是数组")
+        templates = [str(value).strip() for value in templates_raw if str(value or "").strip()]
+        if not templates:
+            raise ScheduleError(f"主题「{topic}」没有可用模板")
+        if len(set(templates)) != len(templates):
+            raise ScheduleError(f"主题「{topic}」内部模板重复")
+        pool.extend((topic, template) for template in templates)
+    return pool, len(seen_topics)
+
+
 # ---------------------------------------------------------------------------
 # 账号 / 时段
 # ---------------------------------------------------------------------------
@@ -343,6 +370,102 @@ def parse_slot_window(value: str):
     return date_str, start, end
 
 
+def _slot_date(value: str) -> str | None:
+    window = parse_slot_window(value)
+    if window is not None:
+        return window[0]
+    match = _EXACT_RE.match(str(value or "").strip())
+    if not match or parse_publish_time_to_abs_minute(value) is None:
+        return None
+    return match.group(1)
+
+
+def build_assigned_tasks(
+    assignments,
+    accounts: list[dict],
+    all_note_keys: set[str],
+    per_account_per_slot: int,
+) -> list[dict] | None:
+    """把显式 noteKey/账号/日期绑定转成分钟分配任务；未传时返回 None。"""
+    if assignments is None:
+        return None
+    if not isinstance(assignments, list) or not assignments:
+        raise ScheduleError("assignments 必须是非空数组；要使用自动分配请完全省略该字段")
+
+    account_by_key = {account["accountKey"]: account for account in accounts}
+    account_ordinals = {account["accountKey"]: index for index, account in enumerate(accounts)}
+    slot_queues: dict[tuple[str, str], list[str]] = {}
+    for account in accounts:
+        for slot_value in account["slots"]:
+            date_text = _slot_date(slot_value)
+            if date_text is None:
+                raise ScheduleError(f"发布时间无法解析：{slot_value}")
+            slot_queues.setdefault((account["accountKey"], date_text), []).extend(
+                [slot_value] * per_account_per_slot
+            )
+
+    expected_count = sum(len(values) for values in slot_queues.values())
+    if len(assignments) != expected_count:
+        raise ScheduleError(
+            f"assignments 数量 {len(assignments)} 与账号时段要求 {expected_count} 不一致，"
+            "存在遗漏或多余绑定"
+        )
+
+    seen_note_platform: set[tuple[str, str]] = set()
+    occurrence_by_account: dict[str, int] = {}
+    tasks: list[dict] = []
+    for index, item in enumerate(assignments):
+        if not isinstance(item, dict):
+            raise ScheduleError(f"assignments[{index}] 必须是对象")
+        note_key = str(item.get("noteKey") or "").strip()
+        platform = str(item.get("platform") or "").strip()
+        account_name = str(item.get("account") or "").strip()
+        date_text = str(item.get("date") or "").strip()
+        if note_key not in all_note_keys:
+            raise ScheduleError(f"assignments[{index}] noteKey 不在扫描结果中：{note_key!r}")
+        if platform not in SUPPORTED_PLATFORMS:
+            raise ScheduleError(f"assignments[{index}] platform 不受支持：{platform!r}")
+        account_key = f"{platform}:{account_name}"
+        account = account_by_key.get(account_key)
+        if account is None:
+            raise ScheduleError(
+                f"assignments[{index}] 账号未在本次 {platform} 授权计划中：{account_name!r}"
+            )
+        try:
+            datetime.date.fromisoformat(date_text)
+        except ValueError as exc:
+            raise ScheduleError(f"assignments[{index}] date 不是合法 ISO 日期：{date_text!r}") from exc
+        assignment_key = (platform, note_key)
+        if assignment_key in seen_note_platform:
+            raise ScheduleError(f"assignments 中同平台 noteKey 重复：{platform}/{note_key}")
+        seen_note_platform.add(assignment_key)
+        queue = slot_queues.get((account_key, date_text))
+        if not queue:
+            raise ScheduleError(
+                f"assignments[{index}] 日期 {date_text} 不在账号「{account_name}」的可用时间窗内，"
+                "或该日期的绑定数量已超过计划容量"
+            )
+        slot_value = queue.pop(0)
+        occurrence_index = occurrence_by_account.get(account_key, 0)
+        occurrence_by_account[account_key] = occurrence_index + 1
+        tasks.append({
+            "account": account,
+            "accountOrdinal": account_ordinals[account_key],
+            "occurrenceIndex": occurrence_index,
+            "slotValue": slot_value,
+            "assignedNoteKey": note_key,
+        })
+
+    missing_slots = [
+        f"{account_key}@{date_text}×{len(values)}"
+        for (account_key, date_text), values in slot_queues.items()
+        if values
+    ]
+    if missing_slots:
+        raise ScheduleError(f"assignments 存在遗漏绑定：{missing_slots}")
+    return tasks
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -380,13 +503,18 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         raise ScheduleError("排期参数缺少非空 seed，排期必须可复算")
     rng = random.Random(seed)
 
-    pool, topic_count, template_count = build_note_pool(payload.get("noteFolders"))
+    explicit_assignments = payload.get("assignments")
+    if explicit_assignments is None:
+        pool, topic_count, template_count = build_note_pool(payload.get("noteFolders"))
+    else:
+        pool, topic_count = build_assigned_note_pool(payload.get("noteFolders"))
+        template_count = 0
     pool_size = len(pool)
     all_note_keys = {f"{topic}/{template}" for topic, template in pool}
     # pool 按「主题为高位、模板为低位」排列（build_note_pool 保证），可以从中还原
     # 两条独立的轴：topics_axis[k] = 第 k 个主题名，templates_axis[j] = 第 j 个模板名。
-    topics_axis = [pool[k * template_count][0] for k in range(topic_count)]
-    templates_axis = [pool[j][1] for j in range(template_count)]
+    topics_axis = [pool[k * template_count][0] for k in range(topic_count)] if template_count else []
+    templates_axis = [pool[j][1] for j in range(template_count)] if template_count else []
 
     accounts = build_accounts(payload, rng)
     coverage_strategy = normalize_coverage_strategy(payload.get("coverageStrategy"))
@@ -402,7 +530,7 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     # ---- 第 1 步：账号发布次数 + 模板数下限检查（约束 4 的前提条件） ----
     for account in accounts:
         occurrence_count = len(account["slots"]) * per_account_per_slot
-        if occurrence_count > template_count:
+        if explicit_assignments is None and occurrence_count > template_count:
             raise ScheduleError(
                 f"账号「{account['account']}」（{account['platform']}）需要发布 {occurrence_count} 次，"
                 f"但只有 {template_count} 种模板，无法保证同账号模板不重复；"
@@ -414,18 +542,22 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     # 分钟分配本身不依赖具体分配到哪个 noteKey，先做完这一步，第 3 步给 noteKey 定
     # 主题时就能看到"这次发布几点几分"，从而在挑主题阶段主动避让约束 5（同店同
     # 主题跨账号需错开），而不是构造完了才发现撞车再报错。
-    tasks: list[dict] = []  # 每个 task 对应一次具体发布：account + occurrence 序号
-    for i, account in enumerate(accounts):
-        occurrence_slot_values = []
-        for slot_value in account["slots"]:
-            occurrence_slot_values.extend([slot_value] * per_account_per_slot)
-        for t, slot_value in enumerate(occurrence_slot_values):
-            tasks.append({
-                "account": account,
-                "accountOrdinal": i,
-                "occurrenceIndex": t,
-                "slotValue": slot_value,
-            })
+    tasks = build_assigned_tasks(
+        explicit_assignments, accounts, all_note_keys, per_account_per_slot
+    )
+    if tasks is None:
+        tasks = []  # 每个 task 对应一次具体发布：account + occurrence 序号
+        for i, account in enumerate(accounts):
+            occurrence_slot_values = []
+            for slot_value in account["slots"]:
+                occurrence_slot_values.extend([slot_value] * per_account_per_slot)
+            for t, slot_value in enumerate(occurrence_slot_values):
+                tasks.append({
+                    "account": account,
+                    "accountOrdinal": i,
+                    "occurrenceIndex": t,
+                    "slotValue": slot_value,
+                })
 
     used_minutes: set[tuple[str, int]] = set()
     for reservation in reservations:
@@ -525,36 +657,61 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         # build_accounts 已经把 storeGroup 做成无条件必填，这里的 bool() 只是防御性兜底。
         spacing_aware = bool(account["storeGroup"])
 
-        base_topic_idx = (i + t) % topic_count
-        base_template_idx = (i + t) % template_count
+        assigned_note_key = task.get("assignedNoteKey")
         chosen = None
-        for topic_probe in range(topic_count):
-            topic_idx = (base_topic_idx + topic_probe) % topic_count
-            topic = topics_axis[topic_idx]
-            if spacing_aware:
-                group_key = (account["platform"], topic)
-                neighbours = topic_group_entries.get(group_key, ())
-                # 只避让「不同店铺 + 不同账号 + 间隔不足 cross_store_gap」的邻居——
-                # 同店铺的邻居走人工审批（规则 B），不受这里的时间避让影响。
-                if any(
-                    other_store != account["storeGroup"]
-                    and other_key != account["accountKey"]
-                    and abs(other_minute - task["absMinute"]) < cross_store_gap
-                    for other_store, other_key, other_minute in neighbours
-                ):
-                    continue
-            for template_probe in range(template_count):
-                template_idx = (base_template_idx + template_probe) % template_count
-                template = templates_axis[template_idx]
-                if template in used_templates:
-                    continue
-                note_key = f"{topic}/{template}"
-                if note_key in used_notekeys:
-                    continue
-                chosen = (topic, template, note_key)
-                break
-            if chosen is not None:
-                break
+        if assigned_note_key:
+            topic, template = assigned_note_key.rsplit("/", 1)
+            if template in used_templates:
+                raise ScheduleError(
+                    f"assignments 违反同账号模板唯一约束：账号「{account['account']}」"
+                    f"重复使用模板「{template}」"
+                )
+            if assigned_note_key in used_notekeys:
+                raise ScheduleError(
+                    f"assignments 违反同平台 noteKey 唯一约束：{account['platform']}/{assigned_note_key}"
+                )
+            neighbours = topic_group_entries.get((account["platform"], topic), ())
+            if spacing_aware and any(
+                other_store != account["storeGroup"]
+                and other_key != account["accountKey"]
+                and abs(other_minute - task["absMinute"]) < cross_store_gap
+                for other_store, other_key, other_minute in neighbours
+            ):
+                raise ScheduleError(
+                    f"assignments 固定绑定违反跨店铺同主题间隔：账号「{account['account']}」"
+                    f"在 {task['publishTime']} 绑定「{assigned_note_key}」"
+                )
+            chosen = (topic, template, assigned_note_key)
+        else:
+            base_topic_idx = (i + t) % topic_count
+            base_template_idx = (i + t) % template_count
+            for topic_probe in range(topic_count):
+                topic_idx = (base_topic_idx + topic_probe) % topic_count
+                topic = topics_axis[topic_idx]
+                if spacing_aware:
+                    group_key = (account["platform"], topic)
+                    neighbours = topic_group_entries.get(group_key, ())
+                    # 只避让「不同店铺 + 不同账号 + 间隔不足 cross_store_gap」的邻居——
+                    # 同店铺的邻居走人工审批（规则 B），不受这里的时间避让影响。
+                    if any(
+                        other_store != account["storeGroup"]
+                        and other_key != account["accountKey"]
+                        and abs(other_minute - task["absMinute"]) < cross_store_gap
+                        for other_store, other_key, other_minute in neighbours
+                    ):
+                        continue
+                for template_probe in range(template_count):
+                    template_idx = (base_template_idx + template_probe) % template_count
+                    template = templates_axis[template_idx]
+                    if template in used_templates:
+                        continue
+                    note_key = f"{topic}/{template}"
+                    if note_key in used_notekeys:
+                        continue
+                    chosen = (topic, template, note_key)
+                    break
+                if chosen is not None:
+                    break
 
         if chosen is None:
             remaining_free = pool_size - len(used_notekeys)

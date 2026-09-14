@@ -245,6 +245,38 @@ def normalize_schedule_plan_payload(payload: dict) -> dict:
     for account, store_group in account_groups.items():
         if not str(account or "").strip() or not isinstance(store_group, str) or not store_group.strip():
             raise ValueError("accountGroups 必须使用账号名→店铺组名格式")
+    assignments = payload.get("assignments")
+    if assignments is not None:
+        if not isinstance(assignments, list) or not assignments:
+            raise ValueError("assignments 必须是非空数组")
+        normalized_assignments = []
+        seen_assignments: set[tuple[str, str]] = set()
+        for index, item in enumerate(assignments):
+            if not isinstance(item, dict):
+                raise ValueError(f"assignments[{index}] 必须是对象")
+            note_key = str(item.get("noteKey") or "").strip()
+            platform = str(item.get("platform") or "").strip()
+            account = str(item.get("account") or "").strip()
+            date_text = str(item.get("date") or "").strip()
+            if not note_key or platform not in {"xiaohongshu", "douyin"} or not account or not date_text:
+                raise ValueError(
+                    f"assignments[{index}] 必须包含合法 noteKey/platform/account/date"
+                )
+            try:
+                datetime.date.fromisoformat(date_text)
+            except ValueError as exc:
+                raise ValueError(f"assignments[{index}] date 不是合法 ISO 日期：{date_text!r}") from exc
+            assignment_key = (platform, note_key)
+            if assignment_key in seen_assignments:
+                raise ValueError(f"assignments 中重复绑定：{platform}/{note_key}")
+            seen_assignments.add(assignment_key)
+            normalized_assignments.append({
+                "noteKey": note_key,
+                "platform": platform,
+                "account": account,
+                "date": date_text,
+            })
+        normalized["assignments"] = normalized_assignments
     if "timeSlots" in payload:
         if not isinstance(payload.get("timeSlots"), dict):
             raise ValueError("timeSlots 必须是对象")
@@ -447,8 +479,9 @@ def run_ai_fallback(records: list) -> list:
         title_empty = not rec.get("title", "").strip()
         description_empty = not str(rec.get("description") or "").strip()
         tags_empty = not rec.get("tags", [])
-        if title_empty or description_empty or tags_empty:
-            needs_ai.append((i, rec))
+        allow_empty_description = rec.get("allowEmptyDescription") is True and description_empty
+        if title_empty or (description_empty and not allow_empty_description) or tags_empty:
+            needs_ai.append((i, rec, allow_empty_description))
 
     if not needs_ai:
         print("AI fallback：所有记录均有标题、正文和标签，跳过 AI 生成。")
@@ -457,7 +490,7 @@ def run_ai_fallback(records: list) -> list:
     print(f"AI fallback：发现 {len(needs_ai)} 条记录缺少标题、正文或标签，正在调用 AI 生成…")
 
     ai_failed_notes = []
-    for i, rec in needs_ai:
+    for i, rec, allow_empty_description in needs_ai:
         note_key = rec.get("noteKey", f"index-{i}")
         topic = rec.get("topic") or rec.get("noteKey", "")
         # 尝试判断平台（优先用记录字段，否则默认 xiaohongshu）
@@ -474,13 +507,14 @@ def run_ai_fallback(records: list) -> list:
             if (
                 resp
                 and str(resp.get("title") or "").strip()
-                and str(resp.get("description") or "").strip()
+                and (allow_empty_description or str(resp.get("description") or "").strip())
                 and isinstance(resp.get("tags"), list)
                 and resp.get("tags")
             ):
                 records[i] = {**rec, **{
                     k: v for k, v in resp.items()
                     if k in ("title", "description", "tags")
+                    and not (allow_empty_description and k == "description")
                 }}
                 print(f"  ✅ [{note_key}] AI 生成成功：{resp.get('title', '')[:30]}…")
             else:
@@ -629,6 +663,11 @@ def ai_writing_title_search_layer(title: str) -> str:
     return title[:idx] if idx >= 0 else title
 
 
+def ai_writing_title_outside_book_marks(title: str) -> str:
+    """移除完整《…》范围；未闭合书名号不匹配，内部标点仍照常计数。"""
+    return re.sub(r"《[^《》]*》", "", title)
+
+
 def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, list[str]]]:
     """校验标题、正文最小排版和标签字段，返回 (label, violations) 列表。"""
     title_violations: list[str] = []
@@ -660,7 +699,9 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
                 title_violations.append(
                     f"records[{i}] title 白名单emoji数量为 {emoji_count}，最多1个（noteKey={note_key}，title={title_str!r}）"
                 )
-            punct_count = len(AI_WRITING_PUNCT_PATTERN.findall(title_str))
+            punct_count = len(
+                AI_WRITING_PUNCT_PATTERN.findall(ai_writing_title_outside_book_marks(title_str))
+            )
             if punct_count > 1:
                 title_violations.append(
                     f"records[{i}] title 标点符号 {punct_count} 个，最多1个（不含书名号和emoji，noteKey={note_key}，title={title_str!r}）"
@@ -668,11 +709,12 @@ def validate_ai_writing_output_for_dry_run(records: list) -> list[tuple[str, lis
 
         description = record.get("description")
         description_str = str(description).strip() if description is not None else ""
-        if not description_str:
+        allow_empty_description = record.get("allowEmptyDescription") is True and not description_str
+        if not description_str and not allow_empty_description:
             description_violations.append(
                 f"records[{i}] description 为空，正文必须撰写（noteKey={note_key}）"
             )
-        else:
+        elif description_str:
             # 上限与 src/ai-writer.js 的 SYSTEM_PROMPT 硬边界对齐（50–200）。
             # 2026-08-07 修：commit e0de667「正文上限提到 500 字」只改了 ai-writer.js，
             # 漏改本校验器，导致按新规则写的 200–500 字正文全部被旧的 150 字上限拦死。
@@ -1438,11 +1480,12 @@ def cmd_build_records(
         title = str(content.get("title") or "").strip()
         description = str(content.get("description") or "").strip()
         tags = content.get("tags") if isinstance(content.get("tags"), list) else []
-        if not title or not description or not tags:
+        allow_empty_description = content.get("allowEmptyDescription") is True and not description
+        if not title or (not description and not allow_empty_description) or not tags:
             missing_fields = [
                 field for field, present in (
                     ("title", bool(title)),
-                    ("description", bool(description)),
+                    ("description", bool(description) or allow_empty_description),
                     ("tags", bool(tags)),
                 ) if not present
             ]
@@ -1478,6 +1521,7 @@ def cmd_build_records(
             "title": title,
             "description": description,
             "tags": tags,
+            "allowEmptyDescription": allow_empty_description,
         })
 
     output_payload = {"records": records}

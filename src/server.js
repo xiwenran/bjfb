@@ -1580,6 +1580,7 @@ const server = http.createServer(async (req, res) => {
           title = '',
           description = '',
           tags = [],
+          allowEmptyDescription = false,
           overwrite = false,
           overwriteId = '',
         } = record;
@@ -1810,6 +1811,8 @@ const server = http.createServer(async (req, res) => {
         let aiTitle = title;
         let aiDescription = description;
         let aiTags = Array.isArray(tags) ? tags : [];
+        const preserveEmptyDescription = allowEmptyDescription === true
+          && !String(aiDescription || '').trim();
         const topicForAi = typeof topicOverride === 'string' && topicOverride.trim()
           ? topicOverride.trim()
           : topic;
@@ -1827,7 +1830,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const contentIncomplete = !String(aiTitle || '').trim()
-          || !String(aiDescription || '').trim()
+          || (!String(aiDescription || '').trim() && !preserveEmptyDescription)
           || !aiTags.some(tag => String(tag || '').trim());
         if (contentIncomplete) {
           const aiConfig = config.aiWriting;
@@ -1841,7 +1844,7 @@ const server = http.createServer(async (req, res) => {
                 // 同一文件夹已生成过（重试场景），直接复用
                 const cached = topicAiCache.get(cacheKey);
                 aiTitle = cached.title;
-                aiDescription = cached.description;
+                aiDescription = preserveEmptyDescription ? '' : cached.description;
                 aiTags = cached.tags;
               } else {
                 const aiRecord = {
@@ -1864,7 +1867,7 @@ const server = http.createServer(async (req, res) => {
                 totalAiMs += aiMs; countAi++;
                 writeImportLog('AI生成耗时', { noteKey, ms: aiMs });
                 aiTitle = aiResult.title || '';
-                aiDescription = aiResult.description || '';
+                aiDescription = preserveEmptyDescription ? '' : (aiResult.description || '');
                 aiTags = Array.isArray(aiResult.tags) ? aiResult.tags : [];
                 // AI 多模态截断信息(IMAGE_MAX_COUNT=8 时,16 张图只送 8 张),记到 record 上,
                 // 后续 results 会带上,前端可展示「AI 仅参考前 N 张图」提示
@@ -1884,7 +1887,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const finalContentIncomplete = !String(aiTitle || '').trim()
-          || !String(aiDescription || '').trim()
+          || (!String(aiDescription || '').trim() && allowEmptyDescription !== true)
           || !aiTags.some(tag => String(tag || '').trim());
         if (finalContentIncomplete) {
           results.push({
@@ -1901,7 +1904,8 @@ const server = http.createServer(async (req, res) => {
         const contentViolations = validateGenerated(
           { title: aiTitle, description: aiDescription, tags: aiTags },
           targetPlatform,
-          availableArtifactsForValidation
+          availableArtifactsForValidation,
+          { allowEmptyDescription }
         );
         if (contentViolations.length > 0) {
           results.push({

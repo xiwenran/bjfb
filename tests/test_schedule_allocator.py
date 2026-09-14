@@ -253,6 +253,107 @@ class ConstraintTests(unittest.TestCase):
         self.assertIn("间隔内冲突", message)
 
 
+class ExplicitAssignmentTests(unittest.TestCase):
+    def fixed_payload(self, **overrides):
+        payload = base_payload(
+            accounts={
+                "xiaohongshu_regular": ["xhs_a", "xhs_b"],
+                "xiaohongshu_special": [],
+                "douyin": [],
+            },
+            accountGroups={"xhs_a": "store1", "xhs_b": "store1"},
+            timeSlots={
+                "regular": [
+                    "2026-08-01 06:00-22:00",
+                    "2026-08-02 06:00-22:00",
+                ],
+                "special": [],
+            },
+            noteFolders=[
+                {"topic": "topic0", "templates": ["T0", "T1"]},
+                {"topic": "topic1", "templates": ["T0", "U1"]},
+            ],
+            allowPartialSchedule=False,
+            assignments=[
+                {"noteKey": "topic0/T0", "platform": "xiaohongshu", "account": "xhs_a", "date": "2026-08-01"},
+                {"noteKey": "topic1/U1", "platform": "xiaohongshu", "account": "xhs_a", "date": "2026-08-02"},
+                {"noteKey": "topic0/T1", "platform": "xiaohongshu", "account": "xhs_b", "date": "2026-08-01"},
+                {"noteKey": "topic1/T0", "platform": "xiaohongshu", "account": "xhs_b", "date": "2026-08-02"},
+            ],
+        )
+        payload.update(overrides)
+        return payload
+
+    def test_explicit_assignments_preserve_note_account_and_date(self):
+        payload = self.fixed_payload()
+        result = allocate_schedule(payload, CONSTRAINTS)
+        actual = {
+            (item["noteKey"], item["platform"]): (item["account"], item["publishTime"][:10])
+            for item in result["schedule"]
+        }
+        expected = {
+            (item["noteKey"], item["platform"]): (item["account"], item["date"])
+            for item in payload["assignments"]
+        }
+        self.assertEqual(actual, expected)
+        self.assertEqual(result["unscheduled"], [])
+
+    def test_assignments_fail_closed_for_unknown_note_account_date_duplicate_and_omission(self):
+        cases = []
+        unknown_note = self.fixed_payload()["assignments"]
+        unknown_note[0] = {**unknown_note[0], "noteKey": "missing/T0"}
+        cases.append((unknown_note, "不在扫描结果"))
+
+        unknown_account = self.fixed_payload()["assignments"]
+        unknown_account[0] = {**unknown_account[0], "account": "not_allowed"}
+        cases.append((unknown_account, "未在本次"))
+
+        uncovered_date = self.fixed_payload()["assignments"]
+        uncovered_date[0] = {**uncovered_date[0], "date": "2026-08-03"}
+        cases.append((uncovered_date, "不在账号"))
+
+        duplicate = self.fixed_payload()["assignments"]
+        duplicate[1] = {**duplicate[1], "noteKey": duplicate[0]["noteKey"]}
+        cases.append((duplicate, "重复"))
+
+        omission = self.fixed_payload()["assignments"][:-1]
+        cases.append((omission, "遗漏或多余"))
+
+        for assignments, expected in cases:
+            with self.subTest(expected=expected):
+                with self.assertRaises(ScheduleError) as ctx:
+                    allocate_schedule(self.fixed_payload(assignments=assignments), CONSTRAINTS)
+                self.assertIn(expected, str(ctx.exception))
+
+    def test_explicit_assignments_keep_template_uniqueness(self):
+        assignments = self.fixed_payload()["assignments"]
+        assignments[1] = {**assignments[1], "noteKey": "topic1/T0"}
+        assignments[3] = {**assignments[3], "noteKey": "topic1/U1"}
+        with self.assertRaises(ScheduleError) as ctx:
+            allocate_schedule(self.fixed_payload(assignments=assignments), CONSTRAINTS)
+        self.assertIn("模板唯一", str(ctx.exception))
+
+    def test_explicit_assignments_keep_cross_store_topic_spacing(self):
+        payload = base_payload(
+            accounts={
+                "xiaohongshu_regular": ["xhs_a", "xhs_b"],
+                "xiaohongshu_special": [],
+                "douyin": [],
+            },
+            accountGroups={"xhs_a": "store1", "xhs_b": "store2"},
+            timeSlots={"regular": ["2026-08-01 06:00-06:09"], "special": []},
+            noteFolders=note_folders(1, 2),
+            allowPartialSchedule=False,
+            assignments=[
+                {"noteKey": "topic0/T0", "platform": "xiaohongshu", "account": "xhs_a", "date": "2026-08-01"},
+                {"noteKey": "topic0/T1", "platform": "xiaohongshu", "account": "xhs_b", "date": "2026-08-01"},
+            ],
+        )
+        with self.assertRaises(ScheduleError) as ctx:
+            allocate_schedule(payload, CONSTRAINTS)
+        self.assertIn("跨店铺同主题间隔", str(ctx.exception))
+
+
 class ReproducibilityTests(unittest.TestCase):
     def test_same_seed_same_input_reproducible(self):
         payload1 = base_payload()
