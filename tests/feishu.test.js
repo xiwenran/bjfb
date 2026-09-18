@@ -63,3 +63,38 @@ test('orderAttachmentsForDownload keeps non-numeric names in original relative o
     '课程封面_11.png',
   ]);
 });
+
+test('parseAttachmentSortKey supports bare parenthesized numbers and dash/underscore sub-index', () => {
+  assert.deepEqual(parseAttachmentSortKey('(7).jpg'), [7, -1]);
+  assert.deepEqual(parseAttachmentSortKey('（12）.jpg'), [12, -1]);
+  assert.deepEqual(parseAttachmentSortKey('1-2.png'), [1, 2]);
+  assert.deepEqual(parseAttachmentSortKey('1_2.png'), [1, 2]);
+  assert.equal(parseAttachmentSortKey('(封面).jpg'), null);
+});
+
+test('orderAttachmentsForDownload sorts bare parenthesized numbers numerically', () => {
+  const names = ['(7).jpg', '(2).jpg', '(10).jpg', '(1).jpg'];
+  const ordered = orderAttachmentsForDownload(names.map(name => ({ name }))).map(item => item.name);
+  assert.deepEqual(ordered, ['(1).jpg', '(2).jpg', '(7).jpg', '(10).jpg']);
+});
+
+test('orderAttachmentsForDownload sorts a uniform name template by its number', () => {
+  const cases = [
+    ['幻灯片10.PNG', '幻灯片2.PNG', '幻灯片1.PNG'],
+    ['Slide3.png', 'Slide1.png', 'Slide2.png'],
+    ['IMG_0012.jpg', 'IMG_0003.jpg', 'IMG_0010.jpg'],
+    ['课件.003.png', '课件.001.png', '课件.002.png'],
+    ['封面 (3).png', '封面 (1).png', '封面 (2).png'],
+  ];
+  for (const names of cases) {
+    const ordered = orderAttachmentsForDownload(names.map(name => ({ name }))).map(item => item.name);
+    const expected = [...names].sort((a, b) => Number(a.match(/(\d+)\D*$/)[1]) - Number(b.match(/(\d+)\D*$/)[1]));
+    assert.deepEqual(ordered, expected, names.join(','));
+  }
+});
+
+test('orderAttachmentsForDownload keeps mixed templates on the numbered-page rule', () => {
+  const names = ['封面.png', '幻灯片2.png', '幻灯片1.png'];
+  const ordered = orderAttachmentsForDownload(names.map(name => ({ name }))).map(item => item.name);
+  assert.deepEqual(ordered, names);
+});

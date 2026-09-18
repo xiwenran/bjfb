@@ -49,16 +49,45 @@ function parseAttachmentSortKey(name) {
   //   "1.png" / "10" → [10, -1]
   //   小数点子序号："1.2.png" → [1, 2]；"0.1.png" → [0, 1]
   //   括号子序号（macOS 重名）："1(2).png" / "0 (4).png" / "0（4）.png" → [主序号, 子序号]
-  const m = normalizedName.match(/^(\d+)(?:\.(\d+)|\s*\((\d+)\))?(?:\.[^.]+)?$/);
+  //   连字符/下划线子序号（纯数字）："1-2.png" / "1_2.png" → [1, 2]
+  //   纯括号编号（Windows 批量重命名）："(7).jpg" / "（7）.jpg" → [7, -1]
+  const paren = normalizedName.match(/^\(\s*(\d+)\s*\)(?:\.[^.]+)?$/);
+  if (paren) return [Number(paren[1]), -1];
+  const m = normalizedName.match(/^(\d+)(?:[.\-_](\d+)|\s*\((\d+)\))?(?:\.[^.]+)?$/);
   if (!m) return null;
   const main = Number(m[1]);
   const sub = m[2] != null ? Number(m[2]) : (m[3] != null ? Number(m[3]) : -1);
   return [main, sub];
 }
 
+// 同一模板只差一个编号的整组文件名（"幻灯片1.png"…"幻灯片12.png"、"Slide1.PNG"、
+// "IMG_0001.jpg"、"课件.001.png"、"封面 (1).png"…）按该编号排序。
+// 只有整组都能拆成「相同前缀 + 编号 + 相同后缀」才生效，混入其他文件名时返回 null，
+// 交给 parseAttachmentSortKey 的纯编号规则处理，避免把封面等非编号页排乱。
+function orderByUniformTemplate(items) {
+  if (items.length < 2) return null;
+  let template = null;
+  const keyed = [];
+  for (const item of items) {
+    const name = path.basename(String(item.att.name || ''))
+      .trim()
+      .replace(/（/g, '(')
+      .replace(/）/g, ')');
+    const m = name.match(/^(.*?)(\d+)(\D*)$/);
+    if (!m) return null;
+    const shape = `${m[1]}\u0000${m[3].toLowerCase()}`;
+    if (template === null) template = shape;
+    else if (template !== shape) return null;
+    keyed.push({ ...item, num: Number(m[2]) });
+  }
+  return keyed.sort((a, b) => a.num - b.num || a.index - b.index);
+}
+
 function orderAttachmentsForDownload(attachments = []) {
-  return [...attachments]
-    .map((att, index) => ({ att, index }))
+  const indexed = [...attachments].map((att, index) => ({ att, index }));
+  const uniform = orderByUniformTemplate(indexed);
+  if (uniform) return uniform.map(item => item.att);
+  return indexed
     .sort((left, right) => {
       const leftName = path.basename(String(left.att.name || ''));
       const rightName = path.basename(String(right.att.name || ''));
@@ -582,12 +611,8 @@ class FeishuClient {
   async downloadAllAttachments(attachments, destDir) {
     if (!attachments || attachments.length === 0) return [];
 
-    // 仅对”前缀就是数字”的文件名按数字排序，其余保持飞书原顺序，
-    // 避免”封面 (3).png”或”课程封面_11.png”被误排到最前面。
-    // 支持两种子序号风格（等价）：
-    //   小数点：0.1 < 1 < 1.1 < 1.2 < 2 < 11 < 12
-    //   括号：  1(1) < 1(2) / 1（1） < 1（2）（macOS/中文输入法重名风格）
-    //          允许数字与括号间有空格："0 (4).png"
+    // 排序规则见 orderAttachmentsForDownload：整组同模板按编号排；
+    // 否则只对纯编号文件名排序，其余保持飞书原顺序。
     const sorted = orderAttachmentsForDownload(attachments);
 
     const paths = [];
