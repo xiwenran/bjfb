@@ -365,7 +365,7 @@ function checkDuplicateNoteKey(items, violations) {
   }
 }
 
-function checkDuplicateTemplate(items, violations) {
+function checkDuplicateTemplate(items, violations, allowTemplateReuseAcrossTopics) {
   const byAccount = new Map();
   for (const item of items) {
     if (!byAccount.has(item.accountKey)) {
@@ -373,11 +373,14 @@ function checkDuplicateTemplate(items, violations) {
     }
     const { byTemplate } = byAccount.get(item.accountKey);
     if (!byTemplate.has(item.template)) byTemplate.set(item.template, []);
-    byTemplate.get(item.template).push(item.label);
+    byTemplate.get(item.template).push(item);
   }
   for (const { accountLabel, byTemplate } of byAccount.values()) {
-    for (const [template, labels] of byTemplate.entries()) {
-      if (labels.length > 1) {
+    for (const [template, entries] of byTemplate.entries()) {
+      if (entries.length > 1
+          && !(allowTemplateReuseAcrossTopics
+            && new Set(entries.map(entry => entry.topicGroupKey)).size === entries.length)) {
+        const labels = entries.map(entry => entry.label);
         violations.push({
           rule: 'duplicate_template',
           message: `账号 ${accountLabel} 内模板 "${template}" 重复出现 ${labels.length} 次：${labels.join('、')}`,
@@ -386,6 +389,28 @@ function checkDuplicateTemplate(items, violations) {
       }
     }
   }
+}
+
+function validateTemplateReuseAssignments(input, items) {
+  if (input.allowTemplateReuseAcrossTopics !== true) return false;
+  if (!Array.isArray(input.assignments) || input.assignments.length !== items.length) {
+    throw createInputError('allowTemplateReuseAcrossTopics 仅可与覆盖全部排期条目的显式 assignments 一起使用');
+  }
+  const unmatched = new Map(items.map(item => [`${item.platform}:${item.noteKeyCompare}`, item]));
+  for (const assignment of input.assignments) {
+    const noteKey = parseNoteKey(assignment?.noteKey);
+    const key = `${String(assignment?.platform || '').trim()}:${noteKey?.compareKey || ''}`;
+    const item = unmatched.get(key);
+    if (!item || item.accountKey !== `${item.platform}:${normalizeAccountName(assignment?.account)}`
+        || item.minute.slice(0, 10) !== String(assignment?.date || '').trim()) {
+      throw createInputError('allowTemplateReuseAcrossTopics 的 assignments 与本次 schedule 绑定不一致');
+    }
+    unmatched.delete(key);
+  }
+  if (unmatched.size > 0) {
+    throw createInputError('allowTemplateReuseAcrossTopics 的 assignments 未覆盖全部 schedule 条目');
+  }
+  return true;
 }
 
 // 规则 A（跨店铺同主题跨账号，硬违规）与规则 B（同店铺同主题跨账号，需人工审批）
@@ -590,6 +615,11 @@ function validateImportSchedule(input) {
     storeGroupByAccount: buildStoreGroupIndex(input.accountGroups),
   };
   const items = normalizeScheduleItems(input.schedule, resolveContext, violations);
+  if (input.allowTemplateReuseAcrossTopics !== undefined
+      && typeof input.allowTemplateReuseAcrossTopics !== 'boolean') {
+    throw createInputError('allowTemplateReuseAcrossTopics 必须是布尔值');
+  }
+  const allowTemplateReuseAcrossTopics = validateTemplateReuseAssignments(input, items);
 
   // 后续约束都建立在「格式已合法」的条目上；格式不合法的条目已经单独记为 format 违规。
   checkMinInterval(items, reservations, constraints.minSameAccountIntervalMinutes, violations);
@@ -597,7 +627,7 @@ function validateImportSchedule(input) {
   // uniqueMinuteAcrossBatch 只作为回显字段保留，不再决定是否执行本项检查。
   checkDuplicateMinute(items, reservations, violations);
   checkDuplicateNoteKey(items, violations);
-  checkDuplicateTemplate(items, violations);
+  checkDuplicateTemplate(items, violations, allowTemplateReuseAcrossTopics);
   // 规则 A/B/C/D 只消费带 storeGroup/topicKey 的主题一路（scope='topic'）。
   // 平台无关的时间占用（scope='time'）没有主题信息，进来会被 fail-closed 分支
   // 误记成违规，必须在这里滤掉。

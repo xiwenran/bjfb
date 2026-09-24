@@ -167,6 +167,54 @@ test('duplicate_template：同账号同template拒绝，不同template通过', (
   })), error => error.statusCode === 400 && violationRules(error).includes('duplicate_template'));
 });
 
+test('duplicate_template 例外：仅显式 assignments 与布尔开关允许不同课题复用', () => {
+  const schedule = [
+    item({ noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+    item({ noteKey: '主题B/1', publishTime: '2026-07-16 15:01' }),
+  ];
+  const assignments = [
+    { noteKey: '主题A/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+    { noteKey: '主题B/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+  ];
+  const input = baseInput({ schedule, assignments });
+  assert.throws(() => validateImportSchedule(input), error => violationRules(error).includes('duplicate_template'));
+  assert.equal(validateImportSchedule({ ...input, allowTemplateReuseAcrossTopics: true }).ok, true);
+  assert.throws(() => validateImportSchedule({ ...input, allowTemplateReuseAcrossTopics: 'true' }),
+    /必须是布尔值/);
+  assert.throws(() => validateImportSchedule({ ...input, assignments: undefined,
+    allowTemplateReuseAcrossTopics: true }), /显式 assignments/);
+  assert.throws(() => validateImportSchedule({ ...input, assignments: assignments.slice(0, 1),
+    allowTemplateReuseAcrossTopics: true }), /显式 assignments/);
+  assert.throws(() => validateImportSchedule({ ...input, assignments: [
+    assignments[0], { ...assignments[1], account: '账号2' },
+  ], allowTemplateReuseAcrossTopics: true }), /绑定不一致/);
+});
+
+test('duplicate_template 例外不放行同课题、重复 noteKey 与时间间隔违规', () => {
+  const assignments = [
+    { noteKey: '主题A/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+    { noteKey: '主题B/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+  ];
+  const schedule = [
+    item({ noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+    item({ noteKey: '主题B/1', publishTime: '2026-07-16 15:01' }),
+  ];
+  const common = { schedule, assignments, allowTemplateReuseAcrossTopics: true };
+  assert.throws(() => validateImportSchedule(baseInput({ ...common,
+    currentItems: [
+      { noteKey: '主题A/1', topicKey: '同课题' },
+      { noteKey: '主题B/1', topicKey: '同课题' },
+    ],
+  })), error => violationRules(error).includes('duplicate_template'));
+  assert.throws(() => validateImportSchedule(baseInput({ ...common,
+    schedule: [schedule[0], { ...schedule[1], noteKey: '主题A/1' }],
+    assignments: [assignments[0], { ...assignments[1], noteKey: '主题A/1' }],
+  })), /绑定不一致/);
+  assert.throws(() => validateImportSchedule(baseInput({ ...common,
+    schedule: [schedule[0], { ...schedule[1], publishTime: '2026-07-16 15:00' }],
+  })), error => violationRules(error).includes('min_interval'));
+});
+
 // ---------- 规则 A/B/C/D：跨账号同主题间隔（2026-08 重写，两个平台无条件执行）----------
 
 // 服务端权威分组数据：accountGroups（账号→店铺组）与 currentItems（noteKey→topicKey）。

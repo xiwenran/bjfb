@@ -84,6 +84,7 @@ import os
 import random
 import re
 import sys
+import unicodedata
 
 SUPPORTED_PLATFORMS = ("xiaohongshu", "douyin")
 
@@ -211,6 +212,23 @@ def build_assigned_note_pool(note_folders) -> tuple[list[tuple[str, str]], int]:
             raise ScheduleError(f"主题「{topic}」内部模板重复")
         pool.extend((topic, template) for template in templates)
     return pool, len(seen_topics)
+
+
+def build_effective_topic_keys(note_folders) -> dict[str, str]:
+    """按服务端 currentItems 的分组规则，为显式 noteKey 建立有效课题键。"""
+    topic_keys: dict[str, str] = {}
+    for folder in note_folders:
+        topic = str(folder["topic"]).strip()
+        group = folder.get("contentGroup") or folder.get("accountGroup") or folder.get("topic")
+        subtopic = folder.get("pptTopic") or folder.get("topicOverride")
+        raw_key = "/".join(str(value) for value in (group, subtopic) if value)
+        # server.js 的 normalizeTopicKey 与校验器 normalizeGroupKey：NFKC、空白折叠、大小写归一。
+        key = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", raw_key)).strip().lower()
+        if not key:
+            raise ScheduleError(f"allowTemplateReuseAcrossTopics 缺少有效课题映射：{topic}")
+        for template in folder["templates"]:
+            topic_keys[f"{topic}/{str(template).strip()}"] = key
+    return topic_keys
 
 
 # ---------------------------------------------------------------------------
@@ -504,11 +522,18 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     rng = random.Random(seed)
 
     explicit_assignments = payload.get("assignments")
+    template_reuse_flag = payload.get("allowTemplateReuseAcrossTopics", False)
+    if not isinstance(template_reuse_flag, bool):
+        raise ScheduleError("allowTemplateReuseAcrossTopics 必须是布尔值")
+    if template_reuse_flag and explicit_assignments is None:
+        raise ScheduleError("allowTemplateReuseAcrossTopics 仅可与显式 assignments 一起使用")
+    allow_template_reuse = template_reuse_flag and explicit_assignments is not None
     if explicit_assignments is None:
         pool, topic_count, template_count = build_note_pool(payload.get("noteFolders"))
     else:
         pool, topic_count = build_assigned_note_pool(payload.get("noteFolders"))
         template_count = 0
+    effective_topic_keys = build_effective_topic_keys(payload["noteFolders"]) if allow_template_reuse else {}
     pool_size = len(pool)
     all_note_keys = {f"{topic}/{template}" for topic, template in pool}
     # pool 按「主题为高位、模板为低位」排列（build_note_pool 保证），可以从中还原
@@ -633,6 +658,7 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
 
     platform_used_notekeys: dict[str, set[str]] = {p: set() for p in SUPPORTED_PLATFORMS}
     account_used_template: dict[str, set[str]] = {}
+    account_template_topic: dict[str, dict[str, set[str]]] = {}
     # (platform, topicKey) -> 已经放好的 [(storeGroup, accountKey, absMinute), ...]。
     # 分组键不再含店铺组：规则 A（跨店铺）需要跨店铺组也能比到一起才谈得上避让；
     # 规则 B（同店铺）不做时间避让（人工审批，不靠自动错开），挑选时按 storeGroup
@@ -661,10 +687,14 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         chosen = None
         if assigned_note_key:
             topic, template = assigned_note_key.rsplit("/", 1)
-            if template in used_templates:
+            effective_topic = effective_topic_keys.get(assigned_note_key) if allow_template_reuse else topic
+            if effective_topic is None:
+                raise ScheduleError(f"allowTemplateReuseAcrossTopics 缺少 noteKey 课题映射：{assigned_note_key}")
+            previous_topics = account_template_topic.setdefault(account["accountKey"], {}).get(template, set())
+            if previous_topics and (not allow_template_reuse or effective_topic in previous_topics):
                 raise ScheduleError(
                     f"assignments 违反同账号模板唯一约束：账号「{account['account']}」"
-                    f"重复使用模板「{template}」"
+                    f"重复使用模板「{template}」；仅显式允许的不同课题可复用"
                 )
             if assigned_note_key in used_notekeys:
                 raise ScheduleError(
@@ -728,6 +758,8 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         topic, template, note_key = chosen
         used_notekeys.add(note_key)
         used_templates.add(template)
+        effective_topic = effective_topic_keys.get(note_key, topic) if allow_template_reuse else topic
+        account_template_topic.setdefault(account["accountKey"], {}).setdefault(template, set()).add(effective_topic)
         task["topic"] = topic
         task["template"] = template
         task["noteKey"] = note_key
