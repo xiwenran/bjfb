@@ -399,7 +399,15 @@ npm run git:sync -- "提交信息"  # add + commit + push
 - `src/bitbrowser*.js`
 - `src/electron-main.js`
 
-**硬规则**：改动完成、commit 之后，**必须**走完以下三步，缺一不可：
+**硬规则**：改动完成、commit 之后，**必须**把新版装到本机并核对版本号。mac 上一律用一键安装脚本（2026-09-30 起）：
+
+```bash
+cd ~/zhifa && npm run install:mac-local
+```
+
+脚本一次完成：工作区不干净即停止 → `dist:mac` 打包（`predist` 钩子刷新 `src/build-info.json`）→ 新版先复制到临时位置 → 退出正在运行的知发（30 秒内退不出即停止，不强杀）→ 旧版移入废纸篓并替换 → 启动并核对已装版本号等于 HEAD → 等 3210 端口服务上线。输出 `✓ 安装完成：… 版本 <hash>` 才算装上；任何 `✗` 都要按提示处理后重跑，不得报告完成。用户说「装一下知发」「把知发新版装上」即指跑这个脚本。
+
+脚本跑不了时（如 Windows，或脚本本身出错）的手动备用流程，三步缺一不可：
 
 1. **重打包**：`npm run dist:mac`（或 `dist:win`），让 `predist` 钩子刷新 `src/build-info.json` 的 commit hash + buildTime
 2. **覆盖安装**：把 `dist/mac-arm64/知发.app` 拖到 `/Applications/` 替换旧版（macOS Finder 会问"替换"，点确认）
@@ -420,7 +428,7 @@ npm run git:sync -- "提交信息"  # add + commit + push
 
 改完 src/ 核心文件 → commit 之前，**必须**在回复中写一行：
 
-> 「src 核心改动自检：本次改了 [文件列表]，commit 后将执行 dist:mac 重打包 + 覆盖安装 + 核对 UI commit hash。」
+> 「src 核心改动自检：本次改了 [文件列表]，commit 后将执行 npm run install:mac-local（打包 + 覆盖安装 + 核对 commit hash）。」
 
 写不出这行 = 视为漏走了打包流程，禁止报告"完成"。豁免只有一种：用户明确说"先不打包，攒一批再装"。
 

@@ -381,6 +381,7 @@ AI 生成结果通过 system prompt 要求严格输出 JSON：
 ```bash
 npm start              # 启动 HTTP 服务（无 Electron）
 npm run desktop        # 启动 Electron 桌面版
+npm run install:mac-local  # 一键本机安装：打包→替换 /Applications→启动→核对版本号（改完 src 并 commit 后用这个）
 npm run dist:mac       # 本地打包 macOS zip
 npm run dist:win       # 本地打包 Windows portable exe
 npm run check:syntax   # 检查所有 src/*.js 语法
