@@ -319,6 +319,53 @@ class FeishuClient {
     return resp.data?.data?.record || null;
   }
 
+  // 按 recordId 批量查询（飞书 records/batch_get，每批最多 100 条，超过分批顺序请求）。
+  // 供 skill_upload.py 的 verify 子命令使用：verify 只关心"本次 create 产出的这批 recordId
+  // 是否真的写进了飞书"，不需要也不应该拉全表（表一大就超时，还会拖崩知发）。
+  // 飞书返回 code≠0 或网络错误时按 requestWithRetry/抛错的既有约定往上抛，不吞错、
+  // 不返回空结果冒充成功——调用方（skill_upload.py）据此决定是否 exit(1)。
+  // platform 未传时按旧版单表解析，与 getRecordById 一致。
+  // 返回 { records: [原始 record…], absent: [没查到的 recordId…] }：
+  // records 是飞书 batch_get 返回的原始 record 对象（供 parseRecord 使用），
+  // absent 由"请求的 id 集合 - 实际返回的 record_id 集合"算出，不依赖飞书响应里
+  // 是否显式声明缺失项（不同版本 API 对不存在的 id 处理方式可能不同，这样更稳）。
+  async getRecordsByIds(recordIds, platform) {
+    const ids = [...new Set((Array.isArray(recordIds) ? recordIds : []).map(id => String(id || '').trim()).filter(Boolean))];
+    if (ids.length === 0) return { records: [], absent: [] };
+
+    const { appToken, tableId, platformKey } = this._resolveTable(platform);
+    const BATCH_SIZE = 100;
+    const records = [];
+    const foundIds = new Set();
+
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batchIds = ids.slice(i, i + BATCH_SIZE);
+      const resp = await this.requestWithRetry(token =>
+        axios.post(
+          `https://open.feishu.cn/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/batch_get`,
+          { record_ids: batchIds, automatic_fields: true },
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+      );
+      const data = resp.data || {};
+      if (data.code && data.code !== 0) {
+        const err = new Error(`飞书 getRecordsByIds 失败: code=${data.code} msg=${data.msg || '未知'}`);
+        err.feishuCode = data.code;
+        err.feishuMsg = data.msg;
+        throw err;
+      }
+      const items = data.data?.records || [];
+      for (const item of items) {
+        if (platformKey) item.__platform = platformKey;
+        records.push(item);
+        if (item.record_id) foundIds.add(String(item.record_id));
+      }
+    }
+
+    const absent = ids.filter(id => !foundIds.has(id));
+    return { records, absent };
+  }
+
   // 启动期校验关键字段必须是 type=3 (单选)。
   // 任何一个字段不是单选 → 抛错；调用方负责让进程退出。
   async assertSingleSelectFields(fieldNames, platform) {

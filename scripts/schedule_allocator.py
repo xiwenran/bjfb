@@ -314,6 +314,8 @@ def build_reservations(value) -> list[dict]:
             "absMinute": abs_minute,
             "topicKey": str(item.get("topicKey") or "").strip(),
             "storeGroup": str(item.get("storeGroup") or "").strip(),
+            "storeGroupKnown": item.get("storeGroupKnown") is not False,
+            "constraintKind": str(item.get("constraintKind") or "").strip(),
         })
     return reservations
 
@@ -504,6 +506,12 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     rng = random.Random(seed)
 
     explicit_assignments = payload.get("assignments")
+    template_reuse_flag = payload.get("allowTemplateReuseAcrossTopics", False)
+    if not isinstance(template_reuse_flag, bool):
+        raise ScheduleError("allowTemplateReuseAcrossTopics 必须是布尔值")
+    if template_reuse_flag and explicit_assignments is None:
+        raise ScheduleError("allowTemplateReuseAcrossTopics 仅可与显式 assignments 一起使用")
+    allow_template_reuse = template_reuse_flag and explicit_assignments is not None
     if explicit_assignments is None:
         pool, topic_count, template_count = build_note_pool(payload.get("noteFolders"))
     else:
@@ -633,6 +641,7 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
 
     platform_used_notekeys: dict[str, set[str]] = {p: set() for p in SUPPORTED_PLATFORMS}
     account_used_template: dict[str, set[str]] = {}
+    account_template_topic: dict[str, dict[str, str]] = {}
     # (platform, topicKey) -> 已经放好的 [(storeGroup, accountKey, absMinute), ...]。
     # 分组键不再含店铺组：规则 A（跨店铺）需要跨店铺组也能比到一起才谈得上避让；
     # 规则 B（同店铺）不做时间避让（人工审批，不靠自动错开），挑选时按 storeGroup
@@ -640,13 +649,13 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     # 小红书），且无条件生效（不再由 topicDecision == 'auto_space' 门控）：规则 A 是
     # 硬约束，不管 topicDecision 取什么值都必须满足，构造期不主动避让只会让结果在
     # 服务端校验时被拒收。
-    topic_group_entries: dict[tuple[str, str], list[tuple[str, str, int]]] = {}
+    topic_group_entries: dict[tuple[str, str], list[tuple[str, str, int, str]]] = {}
     for reservation in reservations:
         if not reservation["storeGroup"] or not reservation["topicKey"]:
             continue
         key = (reservation["platform"], reservation["topicKey"])
         topic_group_entries.setdefault(key, []).append(
-            (reservation["storeGroup"], reservation["accountKey"], reservation["absMinute"])
+            (reservation["storeGroup"], reservation["accountKey"], reservation["absMinute"], reservation["constraintKind"])
         )
 
     for task in tasks:
@@ -661,10 +670,11 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         chosen = None
         if assigned_note_key:
             topic, template = assigned_note_key.rsplit("/", 1)
-            if template in used_templates:
+            previous_topic = account_template_topic.setdefault(account["accountKey"], {}).get(template)
+            if previous_topic is not None and (not allow_template_reuse or previous_topic == topic):
                 raise ScheduleError(
                     f"assignments 违反同账号模板唯一约束：账号「{account['account']}」"
-                    f"重复使用模板「{template}」"
+                    f"重复使用模板「{template}」；仅显式允许的不同课题可复用"
                 )
             if assigned_note_key in used_notekeys:
                 raise ScheduleError(
@@ -672,14 +682,16 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
                 )
             neighbours = topic_group_entries.get((account["platform"], topic), ())
             if spacing_aware and any(
-                other_store != account["storeGroup"]
+                (constraint_kind == "legacy_store_group_unknown" or other_store != account["storeGroup"])
                 and other_key != account["accountKey"]
                 and abs(other_minute - task["absMinute"]) < cross_store_gap
-                for other_store, other_key, other_minute in neighbours
+                for other_store, other_key, other_minute, constraint_kind in neighbours
             ):
+                unknown = next((n for n in neighbours if n[3] == "legacy_store_group_unknown" and n[1] != account["accountKey"] and abs(n[2] - task["absMinute"]) < cross_store_gap), None)
+                detail = f"；constraintKind=legacy_store_group_unknown，主题「{topic}」，历史发布时间 {datetime.datetime.fromtimestamp(unknown[2] * 60).strftime('%Y-%m-%d %H:%M')}" if unknown else ""
                 raise ScheduleError(
                     f"assignments 固定绑定违反跨店铺同主题间隔：账号「{account['account']}」"
-                    f"在 {task['publishTime']} 绑定「{assigned_note_key}」"
+                    f"在 {task['publishTime']} 绑定「{assigned_note_key}」{detail}"
                 )
             chosen = (topic, template, assigned_note_key)
         else:
@@ -694,10 +706,10 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
                     # 只避让「不同店铺 + 不同账号 + 间隔不足 cross_store_gap」的邻居——
                     # 同店铺的邻居走人工审批（规则 B），不受这里的时间避让影响。
                     if any(
-                        other_store != account["storeGroup"]
+                        (constraint_kind == "legacy_store_group_unknown" or other_store != account["storeGroup"])
                         and other_key != account["accountKey"]
                         and abs(other_minute - task["absMinute"]) < cross_store_gap
-                        for other_store, other_key, other_minute in neighbours
+                        for other_store, other_key, other_minute, constraint_kind in neighbours
                     ):
                         continue
                 for template_probe in range(template_count):
@@ -718,6 +730,19 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
             reason = "该账号已用过的模板与本平台已用过的 noteKey 撞满了所有候选"
             if spacing_aware:
                 reason += "，或剩余主题都与跨店铺同主题的其它账号在最小间隔内冲突"
+            unknown_conflicts = [
+                (topic, entry)
+                for (platform, topic), entries in topic_group_entries.items()
+                if platform == account["platform"]
+                for entry in entries
+                if entry[3] == "legacy_store_group_unknown"
+                and entry[1] != account["accountKey"]
+                and abs(entry[2] - task["absMinute"]) < cross_store_gap
+            ]
+            if unknown_conflicts:
+                unknown_topic, unknown_entry = unknown_conflicts[0]
+                unknown_time = datetime.datetime.fromtimestamp(unknown_entry[2] * 60).strftime('%Y-%m-%d %H:%M')
+                reason += f"；constraintKind=legacy_store_group_unknown，主题「{unknown_topic}」，历史发布时间 {unknown_time}"
             raise ScheduleError(
                 f"账号「{account['account']}」（{account['platform']}）在 {task['publishTime']} 这次发布"
                 f"找不到可用 noteKey：该平台 noteKey 池共 {pool_size} 个，剩余未用 {remaining_free} 个，"
@@ -728,12 +753,13 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
         topic, template, note_key = chosen
         used_notekeys.add(note_key)
         used_templates.add(template)
+        account_template_topic.setdefault(account["accountKey"], {}).setdefault(template, topic)
         task["topic"] = topic
         task["template"] = template
         task["noteKey"] = note_key
         if spacing_aware:
             topic_group_entries.setdefault((account["platform"], topic), []).append(
-                (account["storeGroup"], account["accountKey"], task["absMinute"])
+                (account["storeGroup"], account["accountKey"], task["absMinute"], "")
             )
 
     # ---- 第 4 步：兜底校验约束 1（同账号间隔）与规则 A（跨店铺同主题跨账号间隔） ----
@@ -818,10 +844,16 @@ def _validate_same_account_gap(account_abs_times: dict, min_gap: int) -> None:
     for account_key, entries in account_abs_times.items():
         ordered = sorted(entries, key=lambda pair: pair[0])
         for idx in range(len(ordered) - 1):
+            left_entry = ordered[idx][1]
+            right_entry = ordered[idx + 1][1]
+            left_is_existing = isinstance(left_entry.get("account"), str)
+            right_is_existing = isinstance(right_entry.get("account"), str)
+            if left_is_existing and right_is_existing:
+                continue
             gap = ordered[idx + 1][0] - ordered[idx][0]
             if gap < min_gap:
-                left_label = _entry_label(ordered[idx][1])
-                right_label = _entry_label(ordered[idx + 1][1])
+                left_label = _entry_label(left_entry)
+                right_label = _entry_label(right_entry)
                 raise ScheduleError(
                     f"账号「{account_key}」两次发布间隔不足：{left_label} 与 {right_label} "
                     f"仅间隔 {gap} 分钟，要求 ≥ {min_gap} 分钟（差 {min_gap - gap} 分钟）。"
@@ -851,6 +883,8 @@ def _validate_topic_spacing(tasks: list[dict], reservations: list[dict], cross_s
             "accountKey": account["accountKey"],
             "absMinute": task["absMinute"],
             "label": f"{account['account']}@{task['publishTime']}",
+            "constraintKind": "",
+            "isExisting": False,
         })
     for reservation in reservations:
         if not reservation["storeGroup"] or not reservation["topicKey"]:
@@ -861,18 +895,33 @@ def _validate_topic_spacing(tasks: list[dict], reservations: list[dict], cross_s
             "accountKey": reservation["accountKey"],
             "absMinute": reservation["absMinute"],
             "label": f"{reservation['account']}@{reservation['publishTime']}（既有排期）",
+            "constraintKind": reservation["constraintKind"],
+            "isExisting": True,
         })
 
     for (platform, topic_key), entries in groups.items():
         for a_idx in range(len(entries)):
             for b_idx in range(a_idx + 1, len(entries)):
                 a, b = entries[a_idx], entries[b_idx]
+                if a["isExisting"] and b["isExisting"]:
+                    continue
                 if a["accountKey"] == b["accountKey"]:
                     continue
-                if a["storeGroup"] == b["storeGroup"]:
+                unknown_legacy = (
+                    a["constraintKind"] == "legacy_store_group_unknown"
+                    or b["constraintKind"] == "legacy_store_group_unknown"
+                )
+                if not unknown_legacy and a["storeGroup"] == b["storeGroup"]:
                     continue  # 同店铺：规则 B，走人工审批，不做间隔校验
                 gap = abs(a["absMinute"] - b["absMinute"])
                 if gap < cross_store_gap:
+                    if unknown_legacy:
+                        unknown = a if a["constraintKind"] == "legacy_store_group_unknown" else b
+                        raise ScheduleError(
+                            f"constraintKind=legacy_store_group_unknown：平台「{platform}」主题「{topic_key}」"
+                            f"相关历史发布时间 {unknown['label']} 缺少可信店铺组，间隔 {gap} 分钟，"
+                            f"要求 ≥ {cross_store_gap} 分钟。"
+                        )
                     raise ScheduleError(
                         f"平台「{platform}」主题「{topic_key}」跨店铺跨账号间隔不足："
                         f"{a['label']}（店铺 {a['storeGroup']}）与 {b['label']}（店铺 {b['storeGroup']}）"

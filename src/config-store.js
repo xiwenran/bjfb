@@ -596,6 +596,29 @@ function readPlatformDefaultAuthorization(platform, paths = getRuntimePaths()) {
   return { allowed: true, accounts, accountsPath, reason: '' };
 }
 
+function readPlatformAccountPolicy(platform, paths = getRuntimePaths()) {
+  const authorization = readPlatformDefaultAuthorization(platform, paths);
+  if (!authorization.allowed) return { ...authorization, groupsByAccount: new Map() };
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(authorization.accountsPath, 'utf-8'));
+  } catch (error) {
+    return { ...authorization, allowed: false, reason: `账号授权文件无法解析：${error.message}`, groupsByAccount: new Map() };
+  }
+  const groupsByAccount = new Map();
+  const groups = isPlainObject(data.accountGroups) ? data.accountGroups : {};
+  for (const [groupName, platforms] of Object.entries(groups)) {
+    const accounts = isPlainObject(platforms) && Array.isArray(platforms[platform]) ? platforms[platform] : [];
+    for (const rawAccount of accounts) {
+      const account = typeof rawAccount === 'string' ? rawAccount.trim() : '';
+      if (!account) continue;
+      if (!groupsByAccount.has(account)) groupsByAccount.set(account, []);
+      groupsByAccount.get(account).push(String(groupName).trim());
+    }
+  }
+  return { ...authorization, groupsByAccount };
+}
+
 // 向后兼容：旧调用方保持原名可用
 function readXiaohongshuDefaultAuthorization(paths = getRuntimePaths()) {
   return readPlatformDefaultAuthorization('xiaohongshu', paths);
@@ -664,6 +687,7 @@ module.exports = {
   getRuntimePaths,
   readXiaohongshuDefaultAuthorization,
   readPlatformDefaultAuthorization,
+  readPlatformAccountPolicy,
   initializeAppStorage,
   loadConfig,
   saveConfig,

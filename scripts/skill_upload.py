@@ -57,15 +57,15 @@ def zhifa_post(path: str, payload: dict, timeout: int = 60) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             return json.loads(body)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"HTTP {e.code} 错误：{body}", file=sys.stderr)
+        sys.exit(1)
     except urllib.error.URLError as e:
         if "Connection refused" in str(e) or "connection refused" in str(e):
             print("知发服务未运行，请打开知发 App（localhost:3210）", file=sys.stderr)
         else:
             print(f"请求失败：{e}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        print(f"HTTP {e.code} 错误：{body}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -77,15 +77,15 @@ def zhifa_get(path: str, timeout: int = 30) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             return json.loads(body)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"HTTP {e.code} 错误：{body}", file=sys.stderr)
+        sys.exit(1)
     except urllib.error.URLError as e:
         if "Connection refused" in str(e) or "connection refused" in str(e):
             print("知发服务未运行，请打开知发 App（localhost:3210）", file=sys.stderr)
         else:
             print(f"请求失败：{e}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        print(f"HTTP {e.code} 错误：{body}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -571,6 +571,15 @@ def extract_template_number(note_key: str) -> int | None:
     return int(matches[-1]) if matches else None
 
 
+def extract_template_identity(note_key: str) -> str | None:
+    """返回 noteKey 的完整模板末段，供多样性去重。"""
+    parts = str(note_key).rsplit("/", 1)
+    if len(parts) != 2:
+        return None
+    template = parts[1].strip()
+    return template or None
+
+
 def platform_account_values(record: dict) -> list[tuple[str, str, str]]:
     accounts = []
     for key, platform in (("xiaohongshuAccount", "小红书"), ("douyinAccount", "抖音")):
@@ -863,11 +872,16 @@ def validate_records_for_dry_run(records: list, constraints: dict | None = None)
             if not template_numbers:
                 violations.append(f"{account} 没有可解析的 noteKey 模板编号")
                 continue
+            template_identities = [
+                identity
+                for note_key in note_keys
+                if (identity := extract_template_identity(note_key)) is not None
+            ]
             num_topics = len({strip_template_suffix(note_key) for note_key in note_keys})
             num_templates = max(template_numbers)
             max_variety = min(num_topics, num_templates)
             min_required = max(max_variety - 1, max_variety // 2)
-            used_variety = len(set(template_numbers))
+            used_variety = len(set(template_identities))
             if used_variety < min_required:
                 violations.append(
                     f"{account} 模板多样性严重不足：使用 {used_variety} 种，至少需要 {min_required} 种（满分 {max_variety}）"
@@ -1923,6 +1937,7 @@ def cmd_postprocess(
     results_json_file: str,
     output_file: str | None = None,
     batch_size: int = 10,
+    include_skipped: bool = False,
 ) -> None:
     records_json_file = os.path.expanduser(records_json_file)
     results_json_file = os.path.expanduser(results_json_file)
@@ -1954,11 +1969,30 @@ def cmd_postprocess(
         for r in records
         if isinstance(r, dict) and r.get("noteKey")
     }
+    # 断点续传场景：create 被中断后重跑，先前已建的记录会被服务端指纹去重判为
+    # skipped 而非 success。这些记录同样是本轮建的、同样没做过后处理，笔记主题
+    # 不清空会被调度器的 AI 写作扫描覆盖标题。--include-skipped 把它们一并纳入。
+    # 安全边界：只收 existingStatus 为空或「待处理」的，已进入发布流程的记录不碰，
+    # 避免把「待发布/已发布」状态回写成「待处理」触发重复发布。
+    SAFE_EXISTING_STATUS = {"", "待处理"}
+    skipped_included = 0
+    skipped_excluded: list = []
     updates = []
     for i, item in enumerate(result_list):
         if not isinstance(item, dict):
             continue
-        if item.get("status") != "success" or not item.get("recordId"):
+        status = item.get("status")
+        if not item.get("recordId"):
+            continue
+        if status == "skipped":
+            if not include_skipped:
+                continue
+            existing = str(item.get("existingStatus") or "").strip()
+            if existing not in SAFE_EXISTING_STATUS:
+                skipped_excluded.append(f"{item.get('recordId')}({existing})")
+                continue
+            skipped_included += 1
+        elif status != "success":
             continue
         retry_key = str(item.get("__retryKey") or "")
         note_key = str(item.get("noteKey") or "")
@@ -1981,6 +2015,14 @@ def cmd_postprocess(
     total_updated = 0
     failed_updates = []
     print(f"准备后处理 {len(updates)} 条记录，分 {len(batches)} 批，每批最多 {batch_size} 条")
+    if include_skipped:
+        print(f"  含断点续传补处理的 skipped 记录 {skipped_included} 条")
+    if skipped_excluded:
+        print(
+            f"  ⚠️ 另有 {len(skipped_excluded)} 条 skipped 记录已进入发布流程，"
+            f"未回写状态：{'、'.join(skipped_excluded[:10])}",
+            file=sys.stderr,
+        )
     for batch_idx, batch in enumerate(batches, 1):
         updated, rows, failed = _postprocess_send_with_split(batch)
         merged_results.extend(rows)
@@ -2571,10 +2613,45 @@ def cmd_export_manual(
     print(f"（发布清单已写入 {csv_path}）")
 
 
+def _verify_query_platform(platform_key: str, record_ids: list) -> set:
+    """按平台调用 /api/records/by-ids 查询实际存在的 recordId 集合。
+
+    platform_key 为 "unknown"（create 结果没打 __platform，旧结果文件）时不传
+    platform 参数，按服务端默认表查，与旧版单表模式行为一致。
+    接口调用失败（非 200 / success=false / 网络错误 / 超时）时打印原因并
+    sys.exit(1)，不回退到 /api/records?status=all 拉全表。
+    """
+    if not record_ids:
+        return set()
+    ids = sorted({str(rid) for rid in record_ids})
+    payload_platform = None if platform_key == "unknown" else platform_key
+    found: set = set()
+    CHUNK = 2000  # 与服务端 /api/records/by-ids 的单次请求上限对齐
+    for i in range(0, len(ids), CHUNK):
+        chunk = ids[i:i + CHUNK]
+        # 服务端内部还会把这一批按 100 条切给飞书 batch_get 顺序请求，
+        # 按估算的服务端批数给足超时，至少 60 秒。
+        server_batches = (len(chunk) + 99) // 100
+        timeout = max(60, server_batches * 15)
+        payload = {"recordIds": chunk}
+        if payload_platform:
+            payload["platform"] = payload_platform
+        resp = zhifa_post("/api/records/by-ids", payload, timeout=timeout)
+        if not resp.get("success"):
+            label = _PLATFORM_TABLE_LABEL.get(platform_key, platform_key)
+            print(f"知发 /api/records/by-ids 返回失败（{label}）：{resp}", file=sys.stderr)
+            sys.exit(1)
+        for rec in resp.get("data", []):
+            rid = rec.get("recordId") or rec.get("record_id") or ""
+            if rid:
+                found.add(str(rid))
+    return found
+
+
 def cmd_verify(create_results_json: str, output_file: str | None = None) -> None:
     """
     verify 子命令：读取 cmd_create 产出的上传结果 JSON，
-    查知发 /api/records?status=all 按 recordId 比对，
+    按 recordId 批量查 /api/records/by-ids（按 __platform 分桶查询，不拉全表）比对，
     落盘结构化 verify JSON 凭据。
 
     使用 recordId 而非 noteKey，是因为 postprocess 会清空飞书「笔记主题」字段，
@@ -2620,22 +2697,13 @@ def cmd_verify(create_results_json: str, output_file: str | None = None) -> None
     expected_count = len(expected_record_ids)
     batch_id = os.path.basename(create_results_json)
 
-    print(f"从 create 结果读取到 {expected_count} 条成功记录（按 recordId），正在查询知发飞书记录...")
+    print(f"从 create 结果读取到 {expected_count} 条成功记录（按 recordId），正在按平台分桶查询知发飞书记录...")
 
-    # 查知发 /api/records?status=all 获取当前所有记录（双表模式下服务端已合并两张表的记录）
-    resp = zhifa_get("/api/records?status=all")
-    if not resp.get("success"):
-        print(f"知发 API 返回失败：{resp}", file=sys.stderr)
-        sys.exit(1)
-
-    all_feishu_records = resp.get("data", [])
-
-    # 按 recordId 构建实际存在集合（parseRecord 返回字段 recordId = record.record_id）
+    # 按 __platform 分桶调用 /api/records/by-ids（只查本次 recordId，不拉全表）；
+    # 各桶返回的实际存在集合取并集，即为本批次全部命中的 recordId。
     actual_record_ids: set[str] = set()
-    for rec in all_feishu_records:
-        rid = rec.get("recordId") or rec.get("record_id") or ""
-        if rid:
-            actual_record_ids.add(str(rid))
+    for platform_key, ids in expected_ids_by_platform.items():
+        actual_record_ids |= _verify_query_platform(platform_key, list(ids))
 
     missing = sorted(expected_record_ids - actual_record_ids)
     actual_found = len(expected_record_ids & actual_record_ids)
@@ -2775,6 +2843,12 @@ def main() -> None:
     postprocess_parser.add_argument("results_json", help="create-records 返回结果 JSON 文件路径")
     postprocess_parser.add_argument("--output", default=None, help="输出后处理结果 JSON 路径")
     postprocess_parser.add_argument("--batch-size", type=int, default=10, help="每批后处理记录数，默认 10（每条 2 次飞书调用，批次过大易触发服务端 500）")
+    postprocess_parser.add_argument(
+        "--include-skipped",
+        action="store_true",
+        help="断点续传专用：把 create 因指纹去重判为 skipped 的记录也纳入后处理"
+             "（只收 existingStatus 为空或「待处理」的，已进入发布流程的不碰）",
+    )
 
     summarize_parser = subparsers.add_parser("summarize-postprocess", help="汇总一个或多个 postprocess 结果 JSON")
     summarize_parser.add_argument("files", nargs="+", help="postprocess 结果 JSON 路径")
@@ -2880,7 +2954,13 @@ def main() -> None:
             output_file=args.output,
         )
     elif args.command == "postprocess":
-        cmd_postprocess(args.records_json, args.results_json, output_file=args.output, batch_size=args.batch_size)
+        cmd_postprocess(
+            args.records_json,
+            args.results_json,
+            output_file=args.output,
+            batch_size=args.batch_size,
+            include_skipped=args.include_skipped,
+        )
     elif args.command == "summarize-postprocess":
         cmd_summarize_postprocess(args.files, output_file=args.output)
     elif args.command == "export-preview":

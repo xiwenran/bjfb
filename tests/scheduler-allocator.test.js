@@ -167,6 +167,54 @@ test('duplicate_template：同账号同template拒绝，不同template通过', (
   })), error => error.statusCode === 400 && violationRules(error).includes('duplicate_template'));
 });
 
+test('duplicate_template 例外：仅显式 assignments 与布尔开关允许不同课题复用', () => {
+  const schedule = [
+    item({ noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+    item({ noteKey: '主题B/1', publishTime: '2026-07-16 15:01' }),
+  ];
+  const assignments = [
+    { noteKey: '主题A/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+    { noteKey: '主题B/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+  ];
+  const input = baseInput({ schedule, assignments });
+  assert.throws(() => validateImportSchedule(input), error => violationRules(error).includes('duplicate_template'));
+  assert.equal(validateImportSchedule({ ...input, allowTemplateReuseAcrossTopics: true }).ok, true);
+  assert.throws(() => validateImportSchedule({ ...input, allowTemplateReuseAcrossTopics: 'true' }),
+    /必须是布尔值/);
+  assert.throws(() => validateImportSchedule({ ...input, assignments: undefined,
+    allowTemplateReuseAcrossTopics: true }), /显式 assignments/);
+  assert.throws(() => validateImportSchedule({ ...input, assignments: assignments.slice(0, 1),
+    allowTemplateReuseAcrossTopics: true }), /显式 assignments/);
+  assert.throws(() => validateImportSchedule({ ...input, assignments: [
+    assignments[0], { ...assignments[1], account: '账号2' },
+  ], allowTemplateReuseAcrossTopics: true }), /绑定不一致/);
+});
+
+test('duplicate_template 例外不放行同课题、重复 noteKey 与时间间隔违规', () => {
+  const assignments = [
+    { noteKey: '主题A/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+    { noteKey: '主题B/1', platform: 'xiaohongshu', account: '账号1', date: '2026-07-16' },
+  ];
+  const schedule = [
+    item({ noteKey: '主题A/1', publishTime: '2026-07-16 09:00' }),
+    item({ noteKey: '主题B/1', publishTime: '2026-07-16 15:01' }),
+  ];
+  const common = { schedule, assignments, allowTemplateReuseAcrossTopics: true };
+  assert.throws(() => validateImportSchedule(baseInput({ ...common,
+    currentItems: [
+      { noteKey: '主题A/1', topicKey: '同课题' },
+      { noteKey: '主题B/1', topicKey: '同课题' },
+    ],
+  })), error => violationRules(error).includes('duplicate_template'));
+  assert.throws(() => validateImportSchedule(baseInput({ ...common,
+    schedule: [schedule[0], { ...schedule[1], noteKey: '主题A/1' }],
+    assignments: [assignments[0], { ...assignments[1], noteKey: '主题A/1' }],
+  })), /绑定不一致/);
+  assert.throws(() => validateImportSchedule(baseInput({ ...common,
+    schedule: [schedule[0], { ...schedule[1], publishTime: '2026-07-16 15:00' }],
+  })), error => violationRules(error).includes('min_interval'));
+});
+
 // ---------- 规则 A/B/C/D：跨账号同主题间隔（2026-08 重写，两个平台无条件执行）----------
 
 // 服务端权威分组数据：accountGroups（账号→店铺组）与 currentItems（noteKey→topicKey）。
@@ -273,6 +321,26 @@ test('规则 B：existingReservations 同店铺同主题同样只产出 approval
   }));
   assert.equal(result.ok, true);
   assert.equal(result.approvals.length, 1);
+});
+
+test('legacy unknown 同题历史 2880 分钟内定点拒收，达到 2880 分钟通过且不进入审批', () => {
+  const reservation = [{
+    platform: 'xiaohongshu', account: '停用号', publishTime: '2026-07-16 09:00',
+    topicKey: '主题A', storeGroup: '__legacy_unknown__:xiaohongshu:rec_old:停用号',
+    storeGroupKnown: false, constraintKind: 'legacy_store_group_unknown',
+  }];
+  assert.throws(() => validateImportSchedule(baseInput({
+    schedule: [item({ account: '账号1', publishTime: '2026-07-17 09:00' })],
+    existingReservations: reservation,
+  })), error => error.statusCode === 400 && violationRules(error).includes('legacy_store_group_unknown'));
+
+  const ok = validateImportSchedule(baseInput({
+    schedule: [item({ account: '账号1', publishTime: '2026-07-18 09:00' })],
+    existingReservations: reservation,
+  }));
+  assert.equal(ok.ok, true);
+  assert.equal(ok.approvals.length, 0);
+  assert.ok(ok.topicVolume.some(item => item.topicKey === '主题A' && item.count === 2));
 });
 
 test('规则 A/B：跨账号同主题分组不再跨平台——小红书和抖音各自独立比较', () => {

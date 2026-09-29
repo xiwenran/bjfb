@@ -298,7 +298,7 @@ test('indexed history rejects malformed record, platform list, and list item', (
   assert.deepEqual(collectIndexedReservations(args({})), []);
 });
 
-test('indexed reservation rejects missing store group, account, or valid time', () => {
+test('indexed reservation marks missing store group as legacy unknown, while invalid account/time still fail closed', () => {
   const index = {
     version: 1,
     records: { rec_1: validEntry({ topicKey: '定语从句' }) },
@@ -310,8 +310,13 @@ test('indexed reservation rejects missing store group, account, or valid time', 
     accountGroups: { 可乐: '教师店' },
   });
 
+  const unknown = collectIndexedReservations(makeArgs({
+    recordId: 'rec_1', xiaohongshuAccount: '未知账号', xiaohongshuStatus: '待发布', publishTime: 1784051200000,
+  }));
+  assert.equal(unknown[0].constraintKind, 'legacy_store_group_unknown');
+  assert.equal(unknown[0].storeGroupKnown, false);
+
   for (const [record, message] of [
-    [{ recordId: 'rec_1', xiaohongshuAccount: '未知账号', xiaohongshuStatus: '待发布', publishTime: 1784051200000 }, /未配置店铺组/],
     // collectIndexedReservations 双平台化之后，账号缺失的报错文案从"缺少小红书账号"
     // 改成了平台无关的"缺少账号"（buildReservation 内部现在两个平台共用同一段逻辑）。
     [{ recordId: 'rec_1', xiaohongshuAccount: '', xiaohongshuStatus: '待发布', publishTime: 1784051200000 }, /缺少账号/],
@@ -324,6 +329,36 @@ test('indexed reservation rejects missing store group, account, or valid time', 
       return true;
     });
   }
+});
+
+test('lifecycle collector ignores unrelated topics and inactive pending, but keeps publishing and related published unknown', () => {
+  const topicIndex = { version: 1, records: {
+    related: validEntry({ topicKey: '相关主题' }),
+    unrelated: validEntry({ topicKey: '无关主题' }),
+  } };
+  const args = {
+    topicIndex,
+    relevantTopicKeys: ['相关主题'],
+    accountGroupsByPlatform: { xiaohongshu: new Map() },
+    authorizedAccountsByPlatform: { xiaohongshu: new Set(['在用号']) },
+    feishuRecords: [
+      { recordId: 'related', xiaohongshuAccount: '停用号', xiaohongshuStatus: '待发布', publishTime: 1784051200000 },
+      { recordId: 'unrelated', xiaohongshuAccount: '停用号', xiaohongshuStatus: '发布中', publishTime: 1784051200000 },
+    ],
+    history: { related: { 小红书: [{ accountName: '停用号', at: 1784051200000 }] } },
+  };
+  const reservations = collectIndexedReservations(args);
+  assert.equal(reservations.length, 1);
+  assert.equal(reservations[0].state, 'published');
+  assert.equal(reservations[0].constraintKind, 'legacy_store_group_unknown');
+
+  const publishing = collectIndexedReservations({
+    ...args,
+    history: {},
+    feishuRecords: [{ recordId: 'related', xiaohongshuAccount: '停用号', xiaohongshuStatus: '发布中', publishTime: 1784051200000 }],
+  });
+  assert.equal(publishing.length, 1);
+  assert.equal(publishing[0].state, 'scheduled');
 });
 
 test('indexed reservation accepts only strict millisecond timestamps within 2000 through 2099', () => {

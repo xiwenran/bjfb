@@ -18,6 +18,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from schedule_allocator import (  # noqa: E402
     ScheduleError,
+    _validate_same_account_gap,
+    _validate_topic_spacing,
     allocate_schedule,
     parse_publish_time_to_abs_minute,
 )
@@ -81,6 +83,50 @@ def abs_minute(publish_time: str) -> int:
 
 class ConstraintTests(unittest.TestCase):
     """五条硬约束逐条验证。"""
+
+    def test_existing_existing_pairs_are_ignored_but_pairs_with_new_items_are_checked(self):
+        old_1 = {"account": "芝士就是力量", "publishTime": "2026-09-08 21:46"}
+        old_2 = {"account": "芝士就是力量", "publishTime": "2026-09-08 23:15"}
+        new_1 = {"account": {"account": "芝士就是力量"}, "noteKey": "topic/new1", "publishTime": "2026-09-09 00:00"}
+        new_2 = {"account": {"account": "芝士就是力量"}, "noteKey": "topic/new2", "publishTime": "2026-09-09 01:00"}
+        old_1_minute = abs_minute(old_1["publishTime"])
+        old_2_minute = abs_minute(old_2["publishTime"])
+        new_1_minute = abs_minute(new_1["publishTime"])
+        new_2_minute = abs_minute(new_2["publishTime"])
+
+        _validate_same_account_gap({"xiaohongshu:芝士就是力量": [(old_1_minute, old_1), (old_2_minute, old_2)]}, 361)
+        with self.assertRaises(ScheduleError):
+            _validate_same_account_gap({"xiaohongshu:芝士就是力量": [
+                (old_1_minute, old_1), (old_2_minute, old_2), (new_1_minute, new_1),
+            ]}, 361)
+        with self.assertRaises(ScheduleError):
+            _validate_same_account_gap({"xiaohongshu:芝士就是力量": [
+                (new_1_minute, new_1), (new_2_minute, new_2),
+            ]}, 361)
+
+        topic_old_1 = {
+            "platform": "xiaohongshu", "account": "小晴老师", "accountKey": "xiaohongshu:小晴老师",
+            "publishTime": "2026-09-08 19:44", "absMinute": abs_minute("2026-09-08 19:44"),
+            "topicKey": "小狗学叫", "storeGroup": "引流号组", "constraintKind": "",
+        }
+        topic_old_2 = {
+            "platform": "xiaohongshu", "account": "麦麦老师", "accountKey": "xiaohongshu:麦麦老师",
+            "publishTime": "2026-09-09 06:54", "absMinute": abs_minute("2026-09-09 06:54"),
+            "topicKey": "小狗学叫", "storeGroup": "小茜老师店铺", "constraintKind": "",
+        }
+        topic_new_1 = {
+            "account": {"platform": "xiaohongshu", "account": "新号甲", "accountKey": "xiaohongshu:新号甲", "storeGroup": "新店一"},
+            "topic": "小狗学叫", "publishTime": "2026-09-09 07:30", "absMinute": abs_minute("2026-09-09 07:30"),
+        }
+        topic_new_2 = {
+            "account": {"platform": "xiaohongshu", "account": "新号乙", "accountKey": "xiaohongshu:新号乙", "storeGroup": "新店二"},
+            "topic": "小狗学叫", "publishTime": "2026-09-09 08:30", "absMinute": abs_minute("2026-09-09 08:30"),
+        }
+        _validate_topic_spacing([], [topic_old_1, topic_old_2], 2880)
+        with self.assertRaises(ScheduleError):
+            _validate_topic_spacing([topic_new_1], [topic_old_1, topic_old_2], 2880)
+        with self.assertRaises(ScheduleError):
+            _validate_topic_spacing([topic_new_1, topic_new_2], [], 2880)
 
     def test_constraint1_same_account_interval(self):
         """约束 1：同平台同账号任意两条间隔 >= minGap。"""
@@ -333,6 +379,29 @@ class ExplicitAssignmentTests(unittest.TestCase):
             allocate_schedule(self.fixed_payload(assignments=assignments), CONSTRAINTS)
         self.assertIn("模板唯一", str(ctx.exception))
 
+    def test_explicit_cross_topic_template_reuse_requires_flag(self):
+        assignments = self.fixed_payload()["assignments"]
+        assignments[1] = {**assignments[1], "noteKey": "topic1/T0"}
+        assignments[3] = {**assignments[3], "noteKey": "topic1/U1"}
+        with self.assertRaisesRegex(ScheduleError, "模板唯一"):
+            allocate_schedule(self.fixed_payload(assignments=assignments), CONSTRAINTS)
+        result = allocate_schedule(
+            self.fixed_payload(assignments=assignments, allowTemplateReuseAcrossTopics=True),
+            CONSTRAINTS,
+        )
+        self.assertEqual(len(result["schedule"]), 4)
+        self.assertEqual(len({item["noteKey"] for item in result["schedule"]}), 4)
+        self.assertEqual(
+            {item["topic"] for item in result["schedule"] if item["account"] == "xhs_a"},
+            {"topic0", "topic1"},
+        )
+
+    def test_template_reuse_flag_is_explicit_and_assignment_only(self):
+        with self.assertRaisesRegex(ScheduleError, "仅可与显式 assignments"):
+            allocate_schedule(base_payload(allowTemplateReuseAcrossTopics=True), CONSTRAINTS)
+        with self.assertRaisesRegex(ScheduleError, "必须是布尔值"):
+            allocate_schedule(self.fixed_payload(allowTemplateReuseAcrossTopics="true"), CONSTRAINTS)
+
     def test_explicit_assignments_keep_cross_store_topic_spacing(self):
         payload = base_payload(
             accounts={
@@ -461,6 +530,26 @@ class RuleATests(unittest.TestCase):
     """规则 A（2026-08 重写）专项正向用例：跨店铺 2880 分钟避让、同店铺不避让、抖音纳入、
     店铺组映射无条件必填。跟 ConstraintTests 里的 test_rule_a_* 側重"事后校验硬约束"不同，
     这里侧重"给定拓扑，Python 构造器能不能正确产出/正确拒绝"。"""
+
+    def test_legacy_unknown_fixed_assignment_24h_rejected_and_60h_allowed(self):
+        def payload_at(publish_time):
+            return base_payload(
+                accounts={"xiaohongshu_regular": ["xhs_a"], "xiaohongshu_special": [], "douyin": []},
+                accountGroups={"xhs_a": "store1"},
+                timeSlots={"regular": [publish_time], "special": []},
+                noteFolders=[{"topic": "topic0", "templates": ["T0"]}],
+                existingReservations=[{
+                    "platform": "xiaohongshu", "account": "retired", "publishTime": "2026-08-01 09:00",
+                    "topicKey": "topic0", "storeGroup": "__legacy_unknown__:xiaohongshu:old:retired",
+                    "storeGroupKnown": False, "constraintKind": "legacy_store_group_unknown",
+                }],
+            )
+        with self.assertRaises(ScheduleError) as ctx:
+            allocate_schedule(payload_at("2026-08-02 09:00"), CONSTRAINTS)
+        self.assertIn("legacy_store_group_unknown", str(ctx.exception))
+        self.assertIn("topic0", str(ctx.exception))
+        result = allocate_schedule(payload_at("2026-08-03 21:00"), CONSTRAINTS)
+        self.assertEqual(len(result["schedule"]), 1)
 
     def test_cross_store_topic_gap_is_avoided_during_construction(self):
         """跨店铺同主题跨账号：构造期主动避让应该成功产出满足 2880 分钟间隔的排期，

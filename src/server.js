@@ -28,6 +28,7 @@ const {
   upsertTopicIndexRecord,
   appendDiagnosticEvent,
   saveRuntimeState,
+  readPlatformAccountPolicy,
 } = require('./config-store.js');
 const { generateContent, testConnection, validateGenerated } = require('./ai-writer.js');
 const { getAvailableArtifacts } = require('./artifact-lookup.js');
@@ -41,6 +42,8 @@ const {
 } = require('./topic-spacing-guard.js');
 const {
   collectPlatformReservations,
+  collectIndexedPublishedTimeReservations,
+  mergeTimeReservations,
   buildBatchWindow,
   collectPlanTimestamps,
 } = require('./platform-reservations.js');
@@ -427,9 +430,29 @@ function buildAssignmentAwareTopicFingerprint(payload, assignedItems) {
 
 async function loadTopicSpacingContext(payload) {
   const candidateAccountsByPlatform = normalizeTopicSpacingInput(payload);
+  const policies = Object.fromEntries(['xiaohongshu', 'douyin'].map(platform => [
+    platform,
+    readPlatformAccountPolicy(platform),
+  ]));
+  const currentAccountGroups = {};
+  for (const platform of ['xiaohongshu', 'douyin']) {
+    const policy = policies[platform];
+    if (!policy.allowed && candidateAccountsByPlatform[platform].length > 0) throw createConfigError(policy.reason);
+    for (const account of candidateAccountsByPlatform[platform]) {
+      if (!policy.accounts.has(account)) {
+        throw createConfigError(`本轮选中账号“${account}”不在 ${platform}.default`);
+      }
+      const groups = policy.groupsByAccount.get(account) || [];
+      if (groups.length !== 1) {
+        throw createConfigError(`本轮选中账号“${account}”必须且只能属于一个店铺组，当前 ${groups.length} 个`);
+      }
+      currentAccountGroups[account] = groups[0];
+    }
+  }
   // describeCurrentTopics 的第二个参数其实没在函数体内使用（历史遗留的死参数，不在本次
   // 范围锁内，不顺手清理），这里只是保持调用形态不变。
   const { topicGroups, currentItems } = describeCurrentTopics(payload, candidateAccountsByPlatform);
+  const relevantTopicKeys = topicGroups.map(item => item.topicKey);
   let topicIndex;
   try {
     topicIndex = readTopicIndex();
@@ -478,31 +501,59 @@ async function loadTopicSpacingContext(payload) {
   }
   // 不在这里做时间窗过滤：本函数被 topic-spacing-check 和 schedule 两条路由共用，
   // 两者能拿到的「本批时间范围」不同，各自在路由里按自己的范围裁剪。
-  const timeReservations = collectPlatformReservations({ feishuRecords: allParsedRecords });
+  const authorizedAccountsByPlatform = Object.fromEntries(
+    Object.entries(policies).map(([platform, policy]) => [platform, policy.accounts])
+  );
+  const accountGroupsByPlatform = Object.fromEntries(
+    Object.entries(policies).map(([platform, policy]) => [platform, policy.groupsByAccount])
+  );
+  const activeTimeReservations = collectPlatformReservations({
+    feishuRecords: allParsedRecords,
+    authorizedAccountsByPlatform,
+  });
+  const publishedTimeReservations = collectIndexedPublishedTimeReservations({ topicIndex, history });
+  const timeReservations = mergeTimeReservations(activeTimeReservations, publishedTimeReservations);
   const reservations = collectIndexedReservations({
     topicIndex,
     feishuRecords: parsedRecords,
     history,
-    accountGroups: payload.accountGroups,
+    relevantTopicKeys,
+    accountGroupsByPlatform,
+    authorizedAccountsByPlatform,
   });
+  const ignoredInactivePending = [];
+  for (const record of allParsedRecords) {
+    for (const [platform, fields] of Object.entries({
+      xiaohongshu: { account: 'xiaohongshuAccount', status: 'xiaohongshuStatus' },
+      douyin: { account: 'douyinAccount', status: 'douyinStatus' },
+    })) {
+      const account = String(record?.[fields.account] || '').trim();
+      const status = String(record?.[fields.status] || '').trim();
+      if (account && ['待处理', '待发布'].includes(status) && !authorizedAccountsByPlatform[platform].has(account)) {
+        ignoredInactivePending.push({ recordId: record.recordId, platform, account, status });
+      }
+    }
+  }
   const assignedItems = payload.assignments === undefined
     ? null
     : buildAssignedConflictItems({
         assignments: payload.assignments,
         currentItems,
         candidateAccountsByPlatform,
-        accountGroups: payload.accountGroups,
+        accountGroups: currentAccountGroups,
       });
   const conflictItems = assignedItems || buildPotentialConflictItems({
     topicGroups,
     candidateAccountsByPlatform,
-    accountGroups: payload.accountGroups,
+    accountGroups: currentAccountGroups,
     reservations,
   });
   return {
     currentItems,
     reservations,
     timeReservations,
+    currentAccountGroups,
+    ignoredInactivePending,
     unparsableRecordIds,
     conflicts: findCrossAccountTopicConflicts({ currentItems: conflictItems, reservations }),
     inputFingerprint: buildAssignmentAwareTopicFingerprint(payload, assignedItems),
@@ -518,6 +569,13 @@ function scopeTimeReservations(timeReservations, timestamps) {
   return (timeReservations || []).filter(item => (
     item.timestamp >= window.windowStart && item.timestamp <= window.windowEnd
   ));
+}
+
+function formatReservationMinute(value) {
+  if (typeof value === 'string') return value;
+  const date = new Date(value);
+  const pad = part => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 // 安全：维护用户已扫描的素材根目录白名单（in-memory，进程重启后清空）。
@@ -917,6 +975,36 @@ const server = http.createServer(async (req, res) => {
         : await feishu.getUnpublishedRecords();
       const decorated = records.map(r => decorateRecord(feishu.parseRecord(r)));
       return sendJson(res, { success: true, data: decorated });
+    } catch (e) {
+      return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
+    }
+  }
+
+  // 按 recordId 批量查询（供 skill_upload.py 的 verify 子命令核对本次 create 产出的
+  // 记录是否真的写进了飞书，避免像 /api/records?status=all 那样拉全表——表大了会超时，
+  // 还会拖崩知发本体）。platform 可选：'xiaohongshu'|'douyin'，未传时按旧版单表解析。
+  if (pathname === '/api/records/by-ids' && req.method === 'POST') {
+    try {
+      ensureFeishuConfigReady();
+      const body = JSON.parse(await readBody(req) || '{}');
+      const { recordIds, platform } = body;
+
+      if (!Array.isArray(recordIds) || recordIds.length === 0
+        || !recordIds.every(id => typeof id === 'string' && id.trim())) {
+        return sendJson(res, { success: false, error: 'recordIds 必须是非空字符串数组' }, 400);
+      }
+      const uniqueIds = [...new Set(recordIds.map(id => id.trim()))];
+      if (uniqueIds.length > 2000) {
+        return sendJson(res, { success: false, error: `recordIds 数量 ${uniqueIds.length} 超过上限 2000` }, 400);
+      }
+      if (platform !== undefined && platform !== null
+        && !['xiaohongshu', 'douyin'].includes(String(platform))) {
+        return sendJson(res, { success: false, error: 'platform 只能是 xiaohongshu 或 douyin' }, 400);
+      }
+
+      const { records, absent } = await feishu.getRecordsByIds(uniqueIds, platform);
+      const decorated = records.map(r => decorateRecord(feishu.parseRecord(r)));
+      return sendJson(res, { success: true, data: decorated, absent });
     } catch (e) {
       return sendJson(res, { success: false, error: e.message }, e.statusCode || 500);
     }
@@ -1364,11 +1452,22 @@ const server = http.createServer(async (req, res) => {
           conflicts: context.conflicts,
           reservationCount: context.reservations.length,
           // 供本地 schedule_allocator 提前避开：平台无关的已占用分钟（小红书+抖音）。
-          existingReservations: scopedTimeReservations.map(item => ({
-            platform: item.platform,
-            account: item.account,
-            publishTime: item.publishTime,
-          })),
+          existingReservations: mergeTimeReservations(scopedTimeReservations, context.reservations)
+            .map(item => ({
+              platform: item.platform,
+              account: item.account,
+              publishTime: formatReservationMinute(item.publishTime),
+              ...(item.topicKey ? {
+                topicKey: item.topicKey,
+                storeGroup: item.storeGroup,
+                storeGroupKnown: item.storeGroupKnown,
+                constraintKind: item.constraintKind,
+              } : {}),
+            })),
+          unknownGroupConstraints: context.reservations
+            .filter(item => item.constraintKind === 'legacy_store_group_unknown')
+            .map(({ recordId, platform, account, topicKey, publishTime, constraintKind }) => ({ recordId, platform, account, topicKey, publishTime, constraintKind })),
+          ignoredInactivePending: context.ignoredInactivePending,
           // 主题索引外、字段配置有问题解析不了的记录：它们没进上面的时间占用兜底，
           // 明确回传而不是静默丢弃。
           unparsableRecordIds: context.unparsableRecordIds,
@@ -1424,6 +1523,7 @@ const server = http.createServer(async (req, res) => {
         try {
           const validated = validateImportSchedule({
             ...payload,
+            accountGroups: context.currentAccountGroups,
             currentItems: context.currentItems,
             existingReservations: [
               // 第一路：主题索引里的排期，供约束 1/2 与规则 A/B/C/D。
@@ -1437,6 +1537,8 @@ const server = http.createServer(async (req, res) => {
                 publishTime: item.publishTime,
                 topicKey: item.topicKey,
                 storeGroup: item.storeGroup,
+                storeGroupKnown: item.storeGroupKnown,
+                constraintKind: item.constraintKind,
               })),
               // 第二路：平台无关的已占用分钟（小红书 + 抖音），只供约束 1/2。
               // 抖音的既有排期此前完全没有兜底，跨批撞同一分钟、同账号间隔不足都拦不住。

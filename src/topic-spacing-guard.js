@@ -77,7 +77,15 @@ const PLATFORM_RESERVATION_DEFS = [
   { platform: 'douyin', historyKey: '抖音', accountField: 'douyinAccount', statusField: 'douyinStatus' },
 ];
 
-function collectIndexedReservations({ topicIndex, feishuRecords, history, accountGroups }) {
+function collectIndexedReservations({
+  topicIndex,
+  feishuRecords,
+  history,
+  relevantTopicKeys,
+  accountGroupsByPlatform,
+  authorizedAccountsByPlatform,
+  accountGroups,
+}) {
   const indexedRecords = topicIndex?.records && typeof topicIndex.records === 'object'
     ? topicIndex.records
     : {};
@@ -86,11 +94,14 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
       .map(record => [String(record?.recordId ?? ''), record])
       .filter(([recordId]) => recordId)
   );
-  const normalizedGroups = new Map(
-    Object.entries(accountGroups && typeof accountGroups === 'object' ? accountGroups : {})
-      .map(([account, storeGroup]) => [String(account).trim(), String(storeGroup ?? '').trim()])
-      .filter(([account]) => account)
-  );
+  const relevant = new Set((relevantTopicKeys || []).map(normalizeTopicKey));
+  const groupsFor = (platform, account) => {
+    const source = accountGroupsByPlatform?.[platform];
+    const values = source instanceof Map ? source.get(account) : source?.[account];
+    const fallback = accountGroups && typeof accountGroups === 'object' ? accountGroups[account] : '';
+    const list = Array.isArray(values) ? values : (fallback ? [fallback] : []);
+    return [...new Set(list.map(value => String(value ?? '').trim()).filter(Boolean))];
+  };
   const facts = new Map();
 
   const getPublishedEntries = (recordId, historyKey) => {
@@ -116,10 +127,11 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
     if (!account) {
       throw createError(`主题索引记录 ${recordId}（${platform}）缺少账号，无法检查同主题间隔`, 400);
     }
-    const storeGroup = normalizedGroups.get(account);
-    if (!storeGroup) {
-      throw createError(`账号“${account}”未配置店铺组，无法检查同主题间隔`, 400);
-    }
+    const groups = groupsFor(platform, account);
+    const storeGroupKnown = groups.length === 1;
+    const storeGroup = storeGroupKnown
+      ? groups[0]
+      : `__legacy_unknown__:${platform}:${recordId}:${account}`;
     const publishTime = parseReservationTime(timeValue);
     if (publishTime === null) {
       throw createError(`主题索引记录 ${recordId} 的发布时间无效，无法检查同主题间隔`, 400);
@@ -131,6 +143,8 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
       displayTopic: String(indexed?.displayTopic ?? '').trim(),
       account,
       storeGroup,
+      storeGroupKnown,
+      constraintKind: storeGroupKnown ? '' : 'legacy_store_group_unknown',
       publishTime,
       state,
     };
@@ -146,6 +160,7 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
 
   for (const [rawRecordId, indexed] of Object.entries(indexedRecords)) {
     const recordId = String(rawRecordId);
+    if (relevant.size > 0 && !relevant.has(normalizeTopicKey(indexed?.topicKey))) continue;
     const feishuRecord = feishuById.get(recordId);
     for (const { platform, historyKey, accountField, statusField } of PLATFORM_RESERVATION_DEFS) {
       const status = String(feishuRecord?.[statusField] ?? '').trim();
@@ -170,6 +185,8 @@ function collectIndexedReservations({ topicIndex, feishuRecords, history, accoun
       // 不能静默跳过——这是原实现的既有行为，双平台化不应该削弱它。
       if (feishuRecord && ACTIVE_PLATFORM_STATUSES.has(status)) {
         const scheduledAccount = String(feishuRecord[accountField] ?? '').trim();
+        const authorized = authorizedAccountsByPlatform?.[platform]?.has(scheduledAccount) ?? true;
+        if (status !== '发布中' && !authorized) continue;
         if (!publishedAccounts.has(scheduledAccount)) {
           addFact(buildReservation({
             recordId,
@@ -208,6 +225,7 @@ function findCrossAccountTopicConflicts({ currentItems, reservations }) {
   const addItems = (items, source) => {
     const sourceLabel = source === 'current' ? '本批主题项' : '历史主题预约';
     for (const [index, rawItem] of (Array.isArray(items) ? items : []).entries()) {
+      if (source === 'reservation' && rawItem?.constraintKind === 'legacy_store_group_unknown') continue;
       const topicKey = normalizeTopicKey(rawItem?.topicKey || rawItem?.displayTopic);
       const storeGroup = String(rawItem?.storeGroup ?? '').trim();
       const account = String(rawItem?.account ?? '').trim();

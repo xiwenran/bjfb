@@ -450,10 +450,25 @@ test('topic spacing endpoints use indexed server context and fresh confirmation'
   const originalGetRecords = FeishuClient.prototype.getRecords;
   FeishuClient.prototype.getRecords = async () => rawRecords;
   await startServer({ port: 3211, host: '127.0.0.1', silent: true });
+  // 同主题间隔检查会按 accounts.json 的 <platform>.default 做授权校验（缺文件即 400），
+  // 本用例只在自身生命周期内提供授权文件，结束后移除，不影响其他用例。
+  const accountsPath = path.join(process.env.NOTE_PUBLISHER_CONFIG_DIR, 'accounts.json');
+  fs.writeFileSync(accountsPath, JSON.stringify({
+    xiaohongshu: { default: ['拉面卷卷', '可乐', '账号甲', '账号乙', '账号丙', '账号丁', '账号戊'] },
+    douyin: { default: ['抖音账号A'] },
+    accountGroups: {
+      教师店: { xiaohongshu: ['拉面卷卷', '可乐'], douyin: [] },
+      店铺一: { xiaohongshu: ['账号甲', '账号乙'], douyin: [] },
+      店铺二: { xiaohongshu: ['账号丙'], douyin: [] },
+      店铺三: { xiaohongshu: ['账号丁'], douyin: [] },
+      店铺四: { xiaohongshu: ['账号戊'], douyin: [] },
+    },
+  }), 'utf8');
   t.after(async () => {
     FeishuClient.prototype.getRecords = originalGetRecords;
     fs.rmSync(topicIndexPath, { force: true });
     fs.rmSync(historyPath, { force: true });
+    fs.rmSync(accountsPath, { force: true });
   });
 
   fs.writeFileSync(topicIndexPath, JSON.stringify({
