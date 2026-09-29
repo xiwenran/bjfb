@@ -379,7 +379,7 @@ class ExplicitAssignmentTests(unittest.TestCase):
             allocate_schedule(self.fixed_payload(assignments=assignments), CONSTRAINTS)
         self.assertIn("模板唯一", str(ctx.exception))
 
-    def test_explicit_cross_topic_template_reuse_requires_flag(self):
+    def test_explicit_cross_topic_template_reuse_with_topic_only_folders_requires_flag(self):
         assignments = self.fixed_payload()["assignments"]
         assignments[1] = {**assignments[1], "noteKey": "topic1/T0"}
         assignments[3] = {**assignments[3], "noteKey": "topic1/U1"}
@@ -395,6 +395,38 @@ class ExplicitAssignmentTests(unittest.TestCase):
             {item["topic"] for item in result["schedule"] if item["account"] == "xhs_a"},
             {"topic0", "topic1"},
         )
+
+    def test_reuse_compares_effective_topic_key_instead_of_note_key_prefix(self):
+        assignments = self.fixed_payload()["assignments"]
+        assignments[1] = {**assignments[1], "noteKey": "topic1/T0"}
+        assignments[3] = {**assignments[3], "noteKey": "topic1/U1"}
+        folders = self.fixed_payload()["noteFolders"]
+        same_group = [
+            {**folders[0], "contentGroup": "same"},
+            {**folders[1], "contentGroup": "same"},
+        ]
+        with self.assertRaisesRegex(ScheduleError, "模板唯一"):
+            allocate_schedule(self.fixed_payload(
+                assignments=assignments, noteFolders=same_group,
+                allowTemplateReuseAcrossTopics=True,
+            ), CONSTRAINTS)
+
+        different_group = [{**same_group[0]}, {**same_group[1], "contentGroup": "other"}]
+        result = allocate_schedule(self.fixed_payload(
+            assignments=assignments, noteFolders=different_group,
+            allowTemplateReuseAcrossTopics=True,
+        ), CONSTRAINTS)
+        self.assertEqual(len(result["schedule"]), 4)
+
+        equivalent_group = [
+            {**folders[0], "contentGroup": "Ａ　Ｂ"},
+            {**folders[1], "contentGroup": "A    B"},
+        ]
+        with self.assertRaisesRegex(ScheduleError, "模板唯一"):
+            allocate_schedule(self.fixed_payload(
+                assignments=assignments, noteFolders=equivalent_group,
+                allowTemplateReuseAcrossTopics=True,
+            ), CONSTRAINTS)
 
     def test_template_reuse_flag_is_explicit_and_assignment_only(self):
         with self.assertRaisesRegex(ScheduleError, "仅可与显式 assignments"):
