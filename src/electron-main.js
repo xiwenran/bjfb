@@ -1,6 +1,6 @@
 const path = require('path');
 const { execSync } = require('child_process');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, crashReporter } = require('electron');
 const { startServer, stopServer, getServerState } = require('./server.js');
 const { appendDiagnosticEvent } = require('./config-store.js');
 
@@ -24,6 +24,17 @@ function recordDiagnosticEvent(type, payload = {}) {
   } catch (_) {
     // 诊断写盘失败不能反过来打断应用退出路径
   }
+}
+
+// 诊断项 1：本地崩溃转储。绝不上传（uploadToServer: false），只落本地供事后分析。
+// 必须在 app ready 之前调用，越早越好（Electron 文档要求）。
+try {
+  crashReporter.start({ uploadToServer: false, compress: true });
+} catch (err) {
+  // 极端环境（如缺少系统崩溃收集组件）下 start 本身可能抛错，不能阻断应用启动
+  recordDiagnosticEvent('crash-reporter-start-failed', {
+    error: serializeError(err),
+  });
 }
 
 // 防止上传 OSS 时 ReadStream EPIPE 弹 Electron 错误弹窗。
@@ -193,6 +204,16 @@ app.whenReady().then(() => {
   recordDiagnosticEvent('app-ready', {
     pid: process.pid,
   });
+  try {
+    recordDiagnosticEvent('crash-reporter-started', {
+      crashDumpsDir: app.getPath('crashDumps'),
+    });
+  } catch (err) {
+    recordDiagnosticEvent('crash-reporter-path-failed', {
+      error: serializeError(err),
+    });
+  }
+  startMemorySnapshotTimer();
   bootstrap();
 
   ipcMain.handle('dialog:openFolder', async () => {
@@ -229,6 +250,57 @@ app.on('child-process-gone', (_event, details) => {
   recordDiagnosticEvent('child-process-gone', details);
 });
 
+// app 级别的 render-process-gone：覆盖所有窗口（含未来新建窗口），
+// 与上面 win.webContents.on('render-process-gone') 分开记录，避免互相掩盖。
+app.on('render-process-gone', (_event, webContents, details) => {
+  recordDiagnosticEvent('app-render-process-gone', {
+    webContentsId: webContents && typeof webContents.id === 'number' ? webContents.id : null,
+    ...details,
+  });
+});
+
+// 诊断项 3：每 5 分钟记录一次各进程内存占用。整体 try/catch，
+// 失败只写一条错误诊断事件，绝不抛出影响主流程。
+const MEMORY_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+let memorySnapshotTimer = null;
+
+function recordMemorySnapshot() {
+  try {
+    const appMetrics = app.getAppMetrics().map((m) => ({
+      type: m.type,
+      pid: m.pid,
+      memoryWorkingSetSizeKB: m.memory ? m.memory.workingSetSize : null,
+    }));
+    const mainProcessMemory = process.memoryUsage();
+    recordDiagnosticEvent('memory-snapshot', {
+      appMetrics,
+      mainProcess: {
+        rss: mainProcessMemory.rss,
+        heapUsed: mainProcessMemory.heapUsed,
+      },
+    });
+  } catch (err) {
+    recordDiagnosticEvent('memory-snapshot-failed', {
+      error: serializeError(err),
+    });
+  }
+}
+
+function startMemorySnapshotTimer() {
+  if (memorySnapshotTimer) return;
+  memorySnapshotTimer = setInterval(recordMemorySnapshot, MEMORY_SNAPSHOT_INTERVAL_MS);
+  if (typeof memorySnapshotTimer.unref === 'function') {
+    memorySnapshotTimer.unref();
+  }
+}
+
+function stopMemorySnapshotTimer() {
+  if (memorySnapshotTimer) {
+    clearInterval(memorySnapshotTimer);
+    memorySnapshotTimer = null;
+  }
+}
+
 let _isQuitting = false;
 app.on('before-quit', (event) => {
   if (_isQuitting) return;
@@ -236,6 +308,7 @@ app.on('before-quit', (event) => {
   recordDiagnosticEvent('before-quit', {
     pid: process.pid,
   });
+  stopMemorySnapshotTimer();
   event.preventDefault();
   // 等服务关闭（最多 2 秒），确保端口释放后再退出
   Promise.race([
