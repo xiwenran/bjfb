@@ -10,6 +10,8 @@ const {
 } = require('./account-mapping.js');
 const { getRecordTempDir, isFeishuConfigured, saveConfig, readAiWritingCache, saveAiWritingCache, readPlatformDefaultAuthorization } = require('./config-store.js');
 const { generateContent } = require('./ai-writer.js');
+// 飞书错误码：记录不存在（多为发布途中被人删掉）
+const FEISHU_RECORD_NOT_FOUND = 1254043;
 const DEFAULT_RECENT_RECORD_GUARD_MS = 24 * 60 * 60 * 1000;
 const VIDEO_FILE_RE = /\.(mp4|mov|m4v|avi|wmv|flv|mkv|webm|mpeg|mpg|ts|m2ts|rmvb)$/i;
 
@@ -581,6 +583,7 @@ class Scheduler {
 
       let allSuccess = true;
       let hasSubmitted = false;
+      let recordDeleted = false;
       let noteChanged = false;
       let nextNote = record.note || '';
 
@@ -601,14 +604,21 @@ class Scheduler {
             try {
               await this.feishu.markPlatformStatus(record.recordId, r.platform, '已发布');
             } catch (markErr) {
-              allSuccess = false;
-              const entry = `${r.platform}状态回写失败(${r.account}): ${markErr.message}`;
-              nextNote = this.mergeNoteEntry(nextNote, entry);
-              noteChanged = true;
-              this.log('error', `  ❌ ${r.platform}(${r.account}) 状态回写失败 → 本地账本不会标记，下次循环将由 C1/血统账本兜底`);
-              continue;
+              if (markErr.feishuCode === FEISHU_RECORD_NOT_FOUND) {
+                // 记录已在发布途中被删除：飞书没有可写的对象，不存在"飞书未写、本地已写"的不一致，
+                // 照常落本地账本，防止同内容重新导入后被重复发布。
+                recordDeleted = true;
+                this.log('warn', `  ⚠️ ${r.platform}(${r.account}) 已发出，但飞书记录已被删除，已记入本机账本`);
+              } else {
+                allSuccess = false;
+                const entry = `${r.platform}状态回写失败(${r.account}): ${markErr.message}`;
+                nextNote = this.mergeNoteEntry(nextNote, entry);
+                noteChanged = true;
+                this.log('error', `  ❌ ${r.platform}(${r.account}) 状态回写失败 → 本地账本不会标记，下次循环将由 C1/血统账本兜底`);
+                continue;
+              }
             }
-            // 飞书已成功 → 写本地账本 + 追加血统记录（顺序：history 先，ledger 后）
+            // 飞书已成功（或记录已被删除）→ 写本地账本 + 追加血统记录（顺序：history 先，ledger 后）
             try {
               if (!r.skipped && !r.c1Skipped) {
                 publisher.appendHistory(record.recordId, r.platform, {
@@ -689,6 +699,18 @@ class Scheduler {
         }
       }
 
+      if (recordDeleted) {
+        // 飞书记录已不存在，备注和总状态都无处可写
+        this.setProgress({
+          active: true,
+          stage: 'completed',
+          title: record.title,
+          recordId: record.recordId,
+          detail: `《${record.title}》已发出，但飞书记录已被删除`,
+        });
+        return allSuccess ? { published: 1, failed: 0 } : { published: 0, failed: 1 };
+      }
+
       if (noteChanged) {
         await this.feishu.setNote(record.recordId, nextNote, record.platform);
         record.note = nextNote;
@@ -739,8 +761,11 @@ class Scheduler {
         detail: `《${record.title}》处理失败: ${e.message}`,
       });
       this.log('error', `  ❌ "${record.title}" 处理失败: ${e.message}`);
-      const nextNote = this.mergeNoteEntry(record.note, `处理失败: ${e.message}`);
-      await this.feishu.setNote(record.recordId, nextNote, record.platform);
+      // 记录已被删除时备注写不进去，再写只会把同一个错误抛到整轮外层
+      if (e.feishuCode !== FEISHU_RECORD_NOT_FOUND) {
+        const nextNote = this.mergeNoteEntry(record.note, `处理失败: ${e.message}`);
+        await this.feishu.setNote(record.recordId, nextNote, record.platform);
+      }
       return { published: 0, failed: 1 };
     } finally {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}

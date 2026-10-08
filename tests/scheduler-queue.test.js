@@ -812,3 +812,37 @@ test('stop should prevent queued scheduled records from starting after the curre
     failed: 0,
   });
 });
+
+function runWithStatusError(statusError) {
+  const scheduler = createScheduler();
+  const calls = { note: 0, published: 0, history: 0, ledger: 0 };
+  scheduler.findLatestPublishRecord = async () => null;
+  scheduler.feishu = {
+    downloadAllAttachments: async () => ['downloaded.png'],
+    markPlatformStatus: async () => { throw statusError; },
+    setNote: async () => { calls.note += 1; },
+    markPublished: async () => { calls.published += 1; },
+  };
+  const original = { publishRecord: publisher.publishRecord, appendHistory: publisher.appendHistory, markAsPublished: publisher.markAsPublished };
+  publisher.publishRecord = async () => [{ success: true, platform: '小红书', account: '晓晓老师' }];
+  publisher.appendHistory = () => { calls.history += 1; };
+  publisher.markAsPublished = () => { calls.ledger += 1; };
+  return scheduler.processSingleRecord({
+    recordId: 'status-error', title: '回写失败', attachments: ['a'], videoCover: [], contentType: '图文', note: '',
+    xiaohongshuAccount: '晓晓老师', xiaohongshuStatus: '待发布', douyinAccount: '', douyinStatus: '',
+  }).then(result => ({ result, calls })).finally(() => Object.assign(publisher, original));
+}
+
+test('已发出但飞书记录被删除：照常落本地账本，不再写飞书，计为成功', async () => {
+  const err = Object.assign(new Error('飞书 updateRecord 失败: code=1254043 msg=RecordIdNotFound'), { feishuCode: 1254043 });
+  const { result, calls } = await runWithStatusError(err);
+  assert.deepEqual(result, { published: 1, failed: 0 });
+  assert.deepEqual(calls, { note: 0, published: 0, history: 1, ledger: 1 });
+});
+
+test('其他飞书回写失败仍不落本地账本，交给下轮 C1/血统账本兜底', async () => {
+  const err = Object.assign(new Error('网络超时'), { feishuCode: undefined });
+  const { result, calls } = await runWithStatusError(err);
+  assert.deepEqual(result, { published: 0, failed: 1 });
+  assert.deepEqual(calls, { note: 1, published: 0, history: 0, ledger: 0 });
+});
