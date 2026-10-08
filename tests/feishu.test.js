@@ -98,3 +98,23 @@ test('orderAttachmentsForDownload keeps mixed templates on the numbered-page rul
   const ordered = orderAttachmentsForDownload(names.map(name => ({ name }))).map(item => item.name);
   assert.deepEqual(ordered, names);
 });
+
+test('downloadAttachment 断流等网络错误会重试，飞书明确返回的错误不重试', async () => {
+  const FeishuClient = require('../src/feishu.js');
+  const client = new FeishuClient({});
+  const aborted = Object.assign(new Error('stream has been aborted'), { isAxiosError: true });
+  let calls = 0;
+  client.downloadAttachmentOnce = async () => {
+    calls += 1;
+    if (calls === 1) throw aborted;
+    return '/tmp/ok.tmp';
+  };
+  assert.equal(await client.downloadAttachment('tok', '/tmp'), '/tmp/ok.tmp');
+  assert.equal(calls, 2);
+
+  const httpErr = Object.assign(new Error('HTTP 403'), { isAxiosError: true, response: { status: 403 } });
+  calls = 0;
+  client.downloadAttachmentOnce = async () => { calls += 1; throw httpErr; };
+  await assert.rejects(client.downloadAttachment('tok', '/tmp'), /HTTP 403/);
+  assert.equal(calls, 1);
+});

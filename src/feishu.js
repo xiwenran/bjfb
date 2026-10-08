@@ -632,7 +632,23 @@ class FeishuClient {
     }
   }
 
+  // 下载中途断流（stream has been aborted）、连接重置、超时等没拿到响应的网络错误，
+  // 重新取下载地址再试；飞书明确返回的 HTTP 错误不重试。
   async downloadAttachment(fileToken, destDir) {
+    const retryDelaysMs = [2000, 5000];
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.downloadAttachmentOnce(fileToken, destDir);
+      } catch (e) {
+        const isNetworkError = e.isAxiosError && !e.response;
+        if (!isNetworkError || attempt >= retryDelaysMs.length) throw e;
+        console.warn(`[feishu] 附件下载失败(${fileToken})，第 ${attempt + 1} 次重试: ${e.message}`);
+        await new Promise(r => setTimeout(r, retryDelaysMs[attempt]));
+      }
+    }
+  }
+
+  async downloadAttachmentOnce(fileToken, destDir) {
     // 获取临时下载URL（自动处理 token 失效重试）
     const urlResp = await this.requestWithRetry(token =>
       axios.get(
