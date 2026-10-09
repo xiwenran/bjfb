@@ -83,14 +83,27 @@ function orderByUniformTemplate(items) {
   return keyed.sort((a, b) => a.num - b.num || a.index - b.index);
 }
 
+// 导入上传时 uploadImage 会给文件名加「12 位随机十六进制 + _」前缀防重名。
+// 排序必须先剥掉它：前缀碰巧全是数字时（约 0.36%/张），"435650296811_7.jpg"
+// 会被当成编号 435650296811 的页排到最前，发出去的笔记首图错位。
+const IMPORT_RANDOM_PREFIX_RE = /^[0-9a-f]{12}_(?=.)/;
+
+function attachmentSortName(att) {
+  return path.basename(String(att.name || '')).replace(IMPORT_RANDOM_PREFIX_RE, '');
+}
+
 function orderAttachmentsForDownload(attachments = []) {
-  const indexed = [...attachments].map((att, index) => ({ att, index }));
+  const indexed = [...attachments].map((att, index) => ({
+    att: { ...att, name: attachmentSortName(att) },
+    original: att,
+    index,
+  }));
   const uniform = orderByUniformTemplate(indexed);
-  if (uniform) return uniform.map(item => item.att);
+  if (uniform) return uniform.map(item => item.original);
   return indexed
     .sort((left, right) => {
-      const leftName = path.basename(String(left.att.name || ''));
-      const rightName = path.basename(String(right.att.name || ''));
+      const leftName = left.att.name;
+      const rightName = right.att.name;
       const leftKey = parseAttachmentSortKey(leftName);
       const rightKey = parseAttachmentSortKey(rightName);
 
@@ -103,7 +116,7 @@ function orderAttachmentsForDownload(attachments = []) {
       if (rightKey) return 1;
       return left.index - right.index;
     })
-    .map(item => item.att);
+    .map(item => item.original);
 }
 
 // ── 双表路由（2026-07 新增）──────────────────────────────────────────────

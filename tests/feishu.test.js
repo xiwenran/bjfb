@@ -72,6 +72,23 @@ test('parseAttachmentSortKey supports bare parenthesized numbers and dash/unders
   assert.equal(parseAttachmentSortKey('(封面).jpg'), null);
 });
 
+test('orderAttachmentsForDownload ignores the 12-hex import prefix even when it is all digits', () => {
+  // 2026-10-08 真实事故：7.jpg 的随机前缀全是数字，被排到封面前面当首图发出。
+  const names = [
+    '243e0f616fae_0.jpg', 'b606c1282b11_1.jpg', '88451134a416_2.jpg', '70506579dd92_3.jpg',
+    '8715ae1eb813_4.jpg', '48b5e2bafc2a_5.jpg', '5237690703ed_6.jpg', '435650296811_7.jpg',
+    '53a280b63bc3_8.jpg', 'a0af61506f1a_9.jpg', '3c88915251c7_10.jpg', '6e847257bd1a_11.jpg',
+    '74ad5d947c3f_12.jpg', '087af8e52bcb_13.jpg', 'f8dcae94178d_14.jpg',
+  ];
+  const shuffled = [...names].reverse().map(name => ({ name, file_token: `t_${name}` }));
+  const ordered = orderAttachmentsForDownload(shuffled);
+  assert.deepEqual(ordered.map(item => item.name), names, '按前缀后的序号排，且返回原始文件名');
+  assert.equal(ordered[0].file_token, 't_243e0f616fae_0.jpg');
+
+  const feishuOrder = names.map(name => ({ name }));
+  assert.deepEqual(orderAttachmentsForDownload(feishuOrder).map(item => item.name), names);
+});
+
 test('orderAttachmentsForDownload sorts bare parenthesized numbers numerically', () => {
   const names = ['(7).jpg', '(2).jpg', '(10).jpg', '(1).jpg'];
   const ordered = orderAttachmentsForDownload(names.map(name => ({ name }))).map(item => item.name);
