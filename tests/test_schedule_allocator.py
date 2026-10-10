@@ -141,6 +141,35 @@ class ConstraintTests(unittest.TestCase):
                 gap = minutes[i + 1] - minutes[i]
                 self.assertGreaterEqual(gap, 361, f"{key} 两次发布间隔 {gap} 分钟 < 361")
 
+    def test_same_account_clock_not_repeated_across_days(self):
+        """同账号跨天不重复使用同一 HH:mm；窄时间窗、多天时最容易撞钟点。"""
+        days = [f"2026-08-{d:02d} 07:00-07:40" for d in range(1, 21)]
+        payload = base_payload(
+            accounts={"xiaohongshu_regular": ["xhs_a", "xhs_b"], "xiaohongshu_special": [], "douyin": []},
+            accountGroups={"xhs_a": "store1", "xhs_b": "store1"},
+            timeSlots={"regular": days, "special": []},
+            noteFolders=note_folders(25, 20),
+        )
+        result = allocate_schedule(payload, CONSTRAINTS)
+        clocks: dict[str, list[str]] = {}
+        for item in result["schedule"]:
+            clocks.setdefault(item["account"], []).append(item["publishTime"][11:])
+        for account, values in clocks.items():
+            self.assertEqual(len(values), 20)
+            self.assertEqual(len(values), len(set(values)), f"{account} 跨天出现重复钟点：{sorted(values)}")
+
+    def test_same_account_clock_exhausted_raises(self):
+        """可用钟点少于天数时明确报错，不静默放过重复钟点。"""
+        days = [f"2026-08-{d:02d} 07:00-07:04" for d in range(1, 8)]
+        payload = base_payload(
+            accounts={"xiaohongshu_regular": ["xhs_a"], "xiaohongshu_special": [], "douyin": []},
+            accountGroups={"xhs_a": "store1"},
+            timeSlots={"regular": days, "special": []},
+            noteFolders=note_folders(10, 10),
+        )
+        with self.assertRaisesRegex(ScheduleError, "跨天 HH:mm 不重复"):
+            allocate_schedule(payload, CONSTRAINTS)
+
     def test_constraint1_violation_reports_diagnosis(self):
         """窗口太窄导致同账号间隔不足时，必须报出具体账号和差值，而不是笼统报错。"""
         payload = base_payload(

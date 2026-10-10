@@ -1256,6 +1256,14 @@ def cmd_schedule(scan_json_file: str, plan_json_file: str, output_file: str | No
             store_group = str(conflict.get("storeGroup") or "未命名店铺组")
             accounts = "、".join(str(value) for value in (conflict.get("accounts") or []))
             print(f"- {topic}｜{store_group}｜账号：{accounts}｜冲突 ID：{conflict.get('id', '')}")
+        # 用户确认后需把本次 fingerprint 与全部冲突 ID 原样写进 plan.json.confirmation，
+        # 这里落盘供直接取用，避免绕开本入口另调接口。
+        conflicts_path = (os.path.expanduser(output_file) if output_file else "/tmp/zhifa_schedule_result.json") + ".conflicts.json"
+        write_json_file(conflicts_path, {
+            "inputFingerprint": fingerprint,
+            "conflictIds": sorted(expected_conflict_ids),
+        })
+        print(f"本次 inputFingerprint：{fingerprint}（连同全部冲突 ID 已写入 {conflicts_path}）")
         print("请选择后重新运行：auto_space（自动错开）／调整时间窗／allow_conflicts（允许冲突）。")
         sys.exit(1)
 

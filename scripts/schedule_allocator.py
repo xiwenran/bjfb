@@ -595,6 +595,12 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
     for reservation in reservations:
         account_abs_times.setdefault(reservation["accountKey"], []).append((reservation["absMinute"], reservation))
 
+    # 同一账号跨天不重复使用同一 HH:mm（02-上传.md 规定的排期口径）；既有排期的钟点同样计入。
+    account_used_clocks: dict[str, set[int]] = {}
+    for reservation in reservations:
+        _, clock = _abs_to_date_minute(reservation["absMinute"])
+        account_used_clocks.setdefault(reservation["accountKey"], set()).add(clock)
+
     tasks_by_slot_value: dict[str, list[dict]] = {}
     for task in tasks:
         tasks_by_slot_value.setdefault(task["slotValue"], []).append(task)
@@ -632,21 +638,38 @@ def allocate_schedule(payload: dict, constraints: dict | None = None) -> dict:
             segment_end = ((index + 1) * total_minutes) // count - 1
             length = segment_end - segment_start + 1
             start_offset = rng.randrange(length)
+            used_clocks = account_used_clocks.setdefault(task["account"]["accountKey"], set())
+            # 先在本段内找，本段钟点用尽再扩到整个时间窗，保持分段散布的同时满足跨天钟点不重复。
+            search_orders = [
+                [win_start + segment_start + ((start_offset + offset) % length) for offset in range(length)],
+                [win_start + ((segment_start + start_offset + offset) % total_minutes) for offset in range(total_minutes)],
+            ]
             found_minute = None
-            for offset in range(length):
-                candidate_offset = win_start + segment_start + ((start_offset + offset) % length)
-                date_part, minute_in_day = _abs_to_date_minute(candidate_offset)
-                key = (date_part, minute_in_day)
-                if key in used_minutes:
-                    continue
-                found_minute = candidate_offset
-                break
+            segment_has_free_minute = False
+            for candidates in search_orders:
+                for candidate_offset in candidates:
+                    date_part, minute_in_day = _abs_to_date_minute(candidate_offset)
+                    if (date_part, minute_in_day) in used_minutes:
+                        continue
+                    segment_has_free_minute = True
+                    if minute_in_day in used_clocks:
+                        continue
+                    found_minute = candidate_offset
+                    break
+                if found_minute is not None:
+                    break
             if found_minute is None:
+                if not segment_has_free_minute:
+                    raise ScheduleError(
+                        f"时间窗「{slot_value}」第 {index + 1} 段（segment {segment_start}-{segment_end} 分钟偏移）"
+                        f"已被已有排期完全占满，无法取得可用分钟；请扩大时间窗或错开 existingReservations。"
+                    )
                 raise ScheduleError(
-                    f"时间窗「{slot_value}」第 {index + 1} 段（segment {segment_start}-{segment_end} 分钟偏移）"
-                    f"已被已有排期完全占满，无法取得可用分钟；请扩大时间窗或错开 existingReservations。"
+                    f"时间窗「{slot_value}」内账号「{task['account']['account']}」可用钟点已全部在其他日期用过，"
+                    "无法满足同账号跨天 HH:mm 不重复；请扩大时间窗或减少该账号落在此窗口的次数。"
                 )
             found_date, found_minute_in_day = _abs_to_date_minute(found_minute)
+            used_clocks.add(found_minute_in_day)
             _assign_minute(task, found_date, found_minute_in_day, used_minutes, account_abs_times, found_minute)
 
     # ---- 第 3 步：noteKey 分配（约束 3/4/5） ----
